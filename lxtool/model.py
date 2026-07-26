@@ -103,3 +103,87 @@ class Fixture:
 def flatten(fixtures: Iterable[Fixture]) -> list[tuple[Fixture, Mode]]:
     """Every (fixture, mode) pair - the unit that actually gets patched."""
     return [(f, m) for f in fixtures for m in f.modes]
+
+
+# ---------------------------------------------------------------------------
+# Patch level
+#
+# Everything above describes a fixture *type*. A show also needs the patch:
+# which types are in the rig, how many, and at what addresses. That is what
+# MVR carries, and it is the unit you actually move between desks.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PatchedFixture:
+    """One physical fixture in a rig, at an address."""
+
+    name: str
+    fixture: Fixture
+    mode: str = ""
+    fixture_id: str = ""
+    universe: int = 1          # 1-based, as every desk displays it
+    address: int = 1           # 1-512 within the universe
+    layer: str = ""
+    uuid: str = ""
+
+    @property
+    def footprint(self) -> int:
+        m = self.fixture.mode(self.mode) if self.mode else None
+        if m is None and self.fixture.modes:
+            m = self.fixture.modes[0]
+        return m.channel_count if m else 0
+
+    @property
+    def last_address(self) -> int:
+        return self.address + max(self.footprint, 1) - 1
+
+    @property
+    def absolute_address(self) -> int:
+        """Address counted continuously across universes, as MVR stores it."""
+        return (self.universe - 1) * 512 + self.address
+
+    def overlaps(self, other: "PatchedFixture") -> bool:
+        if self.universe != other.universe:
+            return False
+        return self.address <= other.last_address and other.address <= self.last_address
+
+
+@dataclass
+class Rig:
+    """A whole patch: the fixtures in a show and where they live."""
+
+    name: str = ""
+    fixtures: list[PatchedFixture] = field(default_factory=list)
+    source: str = ""
+
+    def types(self) -> list[Fixture]:
+        """Distinct fixture types in the rig, in first-seen order."""
+        seen: dict[str, Fixture] = {}
+        for pf in self.fixtures:
+            seen.setdefault(pf.fixture.key.lower(), pf.fixture)
+        return list(seen.values())
+
+    def by_universe(self) -> dict[int, list[PatchedFixture]]:
+        out: dict[int, list[PatchedFixture]] = {}
+        for pf in self.fixtures:
+            out.setdefault(pf.universe, []).append(pf)
+        for group in out.values():
+            group.sort(key=lambda p: p.address)
+        return dict(sorted(out.items()))
+
+    def conflicts(self) -> list[tuple[PatchedFixture, PatchedFixture]]:
+        """Pairs of fixtures whose DMX footprints overlap.
+
+        Worth surfacing on import: a patch that was legal on one desk can
+        collide on another if a mode's channel count differs between
+        libraries.
+        """
+        clashes = []
+        for group in self.by_universe().values():
+            for i, a in enumerate(group):
+                for b in group[i + 1:]:
+                    if a.address > b.last_address:
+                        break
+                    if a.overlaps(b):
+                        clashes.append((a, b))
+        return clashes

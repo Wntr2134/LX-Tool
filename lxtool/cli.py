@@ -4,6 +4,7 @@
     lx search <query>                        search the cached catalogue
     lx scan   <heads-folder>                 index a ChamSys library
     lx match  <fixture-file> <heads-folder>  find the closest existing head
+    lx rig    <file.mvr>                     summarise a whole patch
     lx convert <in> <out>                    convert between formats
     lx doctor <file>                         report what we can/can't read
 """
@@ -15,7 +16,7 @@ import sys
 from pathlib import Path
 
 from . import catalog, matching
-from .formats import chamsys, gdtf, ma2, ofl
+from .formats import chamsys, gdtf, ma2, mvr, ofl
 from .model import Fixture, Mode
 
 _READERS = {
@@ -39,6 +40,11 @@ def load_fixture(path: Path | str) -> Fixture:
         if b"FixtureType" in head and b"DMXMode" in head:
             return gdtf.parse_description(path.read_bytes())
         return ma2.read(path)
+    if suffix == ".mvr":
+        raise SystemExit(
+            f"{path.name} is a whole rig, not a single fixture. "
+            "Use 'lx rig' to summarise it and 'lx doctor' to check what it carries."
+        )
     if suffix == ".hed":
         raise SystemExit(
             f"{path.name}: ChamSys .hed bodies are obfuscated and cannot be read yet.\n"
@@ -180,9 +186,48 @@ def cmd_convert(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rig(args: argparse.Namespace) -> int:
+    """Summarise a whole patch from an MVR, and flag address clashes."""
+    rig = mvr.read(args.file)
+    types = rig.types()
+    print(f"{rig.name}: {len(rig.fixtures)} fixture(s), {len(types)} type(s)\n")
+
+    for universe, members in rig.by_universe().items():
+        print(f"Universe {universe}:")
+        for pf in members:
+            span = f"{pf.address}-{pf.last_address}" if pf.footprint > 1 else str(pf.address)
+            unknown = "" if pf.fixture.modes else "   [type not embedded]"
+            print(f"  {span:>9}  {pf.name:<24} {pf.fixture.key} [{pf.mode}]{unknown}")
+        print()
+
+    clashes = rig.conflicts()
+    if clashes:
+        print(f"{len(clashes)} address clash(es):")
+        for a, b in clashes:
+            print(f"  U{a.universe} {a.name} ({a.address}-{a.last_address}) "
+                  f"overlaps {b.name} ({b.address}-{b.last_address})")
+    else:
+        print("No address clashes.")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Report what we can and cannot read from a file - no guessing."""
     path = Path(args.file)
+
+    if path.suffix.lower() == ".mvr":
+        rig = mvr.read(path)
+        missing = [pf for pf in rig.fixtures if not pf.fixture.modes]
+        print(f"{path.name}: {len(rig.fixtures)} fixture(s), {len(rig.types())} type(s)")
+        print(f"  universes : {', '.join(str(u) for u in rig.by_universe())}")
+        print(f"  types embedded: {len(rig.types()) - len({p.fixture.key for p in missing})}"
+              f" of {len(rig.types())}")
+        if missing:
+            names = sorted({p.fixture.source_id for p in missing})
+            print(f"  referenced but not embedded: {', '.join(names)}")
+        print(f"  address clashes: {len(rig.conflicts())}")
+        return 0
+
     data = path.read_bytes()
 
     if path.suffix.lower() == ".hed":
@@ -239,6 +284,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("source")
     c.add_argument("dest")
     c.set_defaults(func=cmd_convert)
+
+    r = sub.add_parser("rig", help="summarise a whole patch from an MVR file")
+    r.add_argument("file")
+    r.set_defaults(func=cmd_rig)
 
     d = sub.add_parser("doctor", help="report what can be read from a file")
     d.add_argument("file")

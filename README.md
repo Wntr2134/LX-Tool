@@ -115,10 +115,27 @@ encoder instead of dumping it into a generic slot.
 
 | Format | Read | Write | Notes |
 |---|:--:|:--:|---|
-| GDTF (`.gdtf`) | yes | yes | The interchange format. MA3 and MagicQ both import it |
-| Open Fixture Library (`.json`) | yes | — | Open API, thousands of fixtures |
+| GDTF (`.gdtf`) | yes | yes | The interchange format. MA3, MagicQ and others import it |
+| MVR (`.mvr`) | yes | yes | Whole rigs: fixtures, modes, addresses, layers. **Unvalidated** — see below |
+| Open Fixture Library (`.json`) | yes | — | Open API, ~620 fixtures cached offline |
 | grandMA2 XML (`.xml`) | yes | yes | **Not yet validated against a real MA2 export** — see below |
 | ChamSys (`.hed`) | filename + CSV index | via GDTF | Bodies are obfuscated — see [docs/hed-format.md](docs/hed-format.md) |
+
+### grandMA3
+
+MA3 is **GDTF-native** for fixture types and **MVR** for the patch, so both
+directions are already covered by the table above — there is no separate MA3
+format to add. Export a fixture type from MA3 as GDTF and read it directly;
+export a whole rig as MVR and use `lx rig`.
+
+```bash
+lx rig show.mvr        # patch summary per universe, with address-clash detection
+lx doctor show.mvr     # what the archive carries and what it's missing
+```
+
+`lx rig` flags overlapping DMX footprints, which is the failure mode when a
+patch moves between desks: a mode that is 8 channels in one library can be 10
+in another, and the rig silently collides.
 
 ### Getting fixtures into ChamSys
 
@@ -136,6 +153,13 @@ are therefore scored on footprint and name only, capped below "exact", and
 labelled as such. They are never presented as more certain than they are.
 [docs/hed-format.md](docs/hed-format.md) records the full analysis and the one
 step that would finish it.
+
+**MVR is unvalidated too.** Written against the published structure, parsed
+namespace-agnostically, and it degrades safely: a fixture whose GDTF isn't
+embedded still comes through with its address, mode and layer rather than
+vanishing from the patch. Both address conventions (continuous, and
+break-relative) are handled. Run `lx doctor <file>.mvr` on a real MA3 export
+and check the counts before trusting it.
 
 **The grandMA2 reader is unvalidated.** MA2's schema isn't published the way
 GDTF's is, so the parser is written tolerantly and anything it can't interpret
