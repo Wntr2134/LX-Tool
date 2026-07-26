@@ -84,6 +84,13 @@ _ALIASES: dict[str, str] = {
     "prism1pos": "PrismRot", "focus": "Focus", "zoom": "Zoom",
     "iris": "Iris", "frost": "Frost", "frost1": "Frost",
     "animation": "Animation", "animationwheel": "Animation",
+    # GDTF's own spelling of the above, so a file we write reads back identically
+    "shutter1": "Shutter", "shutter1strobe": "Strobe", "color1": "ColorWheel",
+    "color2": "ColorWheel2", "colormacro1": "ColorMacro", "gobo1pos": "Gobo1Rot",
+    "gobo2pos": "Gobo2Rot", "prism1": "Prism", "prism1pos": "PrismRot",
+    "focus1": "Focus", "frost1": "Frost", "iris1": "Iris",
+    "animationwheel1": "Animation", "animationwheel1pos": "AnimationRot",
+    "control1": "Control", "pantiltspeed": "PanTiltSpeed",
     # control
     "control": "Control", "function": "Function", "reset": "Reset",
     "lamp": "Lamp", "lampcontrol": "Lamp", "fan": "Fan", "fanspeed": "Fan",
@@ -188,6 +195,51 @@ def normalise(name: str, *, default: str = "Unknown") -> str:
 
 def group_of(attribute: str) -> str:
     return GROUP_OF.get(attribute, "control")
+
+
+# Colour systems.  Whether a fixture mixes subtractively (CMY), additively
+# (RGB+) or picks from a wheel is one of the strongest matching signals there
+# is: a CMY profile and an RGBW profile with the same channel count are not
+# interchangeable, however similar their names look.
+_SUBTRACTIVE = frozenset({"Cyan", "Magenta", "Yellow"})
+_ADDITIVE = frozenset({"Red", "Green", "Blue", "White", "Amber", "UV", "Lime", "Indigo"})
+_WHEEL = frozenset({"ColorWheel", "ColorWheel2", "ColorMacro"})
+
+
+def colour_system(attrs: set[str] | frozenset[str]) -> str:
+    """Classify a mode's colour system from its attribute set.
+
+    Returns one of ``cmy``, ``rgb``, ``hybrid``, ``wheel`` or ``none``.
+    ``hybrid`` covers fixtures carrying both subtractive and additive mixing,
+    which do exist and must not be collapsed into either camp.
+    """
+    sub = bool(attrs & _SUBTRACTIVE)
+    add = bool(attrs & _ADDITIVE)
+    if sub and add:
+        return "hybrid"
+    if sub:
+        return "cmy"
+    if add:
+        return "rgb"
+    if attrs & _WHEEL:
+        return "wheel"
+    return "none"
+
+
+def colour_detail(attrs: set[str] | frozenset[str]) -> str:
+    """Human label for the exact emitter set, e.g. ``RGBW`` or ``CMY``."""
+    system = colour_system(attrs)
+    if system in ("rgb", "hybrid"):
+        order = ("Red", "Green", "Blue", "White", "Amber", "UV", "Lime", "Indigo")
+        letters = {"Red": "R", "Green": "G", "Blue": "B", "White": "W",
+                   "Amber": "A", "UV": "UV", "Lime": "L", "Indigo": "I"}
+        tag = "".join(letters[a] for a in order if a in attrs)
+        return f"CMY+{tag}" if system == "hybrid" else tag
+    if system == "cmy":
+        return "CMY"
+    if system == "wheel":
+        return "colour wheel"
+    return "no colour"
 
 
 def criticality(attribute: str) -> int:

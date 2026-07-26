@@ -35,11 +35,19 @@ upload a fixture file.
 ### CLI
 
 ```bash
+# Pull the Open Fixture Library once (~3 MB), then work offline
+python -m lxtool.cli fetch
+python -m lxtool.cli search "mac 700"
+python -m lxtool.cli search "led par rgbw" --channels 8
+
 # Index your ChamSys library
 python -m lxtool.cli scan ~/Documents/MagicQ/heads -v
 
 # Does my library already have this? What would I change?
 python -m lxtool.cli match new_fixture.gdtf ~/Documents/MagicQ/heads
+
+# ...or skip the file entirely and match straight from the catalogue
+python -m lxtool.cli match --ofl "mac 700" ~/Documents/MagicQ/heads
 
 # Convert between formats
 python -m lxtool.cli convert fixture.json fixture.gdtf     # OFL  -> GDTF
@@ -70,6 +78,38 @@ To use 'Robe Robin 300 [16ch]', change (most critical first):
 Changes are ordered by how badly they break the fixture — intensity and
 position first, then colour, then beam, then control — and within that by
 patch order, so you walk the channel list once.
+
+## How matching works
+
+Three things are scored separately, because they mean different things to
+whoever has to fix the rig:
+
+- **Content** — do the right parameters exist at all? (Jaccard over attributes.)
+  Missing channels mean building a head.
+- **Ordering** — are they in the right slots? (Sequence alignment.) Right
+  channels in the wrong order is a repatch, not a rebuild.
+- **Colour system** — CMY, RGB, RGBW, hybrid or wheel. A CMY head is not a
+  substitute for an RGB one however similar the names look, so a mismatch here
+  is heavily penalised.
+
+Comparison uses **sequence alignment**, not slot-by-slot equality. That matters:
+if a fixture inserts one channel near the top, every later offset shifts. A
+positional comparison would call all of them wrong; alignment reports the one
+insertion and leaves the rest matched.
+
+### Offline by design
+
+`lx fetch` caches the whole Open Fixture Library locally (`~/.cache/lxtool`,
+override with `LXTOOL_CACHE`). Search and match then work with no connection —
+which is where you actually need them.
+
+### GDTF export is tuned for import
+
+Exported GDTF uses the **standard GDTF attribute names** (`Shutter1`,
+`ColorAdd_R`, `Gobo1Pos`, `Color1`…) with correct `FeatureGroup.Feature`
+assignments, `Geometry_Attribute` channel names, and `Snap="Yes"` on wheel
+parameters. That is what makes MagicQ and MA3 land each channel on the right
+encoder instead of dumping it into a generic slot.
 
 ## Format support
 

@@ -18,7 +18,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
-from .. import matching
+from .. import catalog, matching
 from ..cli import load_fixture
 from ..formats import chamsys, gdtf, ma2
 
@@ -60,6 +60,61 @@ def api_scan(folder: str = Form(...)) -> dict:
     }
 
 
+@app.post("/api/fetch-catalog")
+def api_fetch_catalog() -> dict:
+    """Download the Open Fixture Library for offline use."""
+    try:
+        path = catalog.Catalog.download()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(502, f"could not download catalogue: {exc}") from exc
+    cat = catalog.Catalog.load()
+    return {"fixtures": len(cat), "manufacturers": len(cat.manufacturers()),
+            "path": str(path)}
+
+
+@app.get("/api/search")
+def api_search(q: str, limit: int = 20) -> dict:
+    """Search the cached catalogue."""
+    try:
+        cat = catalog.Catalog.load()
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    return {
+        "count": len(cat),
+        "age_days": round(cat.age_days, 1) if cat.age_days is not None else None,
+        "hits": [
+            {
+                "key": e.key,
+                "label": e.label,
+                "categories": list(e.categories),
+                "modes": [{"name": n, "channels": c} for n, c in e.modes],
+            }
+            for e in cat.search(q, limit=limit)
+        ],
+    }
+
+
+@app.post("/api/match-catalog")
+def api_match_catalog(folder: str = Form(...), key: str = Form(...)) -> dict:
+    """Match a catalogue fixture against a ChamSys library, no upload needed."""
+    try:
+        cat = catalog.Catalog.load()
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    entry = cat.get(key)
+    if entry is None:
+        raise HTTPException(404, f"{key} is not in the catalogue")
+
+    try:
+        library = chamsys.ChamSysLibrary.scan(folder).as_fixtures()
+    except (NotADirectoryError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    return _match_payload(entry.to_fixture(), library)
+
+
 @app.post("/api/match")
 async def api_match(folder: str = Form(...), file: UploadFile = File(...)) -> dict:
     """Match an uploaded fixture against a ChamSys library."""
@@ -72,6 +127,11 @@ async def api_match(folder: str = Form(...), file: UploadFile = File(...)) -> di
     except (NotADirectoryError, OSError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    return _match_payload(fixture, library)
+
+
+def _match_payload(fixture, library) -> dict:
+    """Shared response shape for both the upload and catalogue match routes."""
     results = []
     for mode in fixture.modes:
         matches = matching.find_candidates(fixture, mode, library, limit=8)
@@ -178,14 +238,25 @@ PAGE = """<!doctype html>
  <div id="scanout"></div>
 </fieldset>
 
-<fieldset><legend>2. Match a new fixture</legend>
+<fieldset><legend>2. Find a fixture online</legend>
+ <p class="note">Searches a local copy of the Open Fixture Library, so it works
+    with no signal. Download it once, then it's instant.</p>
+ <p><button onclick="fetchCat()">Download / refresh catalogue</button>
+    <span id="catstatus"></span></p>
+ <label for="q">Search by name</label>
+ <input type="text" id="q" placeholder="mac 700" onkeydown="if(event.key==='Enter')search()">
+ <p><button onclick="search()">Search</button></p>
+ <div id="searchout"></div>
+</fieldset>
+
+<fieldset><legend>3. Match a fixture file</legend>
  <label for="mfile">GDTF, OFL JSON or grandMA2 XML</label>
  <input type="file" id="mfile" accept=".gdtf,.json,.xml">
  <p><button onclick="match()">Find closest head</button></p>
  <div id="matchout"></div>
 </fieldset>
 
-<fieldset><legend>3. Convert</legend>
+<fieldset><legend>4. Convert</legend>
  <label for="cfile">Source file</label>
  <input type="file" id="cfile" accept=".gdtf,.json,.xml">
  <label for="target">Convert to</label>
@@ -221,31 +292,66 @@ async function scan() {
   } catch (e) { $('scanout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
+async function fetchCat() {
+  $('catstatus').textContent = ' downloading...';
+  try {
+    const d = await (await post('/api/fetch-catalog', new FormData())).json();
+    $('catstatus').innerHTML = ` <span class="exact">${d.fixtures} fixtures from ${d.manufacturers} manufacturers</span>`;
+  } catch (e) { $('catstatus').innerHTML = ` <span class="sev5">${esc(e.message)}</span>`; }
+}
+
+async function search() {
+  const q = $('q').value.trim();
+  if (!q) return;
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+    if (!r.ok) throw new Error((await r.json()).detail);
+    const d = await r.json();
+    if (!d.hits.length) { $('searchout').innerHTML = `<p>Nothing matching in ${d.count} fixtures.</p>`; return; }
+    $('searchout').innerHTML =
+      '<table><tr><th>Fixture</th><th>Modes</th><th></th></tr>' +
+      d.hits.map(h => `<tr><td>${esc(h.label)}<br><span class="note">${esc(h.key)}</span></td>
+        <td class="note">${h.modes.map(m => esc(m.name)+' ('+m.channels+'ch)').join('<br>')}</td>
+        <td><button onclick="matchKey('${esc(h.key)}')">Match</button></td></tr>`).join('') +
+      '</table>';
+  } catch (e) { $('searchout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function matchKey(key) {
+  const fd = new FormData(); fd.append('folder', $('folder').value); fd.append('key', key);
+  try {
+    render(await (await post('/api/match-catalog', fd)).json(), 'searchout');
+  } catch (e) { $('searchout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+function render(d, into) {
+  let h = `<p>Matching <b>${esc(d.fixture.manufacturer)} ${esc(d.fixture.model)}</b>
+           (${esc(d.fixture.source)})</p>`;
+  for (const r of d.results) {
+    h += `<h3>Mode: ${esc(r.mode)} &mdash; ${r.channels} ch</h3>`;
+    if (!r.matches.length) { h += '<p>No candidates.</p>'; continue; }
+    h += '<table><tr><th>Head</th><th>Score</th><th>Why</th></tr>' +
+      r.matches.map(m => `<tr><td>${esc(m.label)}</td>
+        <td>${m.exact ? '<span class="exact">EXACT</span>' : Math.round(m.score*100)+'%'}</td>
+        <td class="note">${m.reasons.map(esc).join('<br>')}</td></tr>`).join('') + '</table>';
+    const best = r.matches[0];
+    if (best.edits.length) {
+      h += `<p><b>To use &ldquo;${esc(best.label)}&rdquo;, change (most critical first):</b></p><pre>` +
+        best.edits.map(e =>
+          `<span class="sev${e.severity}">ch ${String(e.offset).padStart(3)}  ` +
+          `${e.action.padEnd(10)} ${esc(e.attribute).padEnd(14)} ${esc(e.detail)}</span>`
+        ).join('\\n') + '</pre>';
+    }
+  }
+  $(into).innerHTML = h;
+}
+
 async function match() {
   const f = $('mfile').files[0];
   if (!f) { $('matchout').innerHTML = '<p class="sev5">Choose a file first.</p>'; return; }
   const fd = new FormData(); fd.append('folder', $('folder').value); fd.append('file', f);
   try {
-    const d = await (await post('/api/match', fd)).json();
-    let h = `<p>Loaded <b>${esc(d.fixture.manufacturer)} ${esc(d.fixture.model)}</b>
-             (${esc(d.fixture.source)})</p>`;
-    for (const r of d.results) {
-      h += `<h3>Mode: ${esc(r.mode)} &mdash; ${r.channels} ch</h3>`;
-      if (!r.matches.length) { h += '<p>No candidates.</p>'; continue; }
-      h += '<table><tr><th>Head</th><th>Score</th><th>Why</th></tr>' +
-        r.matches.map(m => `<tr><td>${esc(m.label)}</td>
-          <td>${m.exact ? '<span class="exact">EXACT</span>' : Math.round(m.score*100)+'%'}</td>
-          <td class="note">${m.reasons.map(esc).join('<br>')}</td></tr>`).join('') + '</table>';
-      const best = r.matches[0];
-      if (best.edits.length) {
-        h += `<p><b>To use &ldquo;${esc(best.label)}&rdquo;, change (most critical first):</b></p><pre>` +
-          best.edits.map(e =>
-            `<span class="sev${e.severity}">ch ${String(e.offset).padStart(3)}  ` +
-            `${e.action.padEnd(10)} ${esc(e.attribute).padEnd(14)} ${esc(e.detail)}</span>`
-          ).join('\\n') + '</pre>';
-      }
-    }
-    $('matchout').innerHTML = h;
+    render(await (await post('/api/match', fd)).json(), 'matchout');
   } catch (e) { $('matchout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 

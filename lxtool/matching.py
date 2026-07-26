@@ -81,18 +81,46 @@ def _footprint(mode: Mode) -> int:
     return mode.channel_count
 
 
+def _sequence(mode: Mode) -> list[Channel]:
+    """Channels in patch order - the sequence alignment runs over."""
+    return sorted(mode.channels, key=lambda c: c.offset)
+
+
+def _token(ch: Channel) -> tuple[str, bool]:
+    return (ch.attribute, ch.fine)
+
+
+def content_score(target: Mode, candidate: Mode) -> float:
+    """How much of the *same stuff* is present, ignoring order entirely.
+
+    Jaccard over coarse attribute sets.  Separating this from ordering matters
+    because "right channels, wrong order" is a five-minute repatch while
+    "missing channels" means building a head.
+    """
+    a, b = target.attribute_set(), candidate.attribute_set()
+    a.discard("Unknown")
+    b.discard("Unknown")
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
 def compare_modes(target: Mode, candidate: Mode) -> tuple[float, list[Edit]]:
     """Score ``candidate`` against ``target`` and list the edits to reconcile them.
+
+    Uses sequence alignment rather than slot-by-slot comparison.  That matters:
+    if a fixture inserts one channel near the top, a positional comparison
+    reports every later slot as wrong, while alignment correctly reports a
+    single insertion and leaves the rest matched.
 
     Returns a score in 0..1 and the ordered edit list.  When the candidate has
     no channel detail - which is the case for ChamSys heads until a ``.hed``
     decoder exists - only the footprint can be compared, and the score is
     capped to reflect that uncertainty.
     """
-    t_by_off = target.by_offset()
-    c_by_off = candidate.by_offset()
-
-    if not c_by_off:
+    if not candidate.channels:
         # Footprint-only comparison.
         t_size, c_size = _footprint(target), _footprint(candidate)
         if not t_size or not c_size:
@@ -103,80 +131,126 @@ def compare_modes(target: Mode, candidate: Mode) -> tuple[float, list[Edit]]:
         spread = abs(t_size - c_size) / max(t_size, c_size)
         return max(0.0, 0.5 - spread), []
 
+    t_seq, c_seq = _sequence(target), _sequence(candidate)
+    matcher = difflib.SequenceMatcher(
+        a=[_token(c) for c in c_seq], b=[_token(c) for c in t_seq], autojunk=False
+    )
+
     edits: list[Edit] = []
-    offsets = sorted(set(t_by_off) | set(c_by_off))
-    matched = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "replace":
+            # Pair them up positionally within the block; any surplus on
+            # either side becomes an add or a remove.
+            for k in range(max(i2 - i1, j2 - j1)):
+                c_ch = c_seq[i1 + k] if i1 + k < i2 else None
+                t_ch = t_seq[j1 + k] if j1 + k < j2 else None
+                if c_ch is not None and t_ch is not None:
+                    edits.append(_retype(t_ch, c_ch))
+                elif t_ch is not None:
+                    edits.append(_add(t_ch))
+                elif c_ch is not None:
+                    edits.append(_remove(c_ch))
+        elif tag == "insert":
+            for t_ch in t_seq[j1:j2]:
+                edits.append(_add(t_ch))
+        elif tag == "delete":
+            for c_ch in c_seq[i1:i2]:
+                edits.append(_remove(c_ch))
 
-    # Where an attribute exists in both but at different offsets, that is a
-    # move rather than an add+remove - much cheaper for the tech to action.
-    t_attr_offsets: dict[str, list[int]] = {}
-    for off, ch in t_by_off.items():
-        if not ch.fine:
-            t_attr_offsets.setdefault(ch.attribute, []).append(off)
-    c_attr_offsets: dict[str, list[int]] = {}
-    for off, ch in c_by_off.items():
-        if not ch.fine:
-            c_attr_offsets.setdefault(ch.attribute, []).append(off)
+    edits = _collapse_moves(edits)
 
-    moved: set[int] = set()
-    for attr, t_offs in t_attr_offsets.items():
-        c_offs = c_attr_offsets.get(attr, [])
-        for t_off, c_off in zip(sorted(t_offs), sorted(c_offs)):
-            if t_off != c_off:
-                edits.append(Edit(
-                    action="move",
-                    offset=c_off,
-                    attribute=attr,
-                    detail=f"move from ch {c_off} to ch {t_off}",
-                    severity=attributes.criticality(attr),
-                ))
-                moved.update({t_off, c_off})
+    order = matcher.ratio()
+    content = content_score(target, candidate)
+    # Content is weighted a little higher than ordering: having the right
+    # parameters at the wrong offsets is a far smaller job than lacking them.
+    score = 0.45 * order + 0.55 * content
 
-    for off in offsets:
-        t_ch, c_ch = t_by_off.get(off), c_by_off.get(off)
+    # A colour-system mismatch is disqualifying in practice, so it must cost
+    # more than a couple of stray channels would.
+    t_col = attributes.colour_system(target.attribute_set())
+    c_col = attributes.colour_system(candidate.attribute_set())
+    if t_col != c_col and "none" not in (t_col, c_col):
+        score *= 0.6
 
-        if t_ch and c_ch:
-            if t_ch.attribute == c_ch.attribute:
-                matched += 1
-                if t_ch.fine != c_ch.fine:
-                    edits.append(Edit(
-                        action="resolution",
-                        offset=off,
-                        attribute=t_ch.attribute,
-                        detail=f"{'16-bit' if t_ch.fine else '8-bit'} expected, "
-                               f"library has {'16-bit' if c_ch.fine else '8-bit'}",
-                        severity=2,
-                    ))
-            elif off not in moved:
-                edits.append(Edit(
-                    action="retype",
-                    offset=off,
-                    attribute=t_ch.attribute,
-                    detail=f"library has {c_ch.attribute} ({c_ch.name}), needs {t_ch.attribute}",
-                    severity=attributes.criticality(t_ch.attribute),
-                ))
-        elif t_ch and not c_ch:
-            if off not in moved:
-                edits.append(Edit(
-                    action="add",
-                    offset=off,
-                    attribute=t_ch.attribute,
-                    detail=f"add {t_ch.attribute} ({t_ch.name})",
-                    severity=attributes.criticality(t_ch.attribute),
-                ))
-        elif c_ch and not t_ch:
-            if off not in moved:
-                edits.append(Edit(
-                    action="remove",
-                    offset=off,
-                    attribute=c_ch.attribute,
-                    detail=f"remove {c_ch.attribute} ({c_ch.name})",
-                    severity=max(1, attributes.criticality(c_ch.attribute) - 1),
-                ))
+    return round(min(score, 1.0), 4), sort_edits(edits)
 
-    total = max(len(offsets), 1)
-    score = matched / total
-    return score, sort_edits(edits)
+
+def _add(t_ch: Channel) -> Edit:
+    return Edit(
+        action="add",
+        offset=t_ch.offset,
+        attribute=t_ch.attribute,
+        detail=f"insert {t_ch.attribute} ({t_ch.name})",
+        severity=attributes.criticality(t_ch.attribute),
+    )
+
+
+def _remove(c_ch: Channel) -> Edit:
+    return Edit(
+        action="remove",
+        offset=c_ch.offset,
+        attribute=c_ch.attribute,
+        detail=f"remove {c_ch.attribute} ({c_ch.name})",
+        severity=max(1, attributes.criticality(c_ch.attribute) - 1),
+    )
+
+
+def _retype(t_ch: Channel, c_ch: Channel) -> Edit:
+    if t_ch.attribute == c_ch.attribute and t_ch.fine != c_ch.fine:
+        return Edit(
+            action="resolution",
+            offset=t_ch.offset,
+            attribute=t_ch.attribute,
+            detail=f"needs {'16-bit' if t_ch.fine else '8-bit'}, "
+                   f"library has {'16-bit' if c_ch.fine else '8-bit'}",
+            severity=2,
+        )
+    return Edit(
+        action="retype",
+        offset=t_ch.offset,
+        attribute=t_ch.attribute,
+        detail=f"library has {c_ch.attribute} ({c_ch.name}), needs {t_ch.attribute}",
+        severity=attributes.criticality(t_ch.attribute),
+    )
+
+
+def _collapse_moves(edits: list[Edit]) -> list[Edit]:
+    """Rewrite an add/remove pair of the same attribute as a single move.
+
+    Alignment reports a relocated channel as a deletion plus an insertion.
+    A tech reads that far more easily as "move it", so pair them back up.
+    """
+    # Track by position in `edits`, not by value: two identical Edit objects
+    # compare equal as dataclasses, so index()-based bookkeeping would pair
+    # up the wrong ones.
+    removes = [i for i, e in enumerate(edits) if e.action == "remove"]
+    adds = [i for i, e in enumerate(edits) if e.action == "add"]
+    consumed: set[int] = set()
+    moves: list[Edit] = []
+
+    for ri in removes:
+        r = edits[ri]
+        if r.attribute == "Unknown":
+            continue
+        for ai in adds:
+            if ai in consumed:
+                continue
+            a = edits[ai]
+            if a.attribute != r.attribute:
+                continue
+            moves.append(Edit(
+                action="move",
+                offset=r.offset,
+                attribute=r.attribute,
+                detail=f"move from ch {r.offset} to ch {a.offset}",
+                severity=attributes.criticality(r.attribute),
+            ))
+            consumed.update({ri, ai})
+            break
+
+    return [e for i, e in enumerate(edits) if i not in consumed] + moves
 
 
 def sort_edits(edits: list[Edit]) -> list[Edit]:
@@ -208,8 +282,15 @@ def score_pair(target: Fixture, t_mode: Mode, cand: Fixture, c_mode: Mode) -> Ma
         reasons.append(f"same footprint ({t_size} ch)")
     elif t_size and c_size:
         reasons.append(f"footprint differs ({c_size} ch vs {t_size} ch)")
-    if not c_mode.by_offset():
+    if not c_mode.channels:
         reasons.append("channel detail unavailable - compared on footprint only")
+    else:
+        t_col = attributes.colour_detail(t_mode.attribute_set())
+        c_col = attributes.colour_detail(c_mode.attribute_set())
+        if t_col == c_col:
+            reasons.append(f"same colour system ({t_col})")
+        else:
+            reasons.append(f"colour system differs ({c_col} vs {t_col})")
     if edits:
         worst = max(e.severity for e in edits)
         reasons.append(f"{len(edits)} change(s) needed, worst severity {worst}/5")

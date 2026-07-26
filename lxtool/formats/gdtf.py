@@ -30,6 +30,61 @@ from ..model import Channel, Fixture, Mode, Range
 
 _DESCRIPTION = "description.xml"
 
+# Our canonical names -> GDTF's standard attribute names.
+#
+# This mapping is what makes an exported file usable rather than merely valid.
+# MagicQ (and MA3) map an imported GDTF channel onto the right encoder by
+# recognising the *standard* GDTF attribute name; anything unrecognised lands
+# as a generic slot the tech then has to fix by hand. So "Gobo1Rot" must go
+# out as "Gobo1Pos", "Shutter" as "Shutter1", and so on.
+GDTF_ATTRIBUTE: dict[str, str] = {
+    "Dimmer": "Dimmer", "Shutter": "Shutter1", "Strobe": "Shutter1Strobe",
+    "Pan": "Pan", "Tilt": "Tilt", "PanTiltSpeed": "PanTiltSpeed",
+    "Cyan": "ColorSub_C", "Magenta": "ColorSub_M", "Yellow": "ColorSub_Y",
+    "Red": "ColorAdd_R", "Green": "ColorAdd_G", "Blue": "ColorAdd_B",
+    "White": "ColorAdd_W", "Amber": "ColorAdd_A", "UV": "ColorAdd_UV",
+    "Lime": "ColorAdd_L", "Indigo": "ColorAdd_RY",
+    "ColorWheel": "Color1", "ColorWheel2": "Color2", "ColorMacro": "ColorMacro1",
+    "CTO": "CTO", "CTB": "CTB", "Hue": "HSB_Hue", "Saturation": "HSB_Saturation",
+    "Gobo1": "Gobo1", "Gobo1Rot": "Gobo1Pos",
+    "Gobo2": "Gobo2", "Gobo2Rot": "Gobo2Pos",
+    "Prism": "Prism1", "PrismRot": "Prism1Pos",
+    "Focus": "Focus1", "Zoom": "Zoom", "Iris": "Iris", "Frost": "Frost1",
+    "Animation": "AnimationWheel1", "AnimationRot": "AnimationWheel1Pos",
+    "Control": "Control1", "Function": "Function", "Reset": "Control1",
+    "Lamp": "Control1", "Fan": "Fan", "Speed": "Control1", "Macro": "Control1",
+}
+
+# GDTF FeatureGroup.Feature for each standard attribute above.
+GDTF_FEATURE: dict[str, str] = {
+    "Dimmer": "Dimmer.Dimmer", "Shutter1": "Dimmer.Dimmer",
+    "Shutter1Strobe": "Dimmer.Dimmer",
+    "Pan": "Position.PanTilt", "Tilt": "Position.PanTilt",
+    "PanTiltSpeed": "Position.PanTilt",
+    "Gobo1": "Gobo.Gobo", "Gobo1Pos": "Gobo.Gobo",
+    "Gobo2": "Gobo.Gobo", "Gobo2Pos": "Gobo.Gobo",
+    "AnimationWheel1": "Gobo.Gobo", "AnimationWheel1Pos": "Gobo.Gobo",
+    "Focus1": "Focus.Focus",
+    "Zoom": "Beam.Beam", "Iris": "Beam.Beam", "Frost1": "Beam.Beam",
+    "Prism1": "Beam.Beam", "Prism1Pos": "Beam.Beam",
+    "Control1": "Control.Control", "Function": "Control.Control",
+    "Fan": "Control.Control",
+}
+
+
+def gdtf_attribute(canonical: str) -> str:
+    """GDTF standard attribute name for one of our canonical names."""
+    return GDTF_ATTRIBUTE.get(canonical, canonical)
+
+
+def gdtf_feature(gdtf_attr: str) -> str:
+    """FeatureGroup.Feature for a GDTF attribute, defaulting to Colour.
+
+    Everything not listed in :data:`GDTF_FEATURE` is a colour attribute -
+    that is the only group large enough to be worth a catch-all.
+    """
+    return GDTF_FEATURE.get(gdtf_attr, "Color.Color")
+
 
 def _dmx_value(raw: str | None, default: int = 0) -> int:
     """Parse a GDTF DMXValue like ``"128/1"`` (value/byte-count).
@@ -181,18 +236,30 @@ def build_description(fixture: Fixture) -> str:
         "FixtureTypeID": "00000000-0000-0000-0000-000000000000",
     })
 
+    # Declare the GDTF standard names, not our internal ones, so importers
+    # recognise them and land each channel on the right encoder.
+    gdtf_names = sorted({gdtf_attribute(a) for a in used})
+
     attr_defs = ET.SubElement(ft, "AttributeDefinitions")
     ET.SubElement(attr_defs, "ActivationGroups")
+
+    features: dict[str, set[str]] = {}
+    for name in gdtf_names:
+        group, _, feature = gdtf_feature(name).partition(".")
+        features.setdefault(group, set()).add(feature)
+
     feature_groups = ET.SubElement(attr_defs, "FeatureGroups")
-    for group in sorted({attributes.group_of(a) for a in used}):
-        fg = ET.SubElement(feature_groups, "FeatureGroup", {"Name": group, "Pretty": group.title()})
-        ET.SubElement(fg, "Feature", {"Name": group})
+    for group in sorted(features):
+        fg = ET.SubElement(feature_groups, "FeatureGroup", {"Name": group, "Pretty": group})
+        for feature in sorted(features[group]):
+            ET.SubElement(fg, "Feature", {"Name": feature})
+
     attrs_el = ET.SubElement(attr_defs, "Attributes")
-    for a in used:
+    for name in gdtf_names:
         ET.SubElement(attrs_el, "Attribute", {
-            "Name": a,
-            "Pretty": a,
-            "Feature": f"{attributes.group_of(a)}.{attributes.group_of(a)}",
+            "Name": name,
+            "Pretty": name,
+            "Feature": gdtf_feature(name),
         })
 
     geometries = ET.SubElement(ft, "Geometries")
@@ -210,37 +277,54 @@ def build_description(fixture: Fixture) -> str:
 
         for chans in by_attr.values():
             coarse = next((c for c in chans if not c.fine), chans[0])
+            g_attr = gdtf_attribute(coarse.attribute)
             offsets = ",".join(str(c.offset) for c in chans)
+
             chan_el = ET.SubElement(chans_el, "DMXChannel", {
                 "DMXBreak": "1",
                 "Offset": offsets,
                 "Default": f"{coarse.default}/1",
                 "Highlight": f"{coarse.highlight}/1" if coarse.highlight is not None else "None",
                 "Geometry": "Body",
+                # The spec requires "<Geometry>_<Attribute>" here, and importers
+                # rely on it when the attribute itself is ambiguous.
+                "Name": f"Body_{g_attr}",
             })
             log_el = ET.SubElement(chan_el, "LogicalChannel", {
-                "Attribute": coarse.attribute,
-                "Snap": "No",
+                "Attribute": g_attr,
+                # Wheel-style parameters must not fade between slots.
+                "Snap": "Yes" if _snaps(coarse.attribute) else "No",
                 "Master": "None",
             })
             if coarse.ranges:
                 for r in coarse.ranges:
                     ET.SubElement(log_el, "ChannelFunction", {
-                        "Name": r.name or coarse.attribute,
-                        "Attribute": coarse.attribute,
+                        "Name": r.name or g_attr,
+                        "Attribute": g_attr,
                         "DMXFrom": f"{r.dmx_from}/1",
                         "Default": f"{coarse.default}/1",
                     })
             else:
                 ET.SubElement(log_el, "ChannelFunction", {
-                    "Name": coarse.attribute,
-                    "Attribute": coarse.attribute,
+                    "Name": g_attr,
+                    "Attribute": g_attr,
                     "DMXFrom": "0/1",
                     "Default": f"{coarse.default}/1",
                 })
 
     ET.indent(root, space="  ")
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
+
+
+# Parameters that step between discrete slots rather than fading through them.
+_SNAP_ATTRIBUTES = frozenset({
+    "ColorWheel", "ColorWheel2", "ColorMacro", "Gobo1", "Gobo2",
+    "Animation", "Prism", "Control", "Function", "Reset", "Lamp", "Macro",
+})
+
+
+def _snaps(canonical: str) -> bool:
+    return canonical in _SNAP_ATTRIBUTES
 
 
 _IDENTITY = "{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,0.000000}{0.000000,0.000000,0.000000,1.000000}"

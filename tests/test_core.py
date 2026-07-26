@@ -198,6 +198,45 @@ def test_gdtf_roundtrip(tmp_path):
     assert [c.fine for c in b.channels] == [c.fine for c in a.channels]
 
 
+@pytest.mark.parametrize("canonical,gdtf_name", [
+    ("Shutter", "Shutter1"), ("Strobe", "Shutter1Strobe"),
+    ("Red", "ColorAdd_R"), ("Cyan", "ColorSub_C"),
+    ("ColorWheel", "Color1"), ("ColorWheel2", "Color2"),
+    ("Gobo1Rot", "Gobo1Pos"), ("Gobo2Rot", "Gobo2Pos"),
+    ("Prism", "Prism1"), ("PrismRot", "Prism1Pos"),
+    ("Focus", "Focus1"), ("Frost", "Frost1"), ("Control", "Control1"),
+    ("Pan", "Pan"), ("Dimmer", "Dimmer"), ("Zoom", "Zoom"),
+])
+def test_gdtf_uses_standard_attribute_names(canonical, gdtf_name):
+    """Importers map channels onto encoders by recognising the standard name."""
+    assert gdtf.gdtf_attribute(canonical) == gdtf_name
+    # and it must survive the trip home
+    assert attributes.normalise(gdtf_name) == canonical
+
+
+def test_gdtf_standard_names_survive_export(tmp_path):
+    fx = ofl.parse(json.dumps(OFL_DOC), manufacturer="eurolite")
+    out = gdtf.write(fx, tmp_path / "x.gdtf")
+    import zipfile
+    xml = zipfile.ZipFile(out).read("description.xml").decode()
+
+    assert 'Attribute Name="Color1"' in xml
+    assert 'Feature="Position.PanTilt"' in xml
+    assert 'Feature="Dimmer.Dimmer"' in xml
+    assert 'Name="Body_Pan"' in xml
+    # Wheels must snap, continuous parameters must not.
+    assert 'Attribute="Color1" Snap="Yes"' in xml
+    assert 'Attribute="Pan" Snap="No"' in xml
+
+    # Round-trip still lands back on our canonical vocabulary.
+    assert gdtf.read(out).modes[0].attribute_set() == fx.modes[0].attribute_set()
+
+
+def test_gdtf_feature_defaults_to_colour():
+    assert gdtf.gdtf_feature("ColorAdd_R") == "Color.Color"
+    assert gdtf.gdtf_feature("Pan") == "Position.PanTilt"
+
+
 def test_gdtf_dmx_value_normalises_to_8bit():
     assert gdtf._dmx_value("255/1") == 255
     assert gdtf._dmx_value("65535/2") == 255
@@ -354,6 +393,80 @@ def test_edits_are_ordered_most_critical_first():
     assert severities == sorted(severities, reverse=True)
     # Dimmer is the most critical thing to fix, so it must lead.
     assert edits[0].attribute == "Dimmer"
+
+
+def test_single_insertion_does_not_cascade():
+    """The reason the matcher uses alignment rather than slot-by-slot compare.
+
+    Inserting one channel near the top shifts every later offset. A positional
+    comparison calls all of them wrong; alignment must report one insertion.
+    """
+    cand = _mode("lib", ["Dimmer", "Pan", "Tilt", "Zoom", "Focus", "Iris", "Frost"])
+    target = _mode("t", ["Dimmer", "Shutter", "Pan", "Tilt", "Zoom", "Focus", "Iris", "Frost"])
+    score, edits = matching.compare_modes(target, cand)
+
+    assert len(edits) == 1
+    assert edits[0].action == "add"
+    assert edits[0].attribute == "Shutter"
+    assert edits[0].offset == 2
+    assert score > 0.85
+
+
+def test_deletion_does_not_cascade():
+    cand = _mode("lib", ["Dimmer", "Shutter", "Pan", "Tilt", "Zoom"])
+    target = _mode("t", ["Dimmer", "Pan", "Tilt", "Zoom"])
+    _, edits = matching.compare_modes(target, cand)
+    assert len(edits) == 1
+    assert edits[0].action == "remove" and edits[0].attribute == "Shutter"
+
+
+def test_relocated_channel_reads_as_a_move():
+    cand = _mode("lib", ["Dimmer", "Zoom", "Pan", "Tilt"])
+    target = _mode("t", ["Dimmer", "Pan", "Tilt", "Zoom"])
+    _, edits = matching.compare_modes(target, cand)
+    moves = [e for e in edits if e.action == "move"]
+    assert len(moves) == 1 and moves[0].attribute == "Zoom"
+    # A move must not also be reported as a separate add/remove pair.
+    assert not [e for e in edits if e.action in ("add", "remove") and e.attribute == "Zoom"]
+
+
+@pytest.mark.parametrize("attrs,system,detail", [
+    ({"Cyan", "Magenta", "Yellow"}, "cmy", "CMY"),
+    ({"Red", "Green", "Blue"}, "rgb", "RGB"),
+    ({"Red", "Green", "Blue", "White"}, "rgb", "RGBW"),
+    ({"Red", "Green", "Blue", "White", "Amber", "UV"}, "rgb", "RGBWAUV"),
+    ({"Cyan", "Magenta", "Yellow", "Red"}, "hybrid", "CMY+R"),
+    ({"ColorWheel"}, "wheel", "colour wheel"),
+    ({"Dimmer", "Pan"}, "none", "no colour"),
+])
+def test_colour_system(attrs, system, detail):
+    assert attributes.colour_system(attrs) == system
+    assert attributes.colour_detail(attrs) == detail
+
+
+def test_colour_system_mismatch_is_penalised():
+    """A CMY head is not a substitute for an RGB one, whatever the names say."""
+    cmy = _mode("cmy", ["Dimmer", "Cyan", "Magenta", "Yellow"])
+    rgb = _mode("rgb", ["Dimmer", "Red", "Green", "Blue"])
+    mismatch, _ = matching.compare_modes(cmy, rgb)
+    same, _ = matching.compare_modes(cmy, _mode("c2", ["Dimmer", "Cyan", "Magenta", "Yellow"]))
+    assert same == 1.0
+    assert mismatch < 0.4
+
+
+def test_content_score_ignores_order():
+    a = _mode("a", ["Dimmer", "Pan", "Tilt"])
+    b = _mode("b", ["Tilt", "Dimmer", "Pan"])
+    assert matching.content_score(a, b) == 1.0
+    c = _mode("c", ["Dimmer", "Pan", "Zoom"])
+    assert 0 < matching.content_score(a, c) < 1.0
+
+
+def test_right_channels_wrong_order_beats_missing_channels():
+    target = _mode("t", ["Dimmer", "Pan", "Tilt", "Zoom"])
+    shuffled = _mode("s", ["Zoom", "Tilt", "Pan", "Dimmer"])
+    missing = _mode("m", ["Dimmer", "Pan", "Gobo1", "Frost"])
+    assert matching.compare_modes(target, shuffled)[0] > matching.compare_modes(target, missing)[0]
 
 
 def test_footprint_only_comparison_is_capped():

@@ -1,5 +1,7 @@
 """Command line interface: ``lx``.
 
+    lx fetch                                 cache the Open Fixture Library
+    lx search <query>                        search the cached catalogue
     lx scan   <heads-folder>                 index a ChamSys library
     lx match  <fixture-file> <heads-folder>  find the closest existing head
     lx convert <in> <out>                    convert between formats
@@ -12,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import matching
+from . import catalog, matching
 from .formats import chamsys, gdtf, ma2, ofl
 from .model import Fixture, Mode
 
@@ -60,8 +62,67 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fetch(args: argparse.Namespace) -> int:
+    print(f"Downloading Open Fixture Library from {catalog.BULK_URL} ...")
+    path = catalog.Catalog.download(args.cache)
+    cat = catalog.Catalog.load(args.cache)
+    size = path.stat().st_size / 1_000_000
+    print(f"Cached {len(cat)} fixtures ({size:.1f} MB) at {path}")
+    print(f"{len(cat.manufacturers())} manufacturers")
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    try:
+        cat = catalog.Catalog.load(args.cache)
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if cat.age_days and cat.age_days > 30:
+        print(f"note: catalogue is {cat.age_days:.0f} days old; 'lx fetch' to refresh\n",
+              file=sys.stderr)
+
+    hits = cat.search(args.query, limit=args.limit, channels=args.channels)
+    if not hits:
+        print(f"No match for {args.query!r} in {len(cat)} fixtures.")
+        return 0
+
+    for e in hits:
+        modes = ", ".join(f"{n} ({c}ch)" for n, c in e.modes)
+        print(f"{e.key}")
+        print(f"    {e.label}  [{', '.join(e.categories)}]")
+        print(f"    {modes}")
+    return 0
+
+
+def _resolve_target(args: argparse.Namespace):
+    """Load the fixture to match, from a file or from the OFL catalogue."""
+    if getattr(args, "ofl", None):
+        cat = catalog.Catalog.load(args.cache)
+        entry = cat.get(args.ofl)
+        if entry is None:
+            hits = cat.search_scored(args.ofl, limit=5)
+            if not hits:
+                raise SystemExit(f"nothing in the catalogue matches {args.ofl!r}")
+            # Only complain about ambiguity when the top hit isn't a clear
+            # winner - otherwise "mac 700" would need spelling out in full.
+            clear = len(hits) == 1 or hits[0][0] - hits[1][0] >= 0.2
+            if not clear:
+                lines = "\n".join(f"  {h.key}  ({h.label})" for _, h in hits)
+                raise SystemExit(f"{args.ofl!r} is ambiguous. Did you mean:\n{lines}")
+            entry = hits[0][1]
+        print(f"Using {entry.key} from the OFL catalogue")
+        return entry.to_fixture()
+    return load_fixture(args.fixture)
+
+
 def cmd_match(args: argparse.Namespace) -> int:
-    target = load_fixture(args.fixture)
+    if not args.fixture and not args.ofl:
+        print("give a fixture file, or --ofl <key-or-search>", file=sys.stderr)
+        return 1
+
+    target = _resolve_target(args)
     lib = chamsys.ChamSysLibrary.scan(args.folder)
     library = lib.as_fixtures()
 
@@ -155,11 +216,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_scan)
 
     m = sub.add_parser("match", help="find the closest head in a ChamSys library")
-    m.add_argument("fixture", help="GDTF / OFL JSON / MA2 XML file")
+    m.add_argument("fixture", nargs="?", help="GDTF / OFL JSON / MA2 XML file")
     m.add_argument("folder", help="ChamSys heads folder")
+    m.add_argument("--ofl", metavar="KEY", help="match a fixture from the OFL catalogue instead of a file")
     m.add_argument("--mode", help="which mode of the source fixture to match")
     m.add_argument("--limit", type=int, default=10)
+    m.add_argument("--cache", help="catalogue cache directory")
     m.set_defaults(func=cmd_match)
+
+    fe = sub.add_parser("fetch", help="download the Open Fixture Library for offline use")
+    fe.add_argument("--cache", help="catalogue cache directory")
+    fe.set_defaults(func=cmd_fetch)
+
+    se = sub.add_parser("search", help="search the cached fixture catalogue")
+    se.add_argument("query")
+    se.add_argument("--channels", type=int, help="prefer fixtures with a mode of this size")
+    se.add_argument("--limit", type=int, default=20)
+    se.add_argument("--cache", help="catalogue cache directory")
+    se.set_defaults(func=cmd_search)
 
     c = sub.add_parser("convert", help="convert a fixture between formats")
     c.add_argument("source")
