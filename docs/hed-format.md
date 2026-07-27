@@ -1,98 +1,126 @@
-# ChamSys `.hed` head files — format analysis
+# ChamSys `.hed` head files — format
 
-## Status
+**Status: solved.** `.hed` files are read and written directly. This document
+records the obfuscation scheme, the personality layout, and how the scheme was
+recovered.
 
-**Head file *bodies* cannot currently be decoded.** Everything LX-Tool does with a
-ChamSys library works from filenames and the plain-text index CSVs instead.
-This document records what was established about the encoding so the work
-isn't repeated, and sets out the one concrete step that would finish it.
+## The obfuscation
 
-## What was tested
+Each character is XORed with a keystream that counts **down** by one per
+character, and the result has its high bit set:
 
-Analysis was run against real head files from a working MagicQ `heads` folder
-(`China_7x9WMiniParRGB_7ch.hed`, `Laserworld_EL-400RGB_9ch.hed`,
-`SPOT MOVERS.hed`, `test_test_SPOT MOVERS.hed`).
+```
+key(i) = (-i) mod 127        # note: modulo 127, not 128
+cipher = (plain XOR key) | 0x80
+```
 
-### Established facts
+with two details that matter:
 
-1. **Bodies are not plain text.** Every non-newline byte lies in `0x80`–`0xFF`.
-2. **Exactly 128 distinct byte values occur**, so each byte carries 7 bits of
-   payload with the high bit always set.
-3. **Newlines survive as literal `0x0A`.** They are the only bytes below
-   `0x80`, which means line structure is preserved and lines are encoded
-   individually or the newline is skipped by the encoder.
-4. **The keystream is position-locked, not chained.** Two head files saved
-   from the same source personality under different names
-   (`SPOT MOVERS.hed` vs `test_test_SPOT MOVERS.hed`) differ in only 11 bytes
-   out of 1529, and those differences do **not** cascade — byte 127 onward is
-   identical after a difference at byte 126. A chained/CBC-style cipher would
-   have diverged permanently from the first difference.
-5. **A fixed header exists.** The first 72-byte line is byte-identical across
-   fixtures from completely different manufacturers.
+* **Newlines are literal `0x0A` and do not advance the counter.** Only
+  payload characters increment `i`.
+* **A key of 0 is written as 127** at every position except the very first.
+  So `i = 0` uses key 0, but `i = 127, 254, 381 …` use key 127.
 
-### Ruled out
+The scheme is symmetric, so one routine both encodes and decodes —
+`decode_hed()` and `encode_hed()` in `lxtool/formats/chamsys.py`.
 
-| Hypothesis | How it was tested | Result |
-|---|---|---|
-| Plain 7-bit ASCII with high bit set (`b & 0x7F`) | Direct decode | Garbage. `HED` appears at offset 25 but is coincidental |
-| Single-byte XOR / add / subtract | All 256 keys × 3 ops, scored on printability | Best 0.88 printable, no readable text |
-| Complement (`0xFF - b`) | Direct decode | Garbage |
-| Monoalphabetic substitution | Byte-frequency analysis | Frequency is flat (max 1.2% vs ~15% expected for space in text) — ruled out |
-| Affine substitution `(m·b + k) mod 128` | All 64 odd multipliers × 128 offsets, scored on lighting vocabulary | No candidate produced a single dictionary hit |
-| Position-linear keystream `(b ± i + k)` | Per-line and global index, all offsets, both signs | Garbage |
-| Full affine-in-position `(b + a·i + k)` | 128 × 128 × 2 index modes | Garbage |
-| Repeating key (Vigenère) | Index of coincidence, periods 1–48 | IC flat at 0.0076 ≈ random (1/128 = 0.0078) — **no repeating key up to length 48** |
+### Why it resisted analysis
 
-### Conclusion
+The modulus is **127, not 128**. Every brute-force search over a 128-value
+keyspace — single-byte XOR, additive, affine, position-linear — misses it,
+because the keystream drifts by one relative to any mod-128 model roughly
+every 127 characters. Index-of-coincidence testing also came back flat at
+random for every period up to 48, since the true period is 127 and the
+keystream never repeats within a short window.
 
-The encoding uses a **long, non-repeating, position-locked keystream** over
-7-bit values — consistent with a PRNG or LFSR seeded identically for every
-file. That is not recoverable by statistical analysis of ciphertext alone in
-reasonable time.
+What was established from ciphertext alone, before the break:
 
-## How to finish this
+* payload bytes occupy exactly 128 distinct values in `0x80`–`0xFF`, so each
+  carries 7 bits
+* the keystream is position-locked, not chained — an isolated difference
+  between two otherwise-identical files does not cascade
+* byte frequency is flat, ruling out any monoalphabetic substitution
 
-Because the keystream is **fixed and position-locked**, a *single*
-known-plaintext/ciphertext pair recovers it for every byte position that pair
-covers — and therefore unlocks that prefix of *every* head file in the
-library. A large head file (6 KB+) would cover essentially the whole library.
+### How it was broken
 
-Concretely, one of these would do it:
+With a known-plaintext file: a head built in the MagicQ Head Editor with 20
+channels all named `AAAAAAAA`. Across the eight `A`s of one channel name the
+recovered key ran `38, 37, 36, 35, 34, 33, 32, 31` — a clean decrement, which
+identified the operation as XOR against a down-counter. Checking
+`(key + index) mod 127 == 0` across all twenty lines then pinned the modulus
+and the phase exactly.
 
-1. **A plain-text head file plus its saved `.hed`.** Older MagicQ versions and
-   hand-authored heads are plain text. If a plain-text head can be loaded into
-   MagicQ's Head Editor and re-saved, the before/after pair yields the
-   keystream directly.
-2. **A deliberately trivial head.** Create a head in the Head Editor whose
-   channel names are a known repeating string (e.g. twenty channels all named
-   `AAAAAAAA`), save it, and supply the file. The known plaintext gives the
-   keystream by subtraction/XOR at each position.
+That file is kept as a regression fixture at
+`tests/data/test_test_AAAAAAAA.hed`.
 
-Once recovered, drop the keystream into
-`lxtool/formats/chamsys.py::decode_hed`. The rest of the toolchain already
-routes through that function, so channel-level comparison against the ChamSys
-library would start working with no other changes.
+## Personality layout
 
-## Why this isn't blocking
+A decoded `.hed` is plain 7-bit ASCII:
 
-MagicQ **imports GDTF natively** (added in v1.9.0, improved through v1.9.8.3).
-So the highest-value direction — getting a new fixture *into* ChamSys — never
-needed `.hed` writing at all: LX-Tool emits GDTF and MagicQ imports it.
+```
+# MagicQ personality file.  Copyright Chamsys Ltd 2021 www.chamsys.co.uk
+\ Personality file for China 7x9 Watt Mini Led par RGB
+V,008c,"MagicQ 1";
+P,0008,"China_7x9WMiniParRGB_7ch","China","7ch","7x9WMiniParRGB",
+0007,0007,000a,0000,0000,0000,0001,0001,01fa,...
+"Dimmer",00000001,00000000,
+"Red",00002022,00000010,
+"Green",00002022,00000011,
+```
 
-Decoding `.hed` would improve one specific thing: comparing a new fixture
-against your existing library *channel by channel* rather than by
-footprint and name. Until then, matching against ChamSys is explicitly capped
-below "exact" and labelled `channel detail unavailable — compared on
-footprint only`, so the output never overstates its confidence.
+| Line | Meaning |
+|---|---|
+| `#` / `\` | Comments |
+| `V,<hex>,"MagicQ 1";` | File version |
+| `P,<hex>,"<name>","<manufacturer>","<mode>","<model>",` | Header. Note the order: manufacturer, then **mode**, then model |
+| next line | First field is the channel count |
+| `"<name>",<flags>,<attribute>,` | One per channel, in patch order |
 
-## Plain-text files in the `heads` folder
+### Channel rows
 
-These are readable and are what the scanner actually uses:
+* **flags** — `(encoder_bank << 4) | type`, where type `1` is HTP and `2` is
+  LTP. Encoder banks seen: `0` intensity, `1` beam, `2` colour, `3` position.
+  Higher bits are used too (RGB channels carry `0x2000`).
+* **attribute** — MagicQ's own parameter id.
+* **16-bit** parameters are written as *two consecutive rows sharing a name
+  and attribute number*; the second is the fine half.
+
+### Attribute numbers observed
+
+| # | Parameter | | # | Parameter |
+|---|---|---|---|---|
+| `0x00` | Dimmer | | `0x10` | Red |
+| `0x02` | Shutter | | `0x11` | Green |
+| `0x04` | Pan | | `0x12` | Blue |
+| `0x05` | Tilt | | `0x13` | White |
+| `0x06` | Colour wheel | | `0x1A` | Strobe |
+| `0x08` | Gobo 1 | | `0x26` | Macro |
+| `0x0E` | Prism | | `0x27` | Reset |
+| `0x3F` | Reserved (63) — carries no meaning | | | |
+
+This table is **corroboration, not the primary signal**. Real personalities
+misuse attribute numbers — one shipping fixture puts `Speed` on `0x02`, which
+the table calls Shutter — so the parser normalises the human-readable channel
+*name* first and falls back to the number only when the name is unrecognised.
+
+## Writing
+
+`encode_hed()` is exact and proven by round-trip against a real file.
+`build_personality()` emits the header and channel block, which are modelled
+directly on real personalities.
+
+A `.hed` also carries trailing sections (palettes, ranges, per-channel
+defaults) whose meaning has **not** been fully decoded. What is written is the
+minimum needed to describe the DMX layout, so treat `.hed` output as
+experimental: check it in the Head Editor first. GDTF import remains the
+route with no unknowns in it.
+
+## Other plain-text files in the `heads` folder
 
 | File | Contents |
 |---|---|
-| `<Manufacturer>_<Model>_<Mode>.hed` | Filename encodes manufacturer, model and mode; mode usually carries the channel count (`9ch`) |
+| `<Manufacturer>_<Model>_<Mode>.hed` | Filename mirrors the header fields |
 | `headmapcapture.csv` | `head_key, manufacturer, model, channel_count, visualiser_name` |
 | `wygheads.csv` | WYSIWYG visualiser mapping, same shape |
-| `manufacturer_exceptions.csv` | Manufacturer alias table (`adj,americandj`) — used for fuzzy manufacturer matching |
-| `heads.exp` | Small export descriptor, e.g. `PP,"All persons","Tue May 26 10:21:11 2026",0,0;` |
+| `manufacturer_exceptions.csv` | Manufacturer alias table (`adj,americandj`) |
+| `heads.exp` | Export descriptor, e.g. `PP,"All persons","Tue May 26 10:21:11 2026",0,0;` |

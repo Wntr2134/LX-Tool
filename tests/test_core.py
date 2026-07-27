@@ -98,10 +98,134 @@ def test_obfuscation_detection():
     assert not chamsys.looks_obfuscated(b"")
 
 
-def test_decode_hed_refuses_rather_than_guesses():
+DATA = Path(__file__).parent / "data"
+REAL_HEAD = DATA / "test_test_AAAAAAAA.hed"
+
+
+def test_plain_text_head_passes_through():
+    assert chamsys.decode_hed(b"# MagicQ personality file.\n") == "# MagicQ personality file.\n"
+
+
+def test_decode_real_head_file():
+    """Decoding a genuine MagicQ personality, produced by the Head Editor."""
+    text = chamsys.decode_hed(REAL_HEAD.read_bytes())
+    assert text.startswith("# MagicQ personality file.")
+    assert "www.chamsys.co.uk" in text
+    assert 'V,0099,"MagicQ 1";' in text
+    # 20 channels, all named AAAAAAAA, all "Reserved (63)" = 0x3f
+    assert text.count('"AAAAAAAA",00000012,0000003f,') == 20
+    # The decode must be exact: any residual key error shows up as non-ASCII.
+    assert all(32 <= ord(c) < 127 or c == "\n" for c in text)
+
+
+def test_encode_is_the_inverse_of_decode():
+    original = REAL_HEAD.read_bytes()
+    assert chamsys.encode_hed(chamsys.decode_hed(original)) == original
+
+
+@pytest.mark.parametrize("text", [
+    "A",
+    "AAAAAAAA",
+    "# header\nline two\n",
+    "x" * 300,                      # crosses the 127-byte keystream wrap
+    "\n".join(["abc"] * 100),       # newlines must not advance the counter
+    "".join(chr(c) for c in range(32, 127)),
+])
+def test_encode_decode_roundtrip(text):
+    assert chamsys.decode_hed(chamsys.encode_hed(text)) == text
+
+
+def test_encoded_output_looks_like_a_real_head():
+    blob = chamsys.encode_hed("# MagicQ personality file.\n")
+    assert chamsys.looks_obfuscated(blob)
+    assert all(b >= 0x80 for b in blob if b != 0x0A)
+
+
+def test_encode_rejects_non_ascii():
     with pytest.raises(chamsys.HedDecodeError):
-        chamsys.decode_hed(bytes([0xA3, 0xDE, 0x0A, 0xB0]))
-    assert chamsys.decode_hed(b"Head, Foo\n") == "Head, Foo\n"
+        chamsys.encode_hed("Café")
+
+
+def test_parse_real_personality():
+    fx = chamsys.read(REAL_HEAD)
+    assert fx.manufacturer == "test"
+    assert fx.model == "test"
+    mode = fx.modes[0]
+    assert mode.name == "AAAAAAAA"
+    assert mode.channel_count == 20
+    # "Reserved (63)" carries no meaning, so it must stay Unknown, not be guessed.
+    assert set(mode.attribute_set()) == {"Unknown"}
+    assert all(not c.fine for c in mode.channels)
+
+
+def test_parse_personality_channel_semantics():
+    """Names, 16-bit pairing and HTP, on a personality shaped like a real one."""
+    text = (
+        "# MagicQ personality file.\n"
+        '\\ Personality file for Test\n'
+        'V,008c,"MagicQ 1";\n'
+        'P,000c,"Robe_Spot_12ch","Robe","12ch","Spot",\n'
+        "000c,0000,0000,0000,0000,0000,0001,0001,01f5,00000000,\n"
+        '"Pan",00000032,00000004,\n'
+        '"Pan",00000032,00000004,\n'
+        '"Tilt",00000032,00000005,\n'
+        '"Tilt",00000032,00000005,\n'
+        '"Int",00000001,00000000,\n'
+        '"Shutter",00000012,00000002,\n'
+        '"Col1",00000022,00000006,\n'
+        '"Gobo",00000012,00000008,\n'
+    )
+    fx = chamsys.parse_personality(text)
+    assert (fx.manufacturer, fx.model) == ("Robe", "Spot")
+    mode = fx.modes[0]
+    assert mode.name == "12ch"
+
+    pan, pan_fine, tilt, tilt_fine = mode.channels[:4]
+    assert (pan.attribute, pan.fine) == ("Pan", False)
+    assert (pan_fine.attribute, pan_fine.fine) == ("Pan", True)
+    assert (tilt.attribute, tilt.fine) == ("Tilt", False)
+    assert tilt_fine.fine is True
+
+    intensity = mode.channels[4]
+    assert intensity.attribute == "Dimmer" and intensity.htp is True
+    assert mode.channels[5].htp is False
+    assert mode.channels[6].attribute == "ColorWheel"
+    assert mode.channels[7].attribute == "Gobo1"
+
+    # Declared footprint (0x000c = 12) is kept even though only 8 are named.
+    assert mode.channel_count == 12
+
+
+def test_channel_name_beats_attribute_number():
+    """Real personalities misuse attribute numbers; the name is the better signal.
+
+    A cheap fixture's head really does ship "Speed" on attribute 0x02, which
+    the table calls Shutter.
+    """
+    text = (
+        'P,0001,"x","ACME","1ch","Thing",\n'
+        "0001,0000,0000,0000,0000,0000,0001,0001,01f5,00000000,\n"
+        '"Speed",00000012,00000002,\n'
+    )
+    assert chamsys.parse_personality(text).modes[0].channels[0].attribute == "Speed"
+
+
+def test_write_then_read_roundtrip(tmp_path):
+    fx = Fixture(manufacturer="Robe", model="Pointe", modes=[Mode(name="16ch", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
+        Channel(offset=2, name="Pan", attribute="Pan"),
+        Channel(offset=3, name="Tilt", attribute="Tilt"),
+        Channel(offset=4, name="Col1", attribute="ColorWheel"),
+    ])])
+    out = chamsys.write(fx, tmp_path / "Robe_Pointe_16ch.hed")
+
+    assert chamsys.looks_obfuscated(out.read_bytes())
+    back = chamsys.read(out)
+    assert back.manufacturer == "Robe"
+    assert back.model == "Pointe"
+    assert back.modes[0].name == "16ch"
+    assert back.modes[0].attributes() == ["Dimmer", "Pan", "Tilt", "ColorWheel"]
+    assert back.modes[0].channels[0].htp is True
 
 
 def test_scan_library(tmp_path):
@@ -472,8 +596,7 @@ def test_right_channels_wrong_order_beats_missing_channels():
 def test_footprint_only_comparison_is_capped():
     """A ChamSys head with no channel detail must never claim an exact match."""
     target = _mode("t", ["Dimmer", "Pan", "Tilt"])
-    blind = Mode(name="9ch")
-    blind.__dict__["_declared_count"] = 3
+    blind = Mode(name="9ch", declared_count=3)
     score, edits = matching.compare_modes(target, blind)
     assert 0 < score < 1.0
     assert edits == []

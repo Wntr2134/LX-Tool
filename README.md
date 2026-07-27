@@ -119,7 +119,7 @@ encoder instead of dumping it into a generic slot.
 | MVR (`.mvr`) | yes | yes | Whole rigs: fixtures, modes, addresses, layers. **Unvalidated** — see below |
 | Open Fixture Library (`.json`) | yes | — | Open API, ~620 fixtures cached offline |
 | grandMA2 XML (`.xml`) | yes | yes | **Not yet validated against a real MA2 export** — see below |
-| ChamSys (`.hed`) | filename + CSV index | via GDTF | Bodies are obfuscated — see [docs/hed-format.md](docs/hed-format.md) |
+| ChamSys (`.hed`) | yes | experimental | Obfuscation solved — see [docs/hed-format.md](docs/hed-format.md) |
 
 ### grandMA3
 
@@ -137,22 +137,37 @@ lx doctor show.mvr     # what the archive carries and what it's missing
 patch moves between desks: a mode that is 8 channels in one library can be 10
 in another, and the rig silently collides.
 
-### Getting fixtures into ChamSys
+### ChamSys
 
-MagicQ imports GDTF natively, so the supported route is
-`anything -> GDTF -> MagicQ import`. LX-Tool never needs to write `.hed`.
+Head files are read directly, so `lx scan` gives real channel lists and
+matches are channel-by-channel:
 
-### Two known limitations, stated plainly
+```
+$ lx match new_par.json ~/Documents/MagicQ/heads
+ 1. [  70%] China 7x9WMiniParRGB [7ch]
+        - same footprint (7 ch)
+        - same colour system (RGBW)
+        - 2 change(s) needed, worst severity 1/5
 
-**ChamSys `.hed` bodies are obfuscated.** LX-Tool indexes a ChamSys library
-from head *filenames* (`Manufacturer_Model_Mode.hed`) and the plain-text
-`headmapcapture.csv` / `manufacturer_exceptions.csv`. That's enough to answer
-"do I have this fixture, in what modes, at what channel count" — but not to
-diff channel-by-channel against your existing heads. Matches against ChamSys
-are therefore scored on footprint and name only, capped below "exact", and
-labelled as such. They are never presented as more certain than they are.
-[docs/hed-format.md](docs/hed-format.md) records the full analysis and the one
-step that would finish it.
+To use 'China 7x9WMiniParRGB [7ch]', change (most critical first):
+
+   ch   6  remove     Speed          remove Speed (Speed)
+   ch   7  add        Macro          insert Macro (Macro)
+```
+
+For getting a fixture *into* MagicQ, two routes: `lx convert x.json out.gdtf`
+and import it (no unknowns), or `lx convert x.json out.hed` and drop it in the
+heads folder (experimental — verify in the Head Editor).
+
+### Known limitations, stated plainly
+
+**ChamSys `.hed` writing is experimental.** *Reading* is solved and exact —
+the obfuscation is XOR against a down-counter mod 127, documented in
+[docs/hed-format.md](docs/hed-format.md) — so library scans and matches now
+work channel by channel. Writing emits a correct header and channel block,
+but a `.hed` also carries trailing sections (palettes, ranges, per-channel
+defaults) that have not been fully decoded. Check any generated `.hed` in the
+Head Editor; GDTF import is still the route with no unknowns in it.
 
 **MVR is unvalidated too.** Written against the published structure, parsed
 namespace-agnostically, and it degrades safely: a fixture whose GDTF isn't

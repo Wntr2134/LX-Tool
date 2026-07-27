@@ -46,10 +46,7 @@ def load_fixture(path: Path | str) -> Fixture:
             "Use 'lx rig' to summarise it and 'lx doctor' to check what it carries."
         )
     if suffix == ".hed":
-        raise SystemExit(
-            f"{path.name}: ChamSys .hed bodies are obfuscated and cannot be read yet.\n"
-            "See docs/hed-format.md. Use 'lx scan' to index a library by filename."
-        )
+        return chamsys.read(path)
     raise SystemExit(f"unsupported format: {path.suffix or path.name}")
 
 
@@ -63,7 +60,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.verbose:
         for f in sorted(fixtures, key=lambda f: f.key.lower()):
             for m in f.modes:
-                size = m.__dict__.get("_declared_count") or "?"
+                size = m.channel_count or "?"
                 print(f"  {f.key:<45} {m.name:<24} {size} ch")
     return 0
 
@@ -174,10 +171,14 @@ def cmd_convert(args: argparse.Namespace) -> int:
         gdtf.write(fixture, out)
     elif suffix == ".xml":
         ma2.write(fixture, out)
+    elif suffix == ".hed":
+        chamsys.write(fixture, out)
+        print("note: .hed writing is experimental - check it in the MagicQ Head "
+              "Editor before trusting it. GDTF import remains the safe route.",
+              file=sys.stderr)
     else:
         raise SystemExit(
-            f"cannot write {suffix or out.name}. Supported targets: .gdtf, .xml\n"
-            "For ChamSys, write .gdtf - MagicQ imports GDTF natively."
+            f"cannot write {suffix or out.name}. Supported targets: .gdtf, .xml, .hed"
         )
 
     modes = ", ".join(f"{m.name} ({m.channel_count} ch)" for m in fixture.modes)
@@ -234,10 +235,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         obf = chamsys.looks_obfuscated(data)
         head = chamsys.parse_head_filename(path)
         print(f"{path.name}")
-        print(f"  body      : {'obfuscated (cannot decode)' if obf else 'plain text'}")
+        print(f"  body      : {'obfuscated (decoded ok)' if obf else 'plain text'}")
         print(f"  from name : {head.manufacturer!r} / {head.model!r} / {head.mode!r}")
-        print(f"  channels  : {head.channel_count if head.channel_count else 'unknown'}")
-        return 0
+        if args.verbose:
+            print()
+            print(chamsys.decode_hed(data))
+            return 0
 
     fixture = load_fixture(path)
     print(f"{path.name}: {fixture.key}  (source={fixture.source})")

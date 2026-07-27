@@ -54,14 +54,17 @@ class Mode:
 
     name: str
     channels: list[Channel] = field(default_factory=list)
+    # Footprint stated by the source, used when it exceeds the channels we
+    # could name: a personality may declare 16 slots but label only 12, and
+    # losing the other four would shift everything patched after it.
+    declared_count: int | None = None
 
     @property
     def channel_count(self) -> int:
         """Footprint in DMX slots, which is not the same as len(channels)
-        when a personality leaves gaps."""
-        if not self.channels:
-            return 0
-        return max(c.offset for c in self.channels)
+        when a personality leaves gaps or trailing slots unnamed."""
+        highest = max((c.offset for c in self.channels), default=0)
+        return max(highest, self.declared_count or 0)
 
     def by_offset(self) -> dict[int, Channel]:
         return {c.offset: c for c in self.channels}

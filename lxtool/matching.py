@@ -74,10 +74,7 @@ class Match:
 
 
 def _footprint(mode: Mode) -> int:
-    """Declared channel count, falling back to a count parsed from a filename."""
-    declared = mode.__dict__.get("_declared_count")
-    if declared:
-        return int(declared)
+    """DMX slots the mode occupies, declared or derived."""
     return mode.channel_count
 
 

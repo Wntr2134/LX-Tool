@@ -51,7 +51,7 @@ def api_scan(folder: str = Form(...)) -> dict:
                 "manufacturer": f.manufacturer,
                 "model": f.model,
                 "modes": [
-                    {"name": m.name, "channels": m.__dict__.get("_declared_count")}
+                    {"name": m.name, "channels": m.channel_count}
                     for m in f.modes
                 ],
             }
