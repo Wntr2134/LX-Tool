@@ -27,6 +27,29 @@ app = FastAPI(title="LX-Tool", description="Fixture library matching and convers
 _SUPPORTED = {".gdtf", ".json", ".xml"}
 
 
+def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Entry point for the ``lx-web`` command.
+
+    Binds to localhost by default: the UI takes a filesystem path and has no
+    auth, so it is meant for the tech's own machine, not a shared network.
+    """
+    import argparse
+
+    import uvicorn
+
+    parser = argparse.ArgumentParser(prog="lx-web", description="LX-Tool web UI")
+    parser.add_argument("--host", default=host)
+    parser.add_argument("--port", type=int, default=port)
+    parser.add_argument("--reload", action="store_true")
+    args = parser.parse_args()
+
+    print(f"LX-Tool: http://{args.host}:{args.port}")
+    uvicorn.run(
+        "lxtool.web.app:app" if args.reload else app,
+        host=args.host, port=args.port, reload=args.reload,
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return PAGE

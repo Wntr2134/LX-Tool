@@ -14,48 +14,73 @@ head by hand. This does the comparison for you.
 
 ## Install
 
+Needs Python 3.10 or newer. From the repo root:
+
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/Wntr2134/LX-Tool.git
+cd LX-Tool
+git checkout claude/fixture-library-converter-73139h
+
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+pip install -e ".[web]"
 ```
 
-Python 3.11+. The library and CLI have **no third-party dependencies** — only
-the web UI needs FastAPI.
+That installs an `lx` command you can run from any directory. The library and
+CLI have **no third-party dependencies**; only the web UI pulls in FastAPI, so
+`pip install -e .` alone is enough for CLI-only use.
+
+Check it worked:
+
+```bash
+lx --help
+```
 
 ## Use
 
 ### Web UI
 
 ```bash
-uvicorn lxtool.web.app:app --reload
+lx-web            # or: uvicorn lxtool.web.app:app --reload
 ```
 
-Open <http://127.0.0.1:8000>, point it at your MagicQ `heads` folder, and
-upload a fixture file.
+Then open <http://127.0.0.1:8000>. Paste your MagicQ `heads` folder path,
+scan it, and search or upload a fixture.
+
+Your heads folder is usually:
+
+| OS | Path |
+|---|---|
+| Windows | `C:\ProgramData\MagicQ\heads` |
+| macOS | `~/Documents/MagicQ/heads` |
+| Linux | `~/MagicQ/heads` |
 
 ### CLI
 
 ```bash
 # Pull the Open Fixture Library once (~3 MB), then work offline
-python -m lxtool.cli fetch
-python -m lxtool.cli search "mac 700"
-python -m lxtool.cli search "led par rgbw" --channels 8
+lx fetch
+lx search "mac 700"
+lx search "led par rgbw" --channels 8
 
 # Index your ChamSys library
-python -m lxtool.cli scan ~/Documents/MagicQ/heads -v
+lx scan ~/Documents/MagicQ/heads -v
 
 # Does my library already have this? What would I change?
-python -m lxtool.cli match new_fixture.gdtf ~/Documents/MagicQ/heads
+lx match new_fixture.gdtf ~/Documents/MagicQ/heads
 
 # ...or skip the file entirely and match straight from the catalogue
-python -m lxtool.cli match --ofl "mac 700" ~/Documents/MagicQ/heads
+lx match --ofl "mac 700" ~/Documents/MagicQ/heads
 
 # Convert between formats
-python -m lxtool.cli convert fixture.json fixture.gdtf     # OFL  -> GDTF
-python -m lxtool.cli convert fixture.gdtf fixture.xml      # GDTF -> MA2
-python -m lxtool.cli convert ma2_export.xml fixture.gdtf   # MA2  -> GDTF
+lx convert fixture.json fixture.gdtf     # OFL  -> GDTF (import into MagicQ)
+lx convert fixture.json fixture.hed      # OFL  -> ChamSys head (experimental)
+lx convert fixture.gdtf fixture.xml      # GDTF -> MA2
+lx convert ma2_export.xml fixture.gdtf   # MA2  -> GDTF
 
-# What can you actually read from this file?
-python -m lxtool.cli doctor some_head.hed
+# Inspect a file, including decoding a .hed
+lx doctor some_head.hed -v
 ```
 
 Example `match` output:
@@ -186,7 +211,8 @@ so that path is exact.
 ## Development
 
 ```bash
-python -m pytest tests/ -q
+pip install -e ".[web,dev]"
+pytest -q
 ```
 
 ## Layout
