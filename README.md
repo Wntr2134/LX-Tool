@@ -14,7 +14,7 @@ head by hand. This does the comparison for you.
 
 ## Install
 
-Needs Python 3.10 or newer. From the repo root:
+Needs Python 3.9 or newer (tested on 3.11). From the repo root:
 
 ```bash
 git clone https://github.com/Wntr2134/LX-Tool.git
@@ -24,8 +24,13 @@ git checkout claude/fixture-library-converter-73139h
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
+pip install --upgrade pip          # editable installs need pip >= 21.3
 pip install -e ".[web]"
 ```
+
+macOS ships an old pip that predates editable installs from `pyproject.toml`.
+If you see *"File setup.py or setup.cfg not found"*, upgrade pip as above, or
+install non-editable with `pip install ".[web]"`.
 
 That installs an `lx` command you can run from any directory. The library and
 CLI have **no third-party dependencies**; only the web UI pulls in FastAPI, so

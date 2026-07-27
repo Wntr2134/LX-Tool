@@ -7,7 +7,7 @@ name = "lx-tool"
 version = "0.1.0"
 description = "Fixture library matching and conversion for lighting consoles"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 
 # The library and CLI deliberately have no third-party dependencies, so a
