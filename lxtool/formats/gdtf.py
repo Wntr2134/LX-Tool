@@ -51,6 +51,7 @@ GDTF_ATTRIBUTE: dict[str, str] = {
     "Prism": "Prism1", "PrismRot": "Prism1Pos",
     "Focus": "Focus1", "Zoom": "Zoom", "Iris": "Iris", "Frost": "Frost1",
     "Animation": "AnimationWheel1", "AnimationRot": "AnimationWheel1Pos",
+    "Beamshaper": "BeamShaper", "Framing": "Blade1A", "FramingRot": "Blade1Rot",
     "Control": "Control1", "Function": "Function", "Reset": "Control1",
     "Lamp": "Control1", "Fan": "Fan", "Speed": "Control1", "Macro": "Control1",
 }
@@ -67,6 +68,8 @@ GDTF_FEATURE: dict[str, str] = {
     "Focus1": "Focus.Focus",
     "Zoom": "Beam.Beam", "Iris": "Beam.Beam", "Frost1": "Beam.Beam",
     "Prism1": "Beam.Beam", "Prism1Pos": "Beam.Beam",
+    "BeamShaper": "Beam.Beam",
+    "Blade1A": "Shapers.Shapers", "Blade1Rot": "Shapers.Shapers",
     "Control1": "Control.Control", "Function": "Control.Control",
     "Fan": "Control.Control",
 }

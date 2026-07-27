@@ -37,6 +37,12 @@ from lxtool.model import Channel, Fixture, Mode
     ("Gobo2 Spin", "Gobo2Rot"),
     ("Prism Rot", "PrismRot"),
     ("Shutter/Strobe", "Shutter"),
+    ("Beamshaper", "Beamshaper"),
+    ("Beam Shaper", "Beamshaper"),
+    ("Framing", "Framing"),
+    ("Blade 1A", "Framing"),
+    ("Barndoor", "Framing"),
+    ("Shaper Rot", "FramingRot"),
     ("Zoom", "Zoom"),
     ("Frost", "Frost"),
 ])
@@ -208,6 +214,21 @@ def test_channel_name_beats_attribute_number():
         '"Speed",00000012,00000002,\n'
     )
     assert chamsys.parse_personality(text).modes[0].channels[0].attribute == "Speed"
+
+
+def test_nameless_head_falls_back_to_filename(tmp_path):
+    """A head with no manufacturer and no model must not show as a blank row."""
+    text = (
+        'P,0007,"","","HILED","",\n'
+        "0007,0000,0000,0000,0000,0000,0001,0001,01f5,00000000,\n"
+        '"Dimmer",00000001,00000000,\n'
+    )
+    path = tmp_path / "__HILED.hed"
+    path.write_bytes(chamsys.encode_hed(text))
+
+    fx = chamsys.read(path)
+    assert fx.key == "HILED"          # not "" - the filename identifies it
+    assert fx.modes[0].name == "HILED"
 
 
 def test_write_then_read_roundtrip(tmp_path):

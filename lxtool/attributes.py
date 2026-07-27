@@ -27,6 +27,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "beam": (
         "Gobo1", "Gobo1Rot", "Gobo2", "Gobo2Rot", "Prism", "PrismRot",
         "Focus", "Zoom", "Iris", "Frost", "Animation", "AnimationRot",
+        "Beamshaper", "Framing", "FramingRot",
     ),
     "control": ("Control", "Function", "Reset", "Lamp", "Fan", "Speed", "Macro"),
 }
@@ -84,6 +85,10 @@ _ALIASES: dict[str, str] = {
     "prism1pos": "PrismRot", "focus": "Focus", "zoom": "Zoom",
     "iris": "Iris", "frost": "Frost", "frost1": "Frost",
     "animation": "Animation", "animationwheel": "Animation",
+    # shapers / framing
+    "beamshaper": "Beamshaper", "beam shaper": "Beamshaper", "shaper": "Beamshaper",
+    "framing": "Framing", "blade": "Framing", "barndoor": "Framing",
+    "framing rot": "FramingRot", "shaper rot": "FramingRot",
     # GDTF's own spelling of the above, so a file we write reads back identically
     "shutter1": "Shutter", "shutter1strobe": "Strobe", "color1": "ColorWheel",
     "color2": "ColorWheel2", "colormacro1": "ColorMacro", "gobo1pos": "Gobo1Rot",
@@ -126,6 +131,9 @@ _PATTERNS: tuple[tuple[str, str], ...] = (
     (r"zoom", "Zoom"),
     (r"iris", "Iris"),
     (r"frost|diffus", "Frost"),
+    (r"(fram|blade|shaper).*(rot|index|angle)", "FramingRot"),
+    (r"beam ?shaper|^shaper", "Beamshaper"),
+    (r"fram|blade|barndoor", "Framing"),
     (r"anim.*(rot|spin|index)", "AnimationRot"),
     (r"anim", "Animation"),
     (r"reset", "Reset"),

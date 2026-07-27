@@ -374,6 +374,12 @@ def read(path: Path | str) -> Fixture:
         head = parse_head_filename(path)
         fx.manufacturer = fx.manufacturer or head.manufacturer
         fx.model = fx.model or head.model
+
+    # Last resort: a head with no manufacturer, no model and a name like
+    # "__HILED.hed" would otherwise show as a blank row in the library. The
+    # filename is the only identifying thing left, so use it.
+    if not fx.manufacturer and not fx.model:
+        fx.model = path.stem.strip("_") or path.name
     return fx
 
 
