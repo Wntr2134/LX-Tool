@@ -182,3 +182,40 @@ def test_logged_in_and_logout(tmp_path):
     assert gdtfshare.logged_in(tmp_path) is True
     assert gdtfshare.logout(tmp_path) is True
     assert gdtfshare.logged_in(tmp_path) is False
+
+
+# --------------------------------------------------------------------------
+# TLS
+# --------------------------------------------------------------------------
+
+def test_certificate_failures_give_advice_not_an_openssl_code(monkeypatch, tmp_path):
+    """macOS Python has no CA bundle; the fix is a pip install, so say so."""
+    import urllib.error
+
+    from lxtool import net
+
+    def boom(*a, **k):
+        raise urllib.error.URLError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer certificate"
+        )
+
+    monkeypatch.setattr(gdtfshare, "_opener", lambda cache=None: type(
+        "O", (), {"open": staticmethod(boom)})())
+
+    with pytest.raises(GdtfShareError, match="certifi"):
+        gdtfshare.fetch_list(cache=tmp_path)
+
+    assert net.is_certificate_error(
+        urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] nope"))
+    assert not net.is_certificate_error(urllib.error.URLError("connection refused"))
+
+
+def test_ssl_context_always_verifies():
+    """Never disable verification, whatever the certificate trouble."""
+    import ssl
+
+    from lxtool import net
+
+    ctx = net.ssl_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True

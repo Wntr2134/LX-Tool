@@ -103,9 +103,9 @@ class Catalog:
         dest = cls.archive_path(directory)
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        req = urllib.request.Request(BULK_URL, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = resp.read()
+        from .net import urlopen
+
+        payload = urlopen(BULK_URL, timeout=timeout)
 
         if not payload.startswith(b"PK"):
             raise ValueError(f"{BULK_URL} did not return a zip archive")
@@ -227,10 +227,10 @@ def fetch_one(manufacturer_key: str, fixture_key: str, *, timeout: int = 30) -> 
 
     Useful for something added to OFL since the last bulk download.
     """
+    from .net import urlopen
+
     url = FIXTURE_URL.format(manufacturer=manufacturer_key, fixture=fixture_key)
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        doc = json.loads(resp.read())
+    doc = json.loads(urlopen(url, timeout=timeout))
     fx = ofl.parse(doc, manufacturer=manufacturer_key)
     fx.source_id = f"{manufacturer_key}/{fixture_key}"
     return fx

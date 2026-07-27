@@ -16,6 +16,7 @@ dependencies = []
 
 [project.optional-dependencies]
 web = [
+    "certifi",          # macOS Python ships no CA bundle of its own
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",
@@ -24,6 +25,7 @@ web = [
 # WKWebView on macOS, WebView2 on Windows - so the app gets its own window
 # and dock icon instead of opening a browser tab.
 desktop = [
+    "certifi",
     "pywebview>=5.0",
     "pyobjc-core>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",

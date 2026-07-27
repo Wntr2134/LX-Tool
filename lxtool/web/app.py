@@ -113,8 +113,13 @@ def api_heads_folders() -> dict:
 @app.post("/api/fetch-catalog")
 def api_fetch_catalog() -> dict:
     """Download the Open Fixture Library for offline use."""
+    from ..net import CertificateError
+
     try:
         path = catalog.Catalog.download()
+    except CertificateError as exc:
+        # Worth its own branch: the fix is a pip install, not a retry.
+        raise HTTPException(502, str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(502, f"could not download catalogue: {exc}") from exc
     cat = catalog.Catalog.load()

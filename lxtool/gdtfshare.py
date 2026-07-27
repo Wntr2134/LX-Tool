@@ -39,6 +39,12 @@ DOWNLOAD_URL = f"{BASE}/downloadFile.php"
 _USER_AGENT = "LX-Tool/1.0 (+https://github.com/Wntr2134/LX-Tool)"
 
 
+_CERT_ADVICE = (
+    "HTTPS certificate verification failed - Python has no CA certificates.\n"
+    "Fix with:  pip install certifi"
+)
+
+
 class GdtfShareError(RuntimeError):
     """A GDTF Share request failed."""
 
@@ -82,8 +88,9 @@ def _opener(cache: Path | str | None = None) -> urllib.request.OpenerDirector:
             jar.load(ignore_discard=True, ignore_expires=True)
         except (OSError, http.cookiejar.LoadError):
             pass
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    opener.addheaders = [("User-Agent", _USER_AGENT)]
+    from .net import build_opener
+
+    opener = build_opener(urllib.request.HTTPCookieProcessor(jar))
     opener.cookiejar = jar          # type: ignore[attr-defined]
     return opener
 
@@ -105,6 +112,10 @@ def _request(opener, url: str, data: bytes | None = None, timeout: int = 60) -> 
             ) from exc
         raise GdtfShareError(f"GDTF Share returned {exc.code}: {message}") from exc
     except urllib.error.URLError as exc:
+        from .net import is_certificate_error
+
+        if is_certificate_error(exc):
+            raise GdtfShareError(_CERT_ADVICE) from exc
         raise GdtfShareError(f"could not reach GDTF Share: {exc.reason}") from exc
 
 

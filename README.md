@@ -51,6 +51,11 @@ pip install --upgrade pip          # editable installs need pip >= 21.3
 pip install -e ".[web]"
 ```
 
+**macOS: install `certifi`.** The system Python has no CA certificates, so
+every HTTPS download fails with `CERTIFICATE_VERIFY_FAILED`. The `[web]`
+extra pulls it in; if you installed the bare package, run `pip install
+certifi`. Certificate verification is never disabled.
+
 macOS ships an old pip that predates editable installs from `pyproject.toml`.
 If you see *"File setup.py or setup.cfg not found"*, upgrade pip as above, or
 install non-editable with `pip install ".[web]"`.
