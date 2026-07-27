@@ -96,6 +96,12 @@ _ALIASES: dict[str, str] = {
     "focus1": "Focus", "frost1": "Frost", "iris1": "Iris",
     "animationwheel1": "Animation", "animationwheel1pos": "AnimationRot",
     "control1": "Control", "pantiltspeed": "PanTiltSpeed",
+    # grandMA3 spellings
+    "colorrgb_r": "Red", "colorrgb_g": "Green", "colorrgb_b": "Blue",
+    "colorrgb_w": "White", "colorrgb_a": "Amber", "colorrgb_uv": "UV",
+    "colorrgb_l": "Lime", "colorrgb_c": "Cyan", "colorrgb_m": "Magenta",
+    "colorrgb_y": "Yellow",
+    "tiltmode": "Control", "panmode": "Control", "positionmodes": "Control",
     # control
     "control": "Control", "function": "Function", "reset": "Reset",
     "lamp": "Lamp", "lampcontrol": "Lamp", "fan": "Fan", "fanspeed": "Fan",

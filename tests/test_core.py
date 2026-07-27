@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from lxtool import attributes, matching
-from lxtool.formats import chamsys, gdtf, ma2, ofl
+from lxtool.formats import chamsys, gdtf, ma2, ma3, ofl
 from lxtool.model import Channel, Fixture, Mode
 
 
@@ -655,3 +655,88 @@ def test_name_similarity():
     assert matching.name_similarity("Robe", "Robe Lighting") == 0.9
     assert matching.name_similarity("Robe", "Martin") < 0.5
     assert matching.name_similarity("", "Robe") == 0.0
+
+
+# --------------------------------------------------------------------------
+# grandMA3
+# --------------------------------------------------------------------------
+
+MA3_FILE = DATA / "ayrton@alienpix-rs.xml"
+
+
+def test_ma3_parse_real_library_file():
+    """A genuine fixture from a grandMA3 install's lib_fixture_types."""
+    fx = ma3.read(MA3_FILE)
+    assert fx.manufacturer == "Ayrton"
+    assert fx.model == "Alienpix-RS"
+    assert fx.source == "ma3"
+
+    mode = fx.modes[0]
+    assert mode.name == "Ex 16 Bit (52 ch)"
+    # GeometryReference repeats are not expanded, so the footprint comes from
+    # the mode name rather than from the channels we could resolve.
+    assert mode.channel_count == 52
+
+    by_offset = mode.by_offset()
+    assert by_offset[1].attribute == "Pan" and not by_offset[1].fine
+    assert by_offset[2].attribute == "Pan" and by_offset[2].fine
+    assert by_offset[3].attribute == "Tilt"
+    assert by_offset[11].attribute == "Shutter"
+    assert by_offset[12].attribute == "Dimmer" and by_offset[12].htp
+    assert by_offset[13].attribute == "Red"
+    assert by_offset[16].attribute == "White"
+    assert by_offset[52].attribute == "Control"
+
+
+def test_ma3_colour_system_detected():
+    fx = ma3.read(MA3_FILE)
+    assert attributes.colour_detail(fx.modes[0].attribute_set()) == "RGBW"
+
+
+def test_ma3_skips_virtual_channels():
+    """Channels with no Coarse have no DMX footprint and must not be counted."""
+    fx = ma3.read(MA3_FILE)
+    offsets = sorted(fx.modes[0].by_offset())
+    assert offsets[0] == 1
+    # The file has virtual dimmers driven by Relations; none may appear twice.
+    assert len(offsets) == len(set(offsets))
+
+
+def test_ma3_ranges_are_named():
+    fx = ma3.read(MA3_FILE)
+    shutter = fx.modes[0].by_offset()[11]
+    names = [r.name for r in shutter.ranges]
+    assert "Closed" in names and "Open" in names
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("FFFFFF", 255), ("800000", 128), ("000000", 0), ("7F7F7F", 127),
+    ("FF", 255), ("", 0), ("zz", 0),
+])
+def test_ma3_dmx_value(raw, expected):
+    assert ma3.dmx_value(raw) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("ColorRGB_R", "Red"), ("ColorRGB_G", "Green"), ("ColorRGB_B", "Blue"),
+    ("ColorRGB_W", "White"), ("ColorRGB_UV", "UV"),
+    ("TiltMode", "Control"), ("PanMode", "Control"), ("PositionModes", "Control"),
+])
+def test_ma3_attribute_names(raw, expected):
+    assert attributes.normalise(raw) == expected
+
+
+def test_ma3_detection_and_rejection():
+    assert ma3.looks_like_ma3(MA3_FILE.read_bytes())
+    assert not ma3.looks_like_ma3(GDTF_XML.encode())
+    with pytest.raises(ValueError, match="not a grandMA3"):
+        ma3.parse(b"<?xml version='1.0'?><Nope/>")
+
+
+def test_ma3_to_gdtf_bridges_to_chamsys(tmp_path):
+    """The point of reading MA3: get the fixture into another desk."""
+    fx = ma3.read(MA3_FILE)
+    out = gdtf.write(fx, tmp_path / "alienpix.gdtf")
+    back = gdtf.read(out)
+    assert back.manufacturer == "Ayrton"
+    assert {"Pan", "Tilt", "Dimmer", "Red", "Green", "Blue", "White"} <= back.modes[0].attribute_set()

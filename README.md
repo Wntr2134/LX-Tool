@@ -157,7 +157,9 @@ encoder instead of dumping it into a generic slot.
 | GDTF (`.gdtf`) | yes | yes | The interchange format. MA3, MagicQ and others import it |
 | MVR (`.mvr`) | yes | yes | Whole rigs: fixtures, modes, addresses, layers. **Unvalidated** — see below |
 | Open Fixture Library (`.json`) | yes | — | Open API, ~620 fixtures cached offline |
+| grandMA3 XML (`.xml`) | yes | via GDTF | Reads MA3's `lib_fixture_types/grandma3` library directly |
 | grandMA2 XML (`.xml`) | yes | yes | **Not yet validated against a real MA2 export** — see below |
+| grandMA2 `.pxml` | no | no | MA2's local library is encrypted — see below |
 | ChamSys (`.hed`) | yes | experimental | Obfuscation solved — see [docs/hed-format.md](docs/hed-format.md) |
 
 ### grandMA3
@@ -170,7 +172,22 @@ export a whole rig as MVR and use `lx rig`.
 ```bash
 lx rig show.mvr        # patch summary per universe, with address-clash detection
 lx doctor show.mvr     # what the archive carries and what it's missing
+
+# MA3's own fixture library reads directly
+lx doctor ~/MALightingTechnology/gma3_*/shared/lib_fixture_types/grandma3/"ayrton@alienpix-rs.xml" -v
 ```
+
+MA3 fixture XML is GDTF-derived but not GDTF: DMX slots are `Coarse`/`Fine`
+attributes rather than a single `Offset`, DMX values are 24-bit hex triplets,
+and attributes use MA3 spellings like `ColorRGB_R`. `lxtool/formats/ma3.py`
+handles those; files are detected by content, so `.xml` routes itself to the
+MA3, GDTF or MA2 reader automatically.
+
+One gap: `GeometryReference` repetition (multi-element fixtures) is not
+expanded, so referenced channels are counted once. MA3 writes the true count
+into the mode name — `"Ex 16 Bit (52 ch)"` — and that is recorded as the
+declared footprint, so the size stays correct even where the channel list is
+partial.
 
 `lx rig` flags overlapping DMX footprints, which is the failure mode when a
 patch moves between desks: a mode that is 8 channels in one library can be 10
@@ -214,6 +231,13 @@ embedded still comes through with its address, mode and layer rather than
 vanishing from the patch. Both address conventions (continuous, and
 break-relative) are handled. Run `lx doctor <file>.mvr` on a real MA3 export
 and check the counts before trusting it.
+
+**grandMA2's local library (`.pxml`) is encrypted and unsupported.** Measured
+on a real file: 7.978 bits/byte entropy, all 256 byte values, no container
+magic, no decompressor succeeds at any offset, and no repeated 16-byte blocks.
+That is encryption, not obfuscation, and unlike the ChamSys scheme there is no
+handle to attack. Export fixture types from the desk as XML instead, or use
+MA3/GDTF.
 
 **The grandMA2 reader is unvalidated.** MA2's schema isn't published the way
 GDTF's is, so the parser is written tolerantly and anything it can't interpret

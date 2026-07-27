@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from . import catalog, matching
-from .formats import chamsys, gdtf, ma2, mvr, ofl
+from .formats import chamsys, gdtf, ma2, ma3, mvr, ofl
 from .model import Fixture, Mode
 
 _READERS = {
@@ -36,9 +36,11 @@ def load_fixture(path: Path | str) -> Fixture:
     if suffix == ".json":
         return ofl.read(path)
     if suffix == ".xml":
-        head = path.read_bytes()[:4096]
-        if b"FixtureType" in head and b"DMXMode" in head:
-            return gdtf.parse_description(path.read_bytes())
+        data = path.read_bytes()
+        if ma3.looks_like_ma3(data):
+            return ma3.parse(data)
+        if b"FixtureType" in data[:4096] and b"DMXMode" in data[:4096]:
+            return gdtf.parse_description(data)
         return ma2.read(path)
     if suffix == ".mvr":
         raise SystemExit(
