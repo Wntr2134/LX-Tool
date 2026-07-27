@@ -91,6 +91,42 @@ def _channel_count_from_mode(mode: str) -> int | None:
     return None
 
 
+def find_heads_folders() -> list[Path]:
+    """Locate MagicQ heads folders on this machine.
+
+    MagicQ nests personalities under its show directory as
+    ``<MagicQ folder>/show/heads``, but the parent varies by platform and by
+    whether it is MagicQ or MagicQ PC.  Returns every candidate that exists,
+    most likely first, so a UI can offer them rather than making someone go
+    hunting.
+    """
+    home = Path.home()
+    candidates = [
+        # macOS
+        home / "Documents/MagicQ/show/heads",
+        home / "Documents/MagicQ PC/show/heads",
+        # Windows
+        home / "Documents/MagicQ PC (v1.9)/show/heads",
+        Path("C:/MagicQ/show/heads"),
+        Path("C:/ProgramData/MagicQ/show/heads"),
+        # Linux and consoles
+        home / "MagicQ/show/heads",
+        Path("/opt/magicq/show/heads"),
+    ]
+
+    found: list[Path] = []
+    for c in candidates:
+        try:
+            if c.is_dir():
+                found.append(c)
+        except OSError:
+            continue
+
+    # A folder with a heads.all is the real library, so rank those first.
+    found.sort(key=lambda p: (not (p / "heads.all").is_file(), str(p)))
+    return found
+
+
 def load_manufacturer_aliases(path: Path | str) -> dict[str, str]:
     """Read ``manufacturer_exceptions.csv`` into an alias -> canonical map.
 

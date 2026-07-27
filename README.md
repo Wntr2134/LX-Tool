@@ -12,7 +12,25 @@ A new fixture turns up. It's on GDTF Share or Open Fixture Library but not in
 your MagicQ library. Today that means eyeballing channel lists and building a
 head by hand. This does the comparison for you.
 
-## Install
+## Download
+
+The easiest way in is the desktop app - no Python, no terminal. Grab it from
+[Releases](https://github.com/Wntr2134/LX-Tool/releases):
+
+| Platform | File |
+|---|---|
+| macOS | `LX-Tool-macos.zip` - unzip, drag to Applications |
+| Windows | `LX-Tool.exe` - double-click |
+
+It runs entirely on your machine: it reads your MagicQ heads folder, and
+nothing about your library leaves the computer. On first launch it finds your
+heads folder automatically.
+
+**macOS will say "unidentified developer"** - the builds are unsigned. Right-click
+the app, choose Open, then Open again. Once only. **Windows SmartScreen** shows
+"More info" -> "Run anyway" for the same reason.
+
+## Install from source
 
 Needs Python 3.9 or newer (tested on 3.11). From the repo root:
 

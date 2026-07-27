@@ -98,6 +98,18 @@ def api_scan(folder: str = Form(...)) -> dict:
     }
 
 
+@app.get("/api/heads-folders")
+def api_heads_folders() -> dict:
+    """MagicQ heads folders found on this machine, so nobody has to hunt."""
+    found = chamsys.find_heads_folders()
+    return {
+        "folders": [
+            {"path": str(p), "has_library": (p / "heads.all").is_file()}
+            for p in found
+        ]
+    }
+
+
 @app.post("/api/fetch-catalog")
 def api_fetch_catalog() -> dict:
     """Download the Open Fixture Library for offline use."""
@@ -308,6 +320,17 @@ PAGE = """<!doctype html>
 
 <script>
 const $ = id => document.getElementById(id);
+
+// Offer whatever MagicQ folders exist on this machine.
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const d = await (await fetch('/api/heads-folders')).json();
+    if (!d.folders.length) return;
+    $('folder').value = d.folders[0].path;
+    const lib = d.folders[0].has_library ? ' (full library found)' : ' (custom heads only)';
+    $('detected').innerHTML = 'Found: <code>' + d.folders[0].path + '</code>' + lib;
+  } catch (e) { /* detection is a convenience, not a requirement */ }
+});
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
 async function post(url, fd) {
