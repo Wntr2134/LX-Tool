@@ -9,6 +9,12 @@ on:
     tags: ["v*"]
   workflow_dispatch:        # so a build can be kicked off without tagging
 
+permissions:
+  # Needed to attach the built binaries to a release. Repos created recently
+  # give GITHUB_TOKEN read-only access by default, so the upload fails without
+  # this even though the build itself succeeds.
+  contents: write
+
 jobs:
   build:
     strategy:
