@@ -1,0 +1,72 @@
+name: Build desktop apps
+
+# Produces a macOS .app and a Windows .exe. They have to be built on their
+# own platform - PyInstaller cannot cross-compile - so this runs a matrix
+# rather than building everything on Linux.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:        # so a build can be kicked off without tagging
+
+permissions:
+  # Needed to attach the built binaries to a release. Repos created recently
+  # give GITHUB_TOKEN read-only access by default, so the upload fails without
+  # this even though the build itself succeeds.
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos
+            artifact: dist/LX-Tool.app
+          - os: windows-latest
+            name: windows
+            artifact: dist/LX-Tool.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[web]"
+          pip install pyinstaller
+
+      - name: Test
+        run: |
+          pip install pytest
+          pytest -q
+
+      - name: Build
+        run: pyinstaller --noconfirm packaging/lxtool.spec
+
+      - name: Zip macOS app
+        if: matrix.os == 'macos-latest'
+        run: cd dist && zip -r LX-Tool-macos.zip LX-Tool.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LX-Tool-${{ matrix.name }}
+          path: |
+            dist/LX-Tool-macos.zip
+            dist/LX-Tool.exe
+          if-no-files-found: warn
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LX-Tool-macos.zip
+            dist/LX-Tool.exe

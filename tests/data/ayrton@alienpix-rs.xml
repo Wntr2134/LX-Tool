@@ -1,0 +1,417 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<GMA3 DataVersion="1.5.0.0">
+    <FixtureType Name="Alienpix-RS" Guid="70 4D 7B 2C 98 3D 00 00 52 2C C1 C7 22 92 37 46" Source="grandMA3" CanHaveChildren="No" Color="1.000000,1.000000,1.000000,1.000000" MediaFileName="SYMBOL/Moving_Spot.png" ShortName="APix" Description="Ayrton Alienpix-RS" Manufacturer="Ayrton" Universal="No">
+        <DependencyExport Size="1">
+            <Dependency Address="ShowData.MediaPools.Symbols.moving2">
+                <SymbolImage Lock="Yes" Name="moving2" Guid="00 1B 21 63 74 21 00 00 00 25 02 8D 32 0E BA B6" FileName="Moving_Spot.png"  ColorKeyLightFrom="FFFFFFFF" ColorKeyLightTo="FFFFFFFF" ColorKeySelectionFrom="FFFFFFFF" ColorKeySelectionTo="FFFFFFFF" />
+            </Dependency>
+        </DependencyExport>
+        <AttributeDefinitions>
+            <ActivationGroups>
+                <ActivationGroup Name="PanTilt" />
+                <ActivationGroup Name="ColorRGB" />
+            </ActivationGroups>
+            <FeatureGroups>
+                <FeatureGroup Name="Position">
+                    <Feature Name="PanTilt" />
+                </FeatureGroup>
+                <FeatureGroup Name="Dimmer">
+                    <Feature Name="Dimmer" />
+                </FeatureGroup>
+                <FeatureGroup Name="Color">
+                    <Feature Name="RGB" />
+                </FeatureGroup>
+                <FeatureGroup Name="Control">
+                    <Feature Name="Control" />
+                </FeatureGroup>
+                <FeatureGroup Name="Beam">
+                    <Feature Name="Beam" />
+                </FeatureGroup>
+            </FeatureGroups>
+            <Attributes>
+                <Attribute Name="Pan" Pretty="P" ActivationGroup="PanTilt" Feature="Position.PanTilt" PhysicalUnit="Angle" />
+                <Attribute Name="Tilt" Pretty="T" ActivationGroup="PanTilt" Feature="Position.PanTilt" PhysicalUnit="Angle" />
+                <Attribute Name="Dimmer" Pretty="Dim" Feature="Dimmer.Dimmer" PhysicalUnit="LuminousIntensity" />
+                <Attribute Name="ColorRGB_R" Pretty="R" ActivationGroup="ColorRGB" Feature="Color.RGB" PhysicalUnit="ColorComponent" Color="1.000000,0.000000,0.000000,1.000000" />
+                <Attribute Name="ColorRGB_G" Pretty="G" ActivationGroup="ColorRGB" Feature="Color.RGB" PhysicalUnit="ColorComponent" Color="0.000000,1.000000,0.000000,1.000000" />
+                <Attribute Name="ColorRGB_B" Pretty="B" ActivationGroup="ColorRGB" Feature="Color.RGB" PhysicalUnit="ColorComponent" Color="0.000000,0.000000,1.000000,1.000000" />
+                <Attribute Name="ColorRGB_W" Pretty="W" ActivationGroup="ColorRGB" Feature="Color.RGB" PhysicalUnit="ColorComponent" Color="1.000000,1.000000,1.000000,1.000000" />
+                <Attribute Name="TiltMode" Pretty="Tilt Mode" Feature="Control.Control" />
+                <Attribute Name="PositionModes" Pretty="Pos Modes" Feature="Control.Control" />
+                <Attribute Name="PanMode" Pretty="Pan Mode" Feature="Control.Control" />
+                <Attribute Name="Shutter1" Pretty="Sh1" Feature="Beam.Beam" />
+                <Attribute Name="Control1" Pretty="Ctrl1" Feature="Control.Control" />
+            </Attributes>
+        </AttributeDefinitions>
+        <Wheels />
+        <PhysicalDescriptions>
+            <Emitters />
+            <CRIs />
+        </PhysicalDescriptions>
+        <Models>
+            <Model Name="Base" Length="0.400000" Width="0.400000" Height="0.200000" DimensionsfollowRatio="Yes" CastShadow="Yes" Mesh="[cube_3ds]" File="gdtf_generic/cube.3ds">
+                <DependencyExport Size="1">
+                    <Dependency Address="ShowData.3DMeshes.[cube_3ds]">
+                        <Mesh3DS Lock="Yes" Name="[cube_3ds]" Guid="00 05 9A 3C 33 16 00 00 B6 98 1E 38 1B 9E 96 19" FileName="cube.3ds" FilePath="gdtf_generic"  Culling="No" />
+                    </Dependency>
+                </DependencyExport>
+            </Model>
+            <Model Name="Yoke1" Length="0.800000" Width="0.200000" Height="0.100000" DimensionsfollowRatio="Yes" CastShadow="Yes" Mesh="[cube_3ds]" File="gdtf_generic/cube.3ds">
+                <DependencyExport Size="1">
+                    <Dependency />
+                </DependencyExport>
+            </Model>
+            <Model Name="Yoke2" Length="0.700000" Width="0.700000" Height="0.100000" DimensionsfollowRatio="Yes" CastShadow="Yes" Mesh="[cylinder_3ds]" File="gdtf_generic/cylinder.3ds">
+                <DependencyExport Size="1">
+                    <Dependency Address="ShowData.3DMeshes.[cylinder_3ds]">
+                        <Mesh3DS Lock="Yes" Name="[cylinder_3ds]" Guid="00 05 9A 3C 8B 6D 00 00 A9 98 1E 38 83 D8 96 19" FileName="cylinder.3ds" FilePath="gdtf_generic"  Culling="No" />
+                    </Dependency>
+                </DependencyExport>
+            </Model>
+            <Model Name="Static Head" Length="0.100000" Width="0.100000" Height="0.200000" DimensionsfollowRatio="Yes" CastShadow="Yes" Mesh="[cylinder_3ds]" File="gdtf_generic/cylinder.3ds">
+                <DependencyExport Size="1">
+                    <Dependency />
+                </DependencyExport>
+            </Model>
+            <Model Name="Dynamic Head" Length="0.100000" Width="0.100000" Height="0.100000" DimensionsfollowRatio="Yes" CastShadow="Yes" Mesh="[cylinder_3ds]" File="gdtf_generic/cylinder.3ds">
+                <DependencyExport Size="1">
+                    <Dependency />
+                </DependencyExport>
+            </Model>
+            <Model Name="Yoke3" Length="0.600000" Width="0.600000" Height="0.100000" DimensionsfollowRatio="Yes" CastShadow="Yes" Mesh="[cylinder_3ds]" File="gdtf_generic/cylinder.3ds">
+                <DependencyExport Size="1">
+                    <Dependency />
+                </DependencyExport>
+            </Model>
+            <Model Name="Beam" Length="0.080000" Width="0.080000" Height="0.010000" DimensionsfollowRatio="Yes" CastShadow="Yes" Mesh="[cylinder_3ds]" File="gdtf_generic/cylinder.3ds">
+                <DependencyExport Size="1">
+                    <Dependency />
+                </DependencyExport>
+            </Model>
+        </Models>
+        <Geometries>
+            <Axis Name="Dynamic Head" Model="Dynamic Head" >
+                <Beam Name="Dynamic Beam" Model="Beam" Position="{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.050000}{0.000000,0.000000,0.000000,1.000000}" BeamAngle="3.50" BeamRadius="0.040" LampType="LED" BeamType="Spot" ColorTemperature="7000" />
+            </Axis>
+            <Geometry Name="Base" Model="Base" Position="{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}">
+                <Axis Name="Yoke1" Model="Yoke1" Position="{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.150000}{0.000000,0.000000,0.000000,1.000000}" >
+                    <Axis Name="Yoke2" Model="Yoke2" Position="{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" >
+                        <Axis Name="Yoke3" Model="Yoke3" Position="{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" >
+                            <Geometry Name="Static Head" Model="Static Head" Position="{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.050000}{0.000000,0.000000,0.000000,1.000000}">
+                                <Beam Name="Static Beam" Model="Beam" Position="{1.000000,0.000000,0.000000,0.000000}{0.000000,1.000000,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" BeamAngle="3.50" BeamRadius="0.040" LampType="LED" BeamType="Spot" ColorTemperature="7000" />
+                            </Geometry>
+                            <GeometryReference Name="GeometryReference 2" Position="{0.707107,0.707107,0.000000,-0.150000}{-0.707107,0.707107,0.000000,-0.100000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" Geometry="Dynamic Head">
+                                <Break DMXOffset="1" />
+                            </GeometryReference>
+                            <GeometryReference Name="GeometryReference 3" Position="{-0.707109,0.707105,0.000000,-0.150000}{-0.707105,-0.707109,0.000000,0.100000}{-0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" Geometry="Dynamic Head">
+                                <Break DMXOffset="8" />
+                            </GeometryReference>
+                            <GeometryReference Name="GeometryReference 4" Position="{-1.000000,0.000000,0.000000,0.050000}{0.000000,-1.000000,0.000000,0.200000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" Geometry="Dynamic Head">
+                                <Break DMXOffset="15" />
+                            </GeometryReference>
+                            <GeometryReference Name="GeometryReference 5" Position="{-0.000013,-1.000000,0.000000,0.200000}{1.000000,-0.000013,0.000000,0.000000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" Geometry="Dynamic Head">
+                                <Break DMXOffset="22" />
+                            </GeometryReference>
+                            <GeometryReference Name="GeometryReference 6" Position="{1.000000,0.000000,0.000000,0.050000}{0.000000,1.000000,0.000000,-0.200000}{0.000000,0.000000,1.000000,-0.100000}{0.000000,0.000000,0.000000,1.000000}" Geometry="Dynamic Head">
+                                <Break DMXOffset="29" />
+                            </GeometryReference>
+                        </Axis>
+                    </Axis>
+                </Axis>
+            </Geometry>
+        </Geometries>
+        <DMXModes>
+            <DMXMode Name="Ex 16 Bit (52 ch)" Geometry="Base">
+                <DMXChannels>
+                    <DMXChannel Coarse="1" Fine="2" Default="800000" Geometry="Base.Yoke1">
+                        <LogicalChannel Attribute="Pan">
+                            <ChannelFunction Attribute="Pan" PhysicalFrom="-270.0000" PhysicalTo="270.0000" RealFade="2.000">
+                                <ChannelSet Name="Min" PhysicalFrom="-270.0000" PhysicalTo="-270.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Home" DMXFrom="7F7F7F" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="800180" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="270.0000" PhysicalTo="270.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="3" Fine="4" Default="800000" Geometry="Base.Yoke1.Yoke2">
+                        <LogicalChannel Attribute="Tilt">
+                            <ChannelFunction Attribute="Tilt" PhysicalFrom="-135.0000" PhysicalTo="135.0000" RealFade="1.000">
+                                <ChannelSet Name="Min" PhysicalFrom="-135.0000" PhysicalTo="-135.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Home" DMXFrom="7F7F7F" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="800180" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="135.0000" PhysicalTo="135.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="5" Fine="6" Default="800000" Geometry="Base.Yoke1.Yoke2.Yoke3">
+                        <LogicalChannel Attribute="Pan">
+                            <ChannelFunction Attribute="Pan" PhysicalFrom="-270.0000" PhysicalTo="270.0000" RealFade="2.000">
+                                <ChannelSet Name="Min" PhysicalFrom="-270.0000" PhysicalTo="-270.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Home" DMXFrom="7F7F7F" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="800180" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="270.0000" PhysicalTo="270.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="12" Highlight="FFFFFF" Lowlight="800000" Geometry="Base">
+                        <LogicalChannel Attribute="Dimmer" Master="Grand">
+                            <ChannelFunction Attribute="Dimmer">
+                                <ChannelSet Name="Closed" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="25%" DMXFrom="404040" PhysicalFrom="0.2500" PhysicalTo="0.2500" />
+                                <ChannelSet DMXFrom="414141" PhysicalTo="0.0000" />
+                                <ChannelSet Name="50%" DMXFrom="808080" PhysicalFrom="0.5000" PhysicalTo="0.5000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="75%" DMXFrom="C0C0C0" PhysicalFrom="0.7500" PhysicalTo="0.7500" />
+                                <ChannelSet DMXFrom="C1C1C1" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Open" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="48" Default="FFFFFF" Highlight="FFFFFF" Lowlight="000000" Geometry="Base.Yoke1.Yoke2.Yoke3.Static Head.Static Beam">
+                        <LogicalChannel Attribute="ColorRGB_R">
+                            <ChannelFunction Attribute="ColorRGB_R">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="49" Default="FFFFFF" Highlight="FFFFFF" Lowlight="000000" Geometry="Base.Yoke1.Yoke2.Yoke3.Static Head.Static Beam">
+                        <LogicalChannel Attribute="ColorRGB_G">
+                            <ChannelFunction Attribute="ColorRGB_G">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="50" Default="FFFFFF" Highlight="FFFFFF" Lowlight="FFFFFF" Geometry="Base.Yoke1.Yoke2.Yoke3.Static Head.Static Beam">
+                        <LogicalChannel Attribute="ColorRGB_B">
+                            <ChannelFunction Attribute="ColorRGB_B">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="51" Geometry="Base.Yoke1.Yoke2.Yoke3.Static Head.Static Beam">
+                        <LogicalChannel Attribute="ColorRGB_W">
+                            <ChannelFunction Attribute="ColorRGB_W">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Default="FFFFFF" Highlight="FFFFFF" Lowlight="800000" Geometry="Base.Yoke1.Yoke2.Yoke3.Static Head.Static Beam">
+                        <LogicalChannel Attribute="Dimmer">
+                            <ChannelFunction Attribute="Dimmer">
+                                <ChannelSet Name="Closed" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="25%" DMXFrom="404040" PhysicalFrom="0.2500" PhysicalTo="0.2500" />
+                                <ChannelSet DMXFrom="414141" PhysicalTo="0.0000" />
+                                <ChannelSet Name="50%" DMXFrom="808080" PhysicalFrom="0.5000" PhysicalTo="0.5000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="75%" DMXFrom="C0C0C0" PhysicalFrom="0.7500" PhysicalTo="0.7500" />
+                                <ChannelSet DMXFrom="C1C1C1" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Open" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="17" Fine="18" Default="800000" Geometry="Dynamic Head">
+                        <LogicalChannel Attribute="Tilt">
+                            <ChannelFunction Attribute="Tilt" PhysicalFrom="-360.0000" PhysicalTo="360.0000" RealFade="0.500" IgnoreFollow="Yes">
+                                <ChannelSet Name="Min" PhysicalFrom="-360.0000" PhysicalTo="-360.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Home" DMXFrom="7F7F7F" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="800180" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="360.0000" PhysicalTo="360.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="19" Geometry="Dynamic Head.Dynamic Beam">
+                        <LogicalChannel Attribute="TiltMode">
+                            <ChannelFunction Attribute="TiltMode">
+                                <ChannelSet Name="No Function" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Fast" DMXFrom="808080" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Slow" DMXFrom="BDBDBD" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Stop Rotation" DMXFrom="BEBEBE" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Slow" DMXFrom="C2C2C2" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="C3C3C3" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Fast" DMXFrom="FFFFFF" PhysicalTo="0.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="13" Default="FFFFFF" Highlight="FFFFFF" Lowlight="000000" Geometry="Dynamic Head.Dynamic Beam">
+                        <LogicalChannel Attribute="ColorRGB_R">
+                            <ChannelFunction Attribute="ColorRGB_R">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="14" Default="FFFFFF" Highlight="FFFFFF" Lowlight="000000" Geometry="Dynamic Head.Dynamic Beam">
+                        <LogicalChannel Attribute="ColorRGB_G">
+                            <ChannelFunction Attribute="ColorRGB_G">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="15" Default="FFFFFF" Highlight="FFFFFF" Lowlight="FFFFFF" Geometry="Dynamic Head.Dynamic Beam">
+                        <LogicalChannel Attribute="ColorRGB_B">
+                            <ChannelFunction Attribute="ColorRGB_B">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="16" Geometry="Dynamic Head.Dynamic Beam">
+                        <LogicalChannel Attribute="ColorRGB_W">
+                            <ChannelFunction Attribute="ColorRGB_W">
+                                <ChannelSet Name="Min" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Max" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Default="FFFFFF" Highlight="FFFFFF" Lowlight="800000" Geometry="Dynamic Head.Dynamic Beam">
+                        <LogicalChannel Attribute="Dimmer">
+                            <ChannelFunction Attribute="Dimmer">
+                                <ChannelSet Name="Closed" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="25%" DMXFrom="404040" PhysicalFrom="0.2500" PhysicalTo="0.2500" />
+                                <ChannelSet DMXFrom="414141" PhysicalTo="0.0000" />
+                                <ChannelSet Name="50%" DMXFrom="808080" PhysicalFrom="0.5000" PhysicalTo="0.5000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="75%" DMXFrom="C0C0C0" PhysicalFrom="0.7500" PhysicalTo="0.7500" />
+                                <ChannelSet DMXFrom="C1C1C1" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Open" DMXFrom="FFFFFF" PhysicalFrom="1.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="7" Geometry="Base">
+                        <LogicalChannel Attribute="PositionModes">
+                            <ChannelFunction Attribute="PositionModes">
+                                <ChannelSet Name="PT Movement Max Speed" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="010101" PhysicalTo="0.0000" />
+                                <ChannelSet Name="PT Movement Min Speed" DMXFrom="E1E1E1" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Blackout By Movement" DMXFrom="E2E2E2" PhysicalTo="0.0000" />
+                                <ChannelSet Name="No Function" DMXFrom="ECECEC" PhysicalTo="0.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="8" Geometry="Base.Yoke1">
+                        <LogicalChannel Attribute="PanMode">
+                            <ChannelFunction Attribute="PanMode">
+                                <ChannelSet Name="No Function" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Fast" DMXFrom="808080" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Slow" DMXFrom="BDBDBD" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Stop Rotation" DMXFrom="BEBEBE" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Slow" DMXFrom="C2C2C2" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="C3C3C3" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Fast" DMXFrom="FFFFFF" PhysicalTo="0.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="9" Geometry="Base.Yoke1.Yoke2">
+                        <LogicalChannel Attribute="TiltMode">
+                            <ChannelFunction Attribute="TiltMode">
+                                <ChannelSet Name="No Function" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Fast" DMXFrom="808080" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Slow" DMXFrom="BDBDBD" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Stop Rotation" DMXFrom="BEBEBE" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Slow" DMXFrom="C2C2C2" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="C3C3C3" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Fast" DMXFrom="FFFFFF" PhysicalTo="0.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="10" Geometry="Base.Yoke1.Yoke2.Yoke3">
+                        <LogicalChannel Attribute="PanMode">
+                            <ChannelFunction Attribute="PanMode">
+                                <ChannelSet Name="No Function" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Fast" DMXFrom="808080" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Forward Slow" DMXFrom="BDBDBD" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Stop Rotation" DMXFrom="BEBEBE" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Slow" DMXFrom="C2C2C2" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="C3C3C3" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Continuous Rotation Backward Fast" DMXFrom="FFFFFF" PhysicalTo="0.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="11" Default="323232" Highlight="323232" Geometry="Base">
+                        <LogicalChannel Attribute="Shutter1">
+                            <ChannelFunction Attribute="Shutter1">
+                                <ChannelSet Name="Closed" PhysicalTo="0.0000" HasPhysical="Yes" />
+                                <ChannelSet Name="Open" DMXFrom="202020" PhysicalFrom="1.0000" HasPhysical="Yes" />
+                                <ChannelSet Name="Strobe Slow" DMXFrom="404040" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="414141" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Strobe Fast" DMXFrom="5F5F5F" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Open (2)" DMXFrom="606060" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Pulse Slow" DMXFrom="808080" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="818181" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Pulse Fast" DMXFrom="9F9F9F" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Open (3)" DMXFrom="A0A0A0" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Strobe Rndm Slow" DMXFrom="C0C0C0" PhysicalTo="0.0000" />
+                                <ChannelSet DMXFrom="C1C1C1" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Strobe Rndm Fast" DMXFrom="DFDFDF" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Open (4)" DMXFrom="E0E0E0" PhysicalTo="0.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                    <DMXChannel Coarse="52" Geometry="Base">
+                        <LogicalChannel Attribute="Control1">
+                            <ChannelFunction Attribute="Control1">
+                                <ChannelSet Name="Normal" PhysicalTo="0.0000" />
+                                <ChannelSet Name="All Motor Reset" DMXFrom="505050" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Scan Motor Reset" DMXFrom="565656" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Tilt LED Motor Reset" DMXFrom="5B5B5B" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Internal Program 1" DMXFrom="646464" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Internal Program 2" DMXFrom="787878" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Internal Program 3" DMXFrom="8C8C8C" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Internal Program 4" DMXFrom="A0A0A0" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Internal Program 5" DMXFrom="B4B4B4" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Internal Program 6" DMXFrom="C8C8C8" PhysicalTo="0.0000" />
+                                <ChannelSet Name="Internal Program 7" DMXFrom="DCDCDC" PhysicalTo="0.0000" />
+                                <ChannelSet Name="No Function" DMXFrom="F0F0F0" PhysicalTo="0.0000" />
+                            </ChannelFunction>
+                        </LogicalChannel>
+                    </DMXChannel>
+                </DMXChannels>
+                <Relations>
+                    <Relation Name="Dynamic Lamp_Virtual Dimmer Red" Master="Dynamic Beam_Dimmer" Follower="Dynamic Beam_ColorRGB_R.ColorRGB_R.ColorRGB_R 1" Type="Multiply" />
+                    <Relation Name="Dynamic Lamp_Virtual Dimmer Green" Master="Dynamic Beam_Dimmer" Follower="Dynamic Beam_ColorRGB_G.ColorRGB_G.ColorRGB_G 1" Type="Multiply" />
+                    <Relation Name="Dynamic Lamp_Virtual Dimmer Blue" Master="Dynamic Beam_Dimmer" Follower="Dynamic Beam_ColorRGB_B.ColorRGB_B.ColorRGB_B 1" Type="Multiply" />
+                    <Relation Name="Dynamic Lamp_Virtual Dimmer White" Master="Dynamic Beam_Dimmer" Follower="Dynamic Beam_ColorRGB_W.ColorRGB_W.ColorRGB_W 1" Type="Multiply" />
+                    <Relation Name="Static Lamp_Virtual Dimmer Red" Master="Static Beam_Dimmer" Follower="Static Beam_ColorRGB_R.ColorRGB_R.ColorRGB_R 1" Type="Multiply" />
+                    <Relation Name="Static Lamp_Virtual Dimmer Green" Master="Static Beam_Dimmer" Follower="Static Beam_ColorRGB_G.ColorRGB_G.ColorRGB_G 1" Type="Multiply" />
+                    <Relation Name="Static Lamp_Virtual Dimmer Blue" Master="Static Beam_Dimmer" Follower="Static Beam_ColorRGB_B.ColorRGB_B.ColorRGB_B 1" Type="Multiply" />
+                    <Relation Name="Static Lamp_Virtual Dimmer White" Master="Static Beam_Dimmer" Follower="Static Beam_ColorRGB_W.ColorRGB_W.ColorRGB_W 1" Type="Multiply" />
+                </Relations>
+                <FTMacros />
+            </DMXMode>
+        </DMXModes>
+        <Revisions>
+            <Revision Text="Created by Admin " Date="20.09.2017 08:08:10" />
+            <Revision Text="Tilt1 DMX inverted" Date="06.04.2018 10:00:00" />
+            <Revision Text="added Lowlight values" Date="24.04.2018 11:30:00" />
+            <Revision Text="Updated geometries according to GDTF 0.86" Date="14.06.2018 14:30:00" />
+            <Revision Text="All other changes according to GDTF 0.86" Date="25.06.2018 17:30:00" />
+            <Revision Text="changed pan/tilt attribute linking" Date="25.02.2019 11:00:00" />
+            <Revision Text="adjusted offsets of referenced geometry after bugfix" Date="16.09.2019 07:39:01" />
+        </Revisions>
+        <FTPresets />
+    </FixtureType>
+</GMA3>

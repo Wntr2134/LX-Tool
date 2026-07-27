@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lx-tool"
+version = "0.1.0"
+description = "Fixture library matching and conversion for lighting consoles"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+# The library and CLI deliberately have no third-party dependencies, so a
+# console in a venue can run them with nothing but Python installed.
+dependencies = []
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+lx = "lxtool.cli:main"
+lx-web = "lxtool.web.app:serve"
+
+[tool.setuptools.packages.find]
+include = ["lxtool*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
