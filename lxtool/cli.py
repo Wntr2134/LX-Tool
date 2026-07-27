@@ -300,9 +300,36 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _heads_folder_hint(folder: str) -> str:
+    """Help someone who pointed at the wrong place find their heads folder."""
+    return (
+        f"Could not find a heads folder at:\n  {Path(folder).expanduser()}\n\n"
+        "MagicQ keeps personalities in a 'heads' folder whose location varies by\n"
+        "install. Find yours with:\n\n"
+        "  macOS/Linux:  find ~ /Applications -name '*.hed' 2>/dev/null | head -5\n"
+        "  Windows:      dir /s /b C:\\*.hed\n\n"
+        "Then pass the folder those .hed files live in."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (NotADirectoryError, FileNotFoundError) as exc:
+        folder = getattr(args, "folder", None)
+        if folder and str(folder) in str(exc):
+            print(_heads_folder_hint(folder), file=sys.stderr)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, OSError) as exc:
+        # Malformed fixture files are the user's problem to fix, not a bug to
+        # dump a traceback for.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
