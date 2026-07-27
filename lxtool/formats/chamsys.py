@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Iterator
 from pathlib import Path
 
-from ..model import Channel, Fixture, Mode
+from ..model import Channel, Fixture, Mode, Range
 
 # Modes are very often written with their channel count: "9ch", "16 Ch", "M1-12ch".
 _CH_RE = re.compile(r"(\d+)\s*ch\b", re.I)
@@ -196,6 +196,13 @@ def load_head_map(path: Path | str) -> list[dict[str, str | int | None]]:
 # --------------------------------------------------------------------------
 
 _P_LINE = re.compile(r'^P,([0-9a-f]+),(.*)$', re.I)
+# Range rows name the slots inside a channel - gobo and colour names, macros:
+#     0006,"White",0000,0000,0000,06000026,
+# The leading index is the channel this belongs to, counted from zero.
+_RANGE_LINE = re.compile(
+    r'^([0-9a-f]{4}),"((?:[^"]|"")*)",([0-9a-f]{4}),([0-9a-f]{4}),'
+    r'([0-9a-f]{4}),([0-9a-f]{8}),?$', re.I
+)
 _QUOTED = re.compile(r'"((?:[^"]|"")*)"')
 HTP = 1
 LTP = 2
@@ -249,6 +256,7 @@ def parse_personality(text: str) -> Fixture:
 
     manufacturer = model = mode_name = ""
     channels: list[tuple[str, int, int]] = []
+    ranges_by_channel: dict[int, list[Range]] = {}
     declared = 0
 
     lines = [ln.rstrip("\r") for ln in text.split("\n")]
@@ -274,6 +282,14 @@ def parse_personality(text: str) -> Fixture:
                     if re.fullmatch(r"[0-9a-f]{4}", head, re.I):
                         declared = int(head, 16)
                     break
+            continue
+
+        rng = _RANGE_LINE.match(line)
+        if rng:
+            ranges_by_channel.setdefault(int(rng.group(1), 16), []).append(
+                Range(int(rng.group(3), 16), int(rng.group(4), 16),
+                      rng.group(2).replace('""', '"'))
+            )
             continue
 
         chan = _parse_channel_line(line)
@@ -306,6 +322,8 @@ def parse_personality(text: str) -> Fixture:
             attribute=canonical,
             fine=fine,
             htp=(flags & 0x0F) == HTP,
+            # Range rows index channels from zero.
+            ranges=[] if fine else ranges_by_channel.get(offset - 1, []),
         ))
         prev_attr, prev_num = canonical, attr_num
 
@@ -401,6 +419,15 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         attr_num = _ATTR_NUMBERS.get(ch.attribute, _RESERVED)
         flags = _flags_for(ch.attribute, ch.htp)
         out.append(f'"{ch.name}",{flags:08x},{attr_num:08x},')
+
+    # Named slots - gobo and colour names - so they survive the conversion
+    # instead of arriving on the desk as bare numbers.
+    for index, ch in enumerate(channels):
+        for r in ch.ranges:
+            if not r.name:
+                continue
+            label = r.name.replace('"', '""')
+            out.append(f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},0000,00000000,')
 
     # Trailing sections, sized to the channel count.
     out.append("0000,")

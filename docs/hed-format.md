@@ -76,6 +76,22 @@ P,0008,"China_7x9WMiniParRGB_7ch","China","7ch","7x9WMiniParRGB",
 | next line | First field is the channel count |
 | `"<name>",<flags>,<attribute>,` | One per channel, in patch order |
 
+### Range rows
+
+After the channel block come the named slots inside each channel - gobo
+names, colour names, macros:
+
+```
+0006,"White",0000,0006,0000,06000026,
+0006,"White > Yellow",0007,000d,2000,07000064,
+0001,"Open Gobo",0000,001f,0000,02000000,
+```
+
+`channel_index, "name", dmx_from, dmx_to, flags, extra`. **The index counts
+channels from zero**, so `0006` is the seventh channel. The trailing two
+fields carry crossfade behaviour and a colour/gobo image reference and are
+not interpreted; they are written as zero, which MagicQ accepts.
+
 ### Channel rows
 
 * **flags** — `(encoder_bank << 4) | type`, where type `1` is HTP and `2` is

@@ -754,3 +754,71 @@ def test_crlf_corruption_is_reported_clearly():
 
     # The intact file must still decode, so the check cannot be over-eager.
     assert chamsys.decode_hed(REAL_HEAD.read_bytes()).startswith("# MagicQ")
+
+
+# --------------------------------------------------------------------------
+# ChamSys named ranges (gobo / colour slot names)
+# --------------------------------------------------------------------------
+
+RANGE_PERSONALITY = (
+    'P,0004,"x","5Star","","Spica",\n'
+    "0004,0000,0000,0000,0000,0000,0001,0001,01f1,80000001,\n"
+    '"Col",00008022,00000006,\n'
+    '"Gobo",00008012,00000008,\n'
+    '"Shutter",00000012,00000002,\n'
+    '"Dimmer",00000001,00000000,\n'
+    '0000,"White",0000,0006,0000,06000026,\n'
+    '0000,"Yellow",0007,000d,2000,07000064,\n'
+    '0001,"Open Gobo",0000,001f,0000,02000000,\n'
+    '0001,"Gobo 1",0020,003f,0000,02000001,\n'
+    '0001,"Gobo 2",0040,005f,0000,02000002,\n'
+)
+
+
+def test_ranges_attach_to_the_right_channels():
+    """Range rows index channels from zero, not one."""
+    fx = chamsys.parse_personality(RANGE_PERSONALITY)
+    by_offset = fx.modes[0].by_offset()
+
+    colour = by_offset[1]
+    assert colour.attribute == "ColorWheel"
+    assert [r.name for r in colour.ranges] == ["White", "Yellow"]
+
+    gobo = by_offset[2]
+    assert gobo.attribute == "Gobo1"
+    assert [r.name for r in gobo.ranges] == ["Open Gobo", "Gobo 1", "Gobo 2"]
+    assert (gobo.ranges[1].dmx_from, gobo.ranges[1].dmx_to) == (32, 63)
+
+    # Channels with no rows must not inherit anyone else's.
+    assert by_offset[3].ranges == []
+    assert by_offset[4].ranges == []
+
+
+def test_ranges_survive_a_hed_roundtrip(tmp_path):
+    fx = chamsys.parse_personality(RANGE_PERSONALITY)
+    back = chamsys.read(chamsys.write(fx, tmp_path / "x.hed"))
+
+    gobo = next(c for c in back.modes[0].channels if c.attribute == "Gobo1")
+    assert [(r.dmx_from, r.dmx_to, r.name) for r in gobo.ranges] == [
+        (0, 31, "Open Gobo"), (32, 63, "Gobo 1"), (64, 95, "Gobo 2"),
+    ]
+
+
+def test_ranges_survive_conversion_to_gdtf(tmp_path):
+    """Gobo names must reach the other desk, not arrive as bare numbers."""
+    fx = chamsys.parse_personality(RANGE_PERSONALITY)
+    back = gdtf.read(gdtf.write(fx, tmp_path / "x.gdtf"))
+    gobo = next(c for c in back.modes[0].channels if c.attribute == "Gobo1")
+    assert [r.name for r in gobo.ranges] == ["Open Gobo", "Gobo 1", "Gobo 2"]
+
+
+def test_quotes_inside_range_names_survive(tmp_path):
+    fx = chamsys.parse_personality(
+        'P,0001,"x","ACME","","Thing",\n'
+        "0001,0000,0000,0000,0000,0000,0001,0001,01f1,00000000,\n"
+        '"Gobo",00008012,00000008,\n'
+        '0000,"6"" Dish",0000,00ff,0000,00000000,\n'
+    )
+    assert fx.modes[0].channels[0].ranges[0].name == '6" Dish'
+    back = chamsys.read(chamsys.write(fx, tmp_path / "q.hed"))
+    assert back.modes[0].channels[0].ranges[0].name == '6" Dish'

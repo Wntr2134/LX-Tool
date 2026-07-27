@@ -280,6 +280,9 @@ heads folder (experimental — verify in the Head Editor).
 
 ### Known limitations, stated plainly
 
+Gobo and colour slot names are read and written, so they survive a
+conversion in both directions.
+
 **ChamSys `.hed` writing is experimental.** *Reading* is solved and exact —
 the obfuscation is XOR against a down-counter mod 127, documented in
 [docs/hed-format.md](docs/hed-format.md) — so library scans and matches now
