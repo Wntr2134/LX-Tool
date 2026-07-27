@@ -55,11 +55,20 @@ scan it, and search or upload a fixture.
 
 Your heads folder is usually:
 
+MagicQ nests it under its show directory, as `<MagicQ folder>/show/heads`:
+
 | OS | Path |
 |---|---|
-| Windows | `C:\ProgramData\MagicQ\heads` |
-| macOS | `~/Documents/MagicQ/heads` |
-| Linux | `~/MagicQ/heads` |
+| macOS | `~/Documents/MagicQ/show/heads` |
+| Windows | `C:\MagicQ\show\heads` (or under `ProgramData`) |
+| Linux | `~/MagicQ/show/heads` |
+
+If none of those exist, search for the files themselves:
+
+```bash
+find ~ /Applications -name "*.hed" 2>/dev/null | head -5    # macOS/Linux
+dir /s /b C:\*.hed                                          # Windows
+```
 
 ### CLI
 

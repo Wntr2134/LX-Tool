@@ -304,8 +304,9 @@ def _heads_folder_hint(folder: str) -> str:
     """Help someone who pointed at the wrong place find their heads folder."""
     return (
         f"Could not find a heads folder at:\n  {Path(folder).expanduser()}\n\n"
-        "MagicQ keeps personalities in a 'heads' folder whose location varies by\n"
-        "install. Find yours with:\n\n"
+        "MagicQ keeps personalities under its show directory, as\n"
+        "<MagicQ folder>/show/heads - on macOS usually\n"
+        "~/Documents/MagicQ/show/heads. If that is not it, search for them:\n\n"
         "  macOS/Linux:  find ~ /Applications -name '*.hed' 2>/dev/null | head -5\n"
         "  Windows:      dir /s /b C:\\*.hed\n\n"
         "Then pass the folder those .hed files live in."
