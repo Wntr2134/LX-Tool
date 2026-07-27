@@ -15,7 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import catalog, library as libmod, matching
+from . import catalog, gdtfshare, library as libmod, matching
 from .formats import chamsys, gdtf, ma2, ma3, mvr, ofl
 from .model import Fixture, Mode
 
@@ -242,6 +242,61 @@ def cmd_triage(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gdtf(args: argparse.Namespace) -> int:
+    """GDTF Share: log in, search, and download fixtures."""
+    import getpass
+
+    cache = getattr(args, "cache", None)
+
+    if args.action == "login":
+        user = args.user or input("GDTF Share email: ").strip()
+        # Prompted, used once, never written to disk - only the session
+        # cookie it returns is saved.
+        password = getpass.getpass("GDTF Share password: ")
+        gdtfshare.login(user, password, cache=cache)
+        print("Logged in. Only the session cookie is stored, not your password.")
+        return 0
+
+    if args.action == "logout":
+        print("Session removed." if gdtfshare.logout(cache) else "Not logged in.")
+        return 0
+
+    if not gdtfshare.logged_in(cache):
+        raise SystemExit("Not logged in. Run 'lx gdtf login' first.")
+
+    entries = gdtfshare.fetch_list(cache=cache)
+    if args.query:
+        entries = gdtfshare.search(entries, args.query)
+
+    if args.action == "search":
+        for e in entries[:args.limit]:
+            rev = f"  rev {e.revision}" if e.revision else ""
+            print(f"{e.rid:>7}  {e.label}{rev}")
+        print(f"\n{len(entries)} match(es)")
+        return 0
+
+    # download
+    if not entries:
+        print("Nothing matches that query.", file=sys.stderr)
+        return 1
+
+    dest = Path(args.into)
+    wanted = entries[:args.limit]
+    print(f"Downloading {len(wanted)} of {len(entries)} match(es) into {dest}")
+    ok = failed = 0
+    for e in wanted:
+        try:
+            path = gdtfshare.download(e, dest, cache=cache, overwrite=args.overwrite)
+            print(f"  {path.name}")
+            ok += 1
+        except gdtfshare.GdtfShareError as exc:
+            print(f"  ! {e.label}: {exc}", file=sys.stderr)
+            failed += 1
+    print(f"\n{ok} downloaded, {failed} failed")
+    print(f"Now: lx triage {dest}")
+    return 0 if not failed else 1
+
+
 def cmd_dupes(args: argparse.Namespace) -> int:
     """Find modes in a library that share a DMX fingerprint."""
     lib = _load_libraries(args)
@@ -424,6 +479,17 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--close-threshold", type=float, default=0.60)
     t.add_argument("--cache", help="catalogue cache directory")
     t.set_defaults(func=cmd_triage)
+
+    g = sub.add_parser("gdtf", help="GDTF Share: log in, search, download")
+    g.add_argument("action", choices=["login", "logout", "search", "download"])
+    g.add_argument("query", nargs="?", default="", help="free-text filter")
+    g.add_argument("--user", help="account email (prompted if omitted)")
+    g.add_argument("--into", default="gdtf-share",
+                   help="download folder (default ./gdtf-share)")
+    g.add_argument("--limit", type=int, default=50)
+    g.add_argument("--overwrite", action="store_true")
+    g.add_argument("--cache")
+    g.set_defaults(func=cmd_gdtf)
 
     d2 = sub.add_parser("dupes", help="find fixtures with identical channel layouts")
     d2.add_argument("folder", nargs="?", help="library folder (omit to auto-detect)")

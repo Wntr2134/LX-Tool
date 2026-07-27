@@ -181,6 +181,23 @@ folder, so ranking is two-stage: a cheap pass on footprint, colour system and
 name narrows the field, then the alignment scorer ranks the survivors. Below
 the pool size every candidate survives, so small libraries are unaffected.
 
+### GDTF Share
+
+The biggest fixture library there is, and where new fixtures appear first.
+Needs a free account at <https://gdtf-share.com>.
+
+```bash
+lx gdtf login                       # prompts; only a session cookie is saved
+lx gdtf search "mac 700"
+lx gdtf download "robe" --into ~/Downloads/robe --limit 20
+lx triage ~/Downloads/robe          # ...then see what you already have
+```
+
+**Your password is never stored.** Logging in exchanges it for a session
+cookie, and only that cookie is written - to the LX-Tool cache directory,
+owner-only. `lx gdtf logout` deletes it. Nothing is sent anywhere except
+gdtf-share.com.
+
 ### Finding redundancy in your own library
 
 ```bash
