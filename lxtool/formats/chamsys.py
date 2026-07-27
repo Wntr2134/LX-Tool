@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import re
 from dataclasses import dataclass, field
+from typing import Iterator
 from pathlib import Path
 
 from ..model import Channel, Fixture, Mode
@@ -391,8 +392,10 @@ class ChamSysLibrary:
     aliases: dict[str, str] = field(default_factory=dict)
     head_map: list[dict] = field(default_factory=list)
 
+    library: list[Fixture] = field(default_factory=list)
+
     @classmethod
-    def scan(cls, folder: Path | str) -> "ChamSysLibrary":
+    def scan(cls, folder: Path | str, *, include_library: bool = True) -> "ChamSysLibrary":
         folder = Path(folder)
         if not folder.is_dir():
             raise NotADirectoryError(f"not a directory: {folder}")
@@ -402,16 +405,29 @@ class ChamSysLibrary:
             for p in sorted(folder.rglob("*.hed"))
             if p.is_file()
         ]
+
+        # MagicQ ships its ~50,000-head library in heads.all and only writes a
+        # .hed for heads the user has changed, so the container is where nearly
+        # everything actually lives.
+        library: list[Fixture] = []
+        container = folder / "heads.all"
+        if include_library and container.is_file():
+            library = _cached_container(container)
+
         return cls(
             heads=heads,
             aliases=load_manufacturer_aliases(folder / "manufacturer_exceptions.csv"),
             head_map=load_head_map(folder / "headmapcapture.csv"),
+            library=library,
         )
 
     def canonical_manufacturer(self, name: str) -> str:
         """Resolve a manufacturer through the alias table, following one hop."""
         key = re.sub(r"[^a-z0-9]", "", name.lower())
         return self.aliases.get(key, self.aliases.get(name.strip().lower(), name.strip().lower()))
+
+    def _library_by_source(self) -> dict[str, Fixture]:
+        return {f.source_id.lower(): f for f in self.library if f.source_id}
 
     def as_fixtures(self, *, read_bodies: bool = True) -> list[Fixture]:
         """Collapse head files into fixtures, one mode per head file.
@@ -456,6 +472,20 @@ class ChamSysLibrary:
                 if h.channel_count:
                     mode.declared_count = h.channel_count
             fx.modes.append(mode)
+
+        # Fold in the bundled library. A user .hed of the same name is an
+        # edited copy and wins, which is exactly how MagicQ resolves them.
+        overridden = {h.path.name.lower() for h in self.heads}
+        for fx in self.library:
+            if fx.source_id.lower() in overridden:
+                continue
+            k = (fx.manufacturer.lower(), fx.model.lower())
+            existing = grouped.get(k)
+            if existing is None:
+                grouped[k] = fx
+            else:
+                existing.modes.extend(fx.modes)
+
         return list(grouped.values())
 
 
@@ -517,6 +547,186 @@ def decode_hed(data: bytes) -> str:
         out.append((b & 0x7F) ^ _key(i))
         i += 1
     return out.decode("utf-8", errors="replace")
+
+
+# --------------------------------------------------------------------------
+# heads.all - the bundled library
+#
+# MagicQ ships ~50,000 personalities in a single heads.all rather than as
+# separate files; the .hed files in the heads folder are only the ones a user
+# has changed.  heads.all uses the same cipher, but as a container of sections
+# whose keystream restarts at each boundary::
+#
+#     PP,"allheads.dat","Sun Jul 26 17:14:58 2026",0000,0000;
+#     ...index of every head filename...
+#     PP,"5Star_Helix255M_16bit.hed","Sun Jul 26 17:14:58 2026",0000,0000;
+#     \ MagicQ personality file.  Copyright Chamsys Ltd 2021 ...
+#     P,0002,"5Star_Helix255M_16bit","5Star","16bit","Helix255M",
+#
+# The framing that sets each section's phase is not fully worked out, so the
+# decoder resynchronises instead: when output stops being printable it picks
+# the phase giving the longest printable run and carries on.  That recovers
+# the whole file - measured across a real heads.all with zero unrecoverable
+# bytes - without needing to model the framing exactly.
+# --------------------------------------------------------------------------
+
+_KEYBLOCK = bytes(127 if (-m) % _MODULUS == 0 else (-m) % _MODULUS for m in range(_MODULUS))
+_KEYBLOCK2 = _KEYBLOCK * 2
+
+_SECTION_RE = re.compile(r'^PP,"([^"]*)","([^"]*)"', re.M)
+
+# How far to look ahead when judging a candidate phase. Long enough to be
+# decisive, short enough to stay cheap at every resync.
+_PROBE = 160
+
+
+def _xor_line(line: bytes, phase: int) -> bytes:
+    """XOR one line against the keystream starting at ``phase``."""
+    n = len(line)
+    start = phase % _MODULUS
+    if n <= _MODULUS:
+        keys = _KEYBLOCK2[start:start + n]
+    else:
+        reps = n // _MODULUS + 2
+        keys = (_KEYBLOCK * reps)[start:start + n]
+    return bytes((b & 0x7F) ^ k for b, k in zip(line, keys))
+
+
+def _run_length(data: bytes, pos: int, phase: int, limit: int = _PROBE) -> int:
+    """How many printable characters this phase yields from ``pos``."""
+    n = 0
+    i = phase
+    j = pos
+    end = len(data)
+    while j < end and n < limit:
+        b = data[j]
+        if b == 0x0A:
+            j += 1
+            n += 1
+            continue
+        k = _KEYBLOCK[i % _MODULUS]
+        c = (b & 0x7F) ^ k
+        if not (32 <= c < 127):
+            return n
+        i += 1
+        j += 1
+        n += 1
+    return n
+
+
+def decode_container(data: bytes) -> str:
+    """Decode a ``heads.all`` container, resynchronising at section boundaries."""
+    out = bytearray()
+    j = 0
+    i = 0
+    end = len(data)
+
+    while j < end:
+        b = data[j]
+        if b == 0x0A:
+            out.append(0x0A)
+            j += 1
+            continue
+
+        c = (b & 0x7F) ^ _KEYBLOCK[i % _MODULUS]
+        if 32 <= c < 127:
+            out.append(c)
+            i += 1
+            j += 1
+            continue
+
+        # Lost sync: choose the phase with the longest printable run.
+        best_len, best_phase = 0, 0
+        for ph in range(_MODULUS):
+            n = _run_length(data, j, ph)
+            if n > best_len:
+                best_len, best_phase = n, ph
+                if n >= _PROBE:
+                    break
+        if best_len < 6:
+            # Genuinely undecodable byte; keep the stream aligned rather than
+            # aborting the whole 389 MB file for one bad spot.
+            out.append(0x7F)
+            j += 1
+            continue
+        i = best_phase
+
+    return out.decode("latin1")
+
+
+def iter_container_heads(text: str) -> Iterator[tuple[str, str]]:
+    """Split decoded container text into ``(filename, personality)`` pairs.
+
+    The index section and any non-.hed members are skipped.
+    """
+    marks = [(m.start(), m.group(1)) for m in _SECTION_RE.finditer(text)]
+    for idx, (start, name) in enumerate(marks):
+        if not name.lower().endswith(".hed"):
+            continue
+        stop = marks[idx + 1][0] if idx + 1 < len(marks) else len(text)
+        body = text[start:stop]
+        nl = body.find("\n")
+        yield name, body[nl + 1:] if nl >= 0 else body
+
+
+def read_container(path: Path | str) -> list[Fixture]:
+    """Read every personality out of a ``heads.all``.
+
+    This is a large file - expect it to take a while on first read.
+    """
+    text = decode_container(Path(path).read_bytes())
+    out: list[Fixture] = []
+    for name, body in iter_container_heads(text):
+        try:
+            fx = parse_personality(body)
+        except (ValueError, IndexError):
+            continue
+        if not fx.modes or not fx.modes[0].channels:
+            continue
+        fx.source_id = name
+        if not fx.manufacturer and not fx.model:
+            head = parse_head_filename(Path(name))
+            fx.manufacturer, fx.model = head.manufacturer, head.model
+        out.append(fx)
+    return out
+
+
+def _cached_container(path: Path) -> list[Fixture]:
+    """Parse ``heads.all``, caching the result.
+
+    Decoding 389 MB takes about a minute, which is fine once and intolerable
+    on every command, so the parsed fixtures are pickled next to the other
+    LX-Tool caches and keyed on the file's size and mtime.
+    """
+    import pickle
+
+    from ..catalog import cache_dir
+
+    stat = path.stat()
+    key = f"{path.name}-{stat.st_size}-{int(stat.st_mtime)}"
+    cache = Path(cache_dir()) / f"heads-all-{key}.pickle"
+
+    if cache.is_file():
+        try:
+            with cache.open("rb") as fh:
+                return pickle.load(fh)
+        except (pickle.UnpicklingError, EOFError, AttributeError, ImportError):
+            cache.unlink(missing_ok=True)   # stale or written by another version
+
+    fixtures = read_container(path)
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(".part")
+        with tmp.open("wb") as fh:
+            pickle.dump(fixtures, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp.replace(cache)
+        # Drop caches for older heads.all versions.
+        for old in cache.parent.glob("heads-all-*.pickle"):
+            if old != cache:
+                old.unlink(missing_ok=True)
+    except OSError:
+        pass    # a read-only cache dir must not break the scan
+    return fixtures
 
 
 def encode_hed(text: str) -> bytes:
