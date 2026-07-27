@@ -113,7 +113,15 @@ def parse(data: dict[str, Any] | str | bytes, *, manufacturer: str = "") -> Fixt
         fixture_type=", ".join(data.get("categories", []) or []),
     )
 
-    for mode_data in data.get("modes", []) or []:
+    modes = data.get("modes") or []
+    if not isinstance(modes, list):
+        raise ValueError("'modes' must be a list")
+
+    for mode_data in modes:
+        if not isinstance(mode_data, dict):
+            # Real library data is occasionally malformed; skip the bad mode
+            # rather than losing the whole fixture.
+            continue
         mode = Mode(name=mode_data.get("name", "Default") or "Default")
         for index, entry in enumerate(mode_data.get("channels", []) or [], start=1):
             if entry is None:

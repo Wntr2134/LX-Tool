@@ -118,11 +118,19 @@ def _parse_address(fixture_el: ET.Element) -> tuple[int, int]:
 def read(path: Path | str) -> Rig:
     """Read an ``.mvr`` archive into a :class:`Rig`."""
     path = Path(path)
-    with zipfile.ZipFile(path) as zf:
+    try:
+        zf_ctx = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"{path.name} is not an MVR archive: {exc}") from exc
+
+    with zf_ctx as zf:
         names = [n for n in zf.namelist() if n.endswith(SCENE_FILE)]
         if not names:
             raise ValueError(f"{path.name} has no {SCENE_FILE} - not an MVR archive")
-        root = ET.fromstring(zf.read(names[0]))
+        try:
+            root = ET.fromstring(zf.read(names[0]))
+        except ET.ParseError as exc:
+            raise ValueError(f"{SCENE_FILE} is not valid XML: {exc}") from exc
 
         # Cache the embedded fixture types; several fixtures share each one.
         types: dict[str, Fixture] = {}

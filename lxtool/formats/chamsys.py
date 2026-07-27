@@ -497,7 +497,10 @@ class ChamSysLibrary:
         library: list[Fixture] = []
         container = folder / "heads.all"
         if include_library and container.is_file():
-            library = _cached_container(container)
+            # container_index caches compact rows; expand them here so this
+            # API keeps returning Fixtures. Callers that only need to rank
+            # should use lxtool.library, which stays on the rows.
+            library = [row.to_fixture() for row in container_index(container)]
 
         return cls(
             heads=heads,
@@ -688,6 +691,29 @@ _SECTION_RE = re.compile(r'^PP,"([^"]*)","([^"]*)"', re.M)
 # decisive, short enough to stay cheap at every resync.
 _PROBE = 160
 
+# Every section begins, on its own line, with the literal ``PP,"``. The phase
+# it starts on varies and the framing that picks it is not worked out - but
+# ciphering that fixed prefix under all 127 phases gives 127 distinct byte
+# patterns, so a section header can be recognised in the *ciphertext* and its
+# phase read straight off. That is an anchor rather than a guess.
+#
+# It matters because resynchronising by printability alone only recovers a
+# boundary once the wrong phase happens to produce an unprintable byte. That
+# can take several characters, and the characters it eats are the ``PP,"..."``
+# line naming the head - so the section is not merely garbled, it stops being
+# found at all. The stock heads.all happens never to hit that case (decoding
+# it is byte-for-byte identical with and without this anchor), but "happens
+# never to" is not a property to rely on across MagicQ versions.
+_SECTION_MARK = 'PP,"'
+_SECTION_MARKERS: dict[bytes, int] = {
+    bytes(
+        (ord(c) ^ _KEYBLOCK[(phase + i) % _MODULUS]) | 0x80
+        for i, c in enumerate(_SECTION_MARK)
+    ): phase
+    for phase in range(_MODULUS)
+}
+_MARK_LEN = len(_SECTION_MARK)
+
 
 def _xor_line(line: bytes, phase: int) -> bytes:
     """XOR one line against the keystream starting at ``phase``."""
@@ -729,13 +755,23 @@ def decode_container(data: bytes) -> str:
     j = 0
     i = 0
     end = len(data)
+    at_line_start = True
 
     while j < end:
         b = data[j]
         if b == 0x0A:
             out.append(0x0A)
             j += 1
+            at_line_start = True
             continue
+
+        # A section header is identifiable in the ciphertext, so take the
+        # phase from it rather than waiting for printability to fail.
+        if at_line_start:
+            phase = _SECTION_MARKERS.get(bytes(data[j:j + _MARK_LEN]))
+            if phase is not None:
+                i = phase
+            at_line_start = False
 
         c = (b & 0x7F) ^ _KEYBLOCK[i % _MODULUS]
         if 32 <= c < 127:
