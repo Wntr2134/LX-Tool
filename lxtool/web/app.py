@@ -41,9 +41,24 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     parser.add_argument("--host", default=host)
     parser.add_argument("--port", type=int, default=port)
     parser.add_argument("--reload", action="store_true")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="don't open a browser window automatically")
     args = parser.parse_args()
 
-    print(f"LX-Tool: http://{args.host}:{args.port}")
+    url = f"http://{args.host}:{args.port}"
+    print("=" * 58)
+    print(f"  LX-Tool is running at  {url}")
+    print("  Leave this window open. Press Ctrl+C to stop.")
+    print("=" * 58)
+
+    if not args.no_browser and not args.reload:
+        # Open the browser once the server is actually accepting connections,
+        # so the first request doesn't land on a closed port.
+        import threading
+        import webbrowser
+
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+
     uvicorn.run(
         "lxtool.web.app:app" if args.reload else app,
         host=args.host, port=args.port, reload=args.reload,
