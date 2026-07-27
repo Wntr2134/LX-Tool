@@ -169,3 +169,84 @@ def test_ofl_percentage_default_does_not_break_parsing():
     fx = ofl.parse(json.dumps(doc))
     assert fx.modes[0].channels[0].default == 128
     assert fx.modes[0].channels[0].highlight == 255
+
+
+# --------------------------------------------------------------------------
+# duplicate detection
+# --------------------------------------------------------------------------
+
+def _multi(mfr, model, modes):
+    """A fixture with several named modes."""
+    return Fixture(manufacturer=mfr, model=model, source="chamsys", modes=[
+        Mode(name=name, channels=[
+            Channel(offset=i, name=a, attribute=a) for i, a in enumerate(attrs, 1)
+        ]) for name, attrs in modes
+    ])
+
+
+RGBW = ["Dimmer", "Red", "Green", "Blue", "White"]
+
+
+def test_signature_ignores_names_but_not_order():
+    a = Mode(name="a", channels=[Channel(offset=i, name=x, attribute=x)
+                                 for i, x in enumerate(RGBW, 1)])
+    b = Mode(name="totally different", channels=[Channel(offset=i, name="zz", attribute=x)
+                                                 for i, x in enumerate(RGBW, 1)])
+    c = Mode(name="c", channels=[Channel(offset=i, name=x, attribute=x)
+                                 for i, x in enumerate(reversed(RGBW), 1)])
+    assert libmod.signature(a) == libmod.signature(b)
+    assert libmod.signature(a) != libmod.signature(c)
+
+
+def test_effect_modes_are_not_called_duplicates():
+    """One fixture's effect modes share a layout but are genuinely distinct.
+
+    Reporting these as redundant would invite deleting working modes.
+    """
+    fx = _multi("Aputure", "MCPro", [
+        ("M21 Fire", RGBW), ("M21 Strobe", RGBW), ("M21 TV", RGBW),
+    ])
+    groups = libmod.find_duplicates([fx])
+    assert len(groups) == 1
+    assert groups[0].size == 3
+    assert groups[0].redundant() is False
+    assert groups[0].interchangeable() is False
+
+
+def test_same_fixture_and_mode_twice_is_a_duplicate():
+    """The same head stored under two filenames is real clutter."""
+    a = _multi("Robe", "Pointe", [("16ch", RGBW)])
+    b = _multi("Robe", "Pointe", [("16ch", RGBW)])
+    groups = libmod.find_duplicates([a, b])
+    assert groups[0].redundant() is True
+
+
+def test_different_fixtures_same_layout_are_interchangeable():
+    a = _multi("Robe", "Pointe", [("16ch", RGBW)])
+    b = _multi("Martin", "MAC", [("Mode 1", RGBW)])
+    groups = libmod.find_duplicates([a, b])
+    assert groups[0].interchangeable() is True
+    assert groups[0].redundant() is False
+    assert sorted(groups[0].names) == ["Martin MAC [Mode 1]", "Robe Pointe [16ch]"]
+
+
+def test_tiny_modes_are_skipped():
+    """A 3-channel RGB par is identical across hundreds of fixtures."""
+    a = _multi("A", "1", [("rgb", ["Red", "Green", "Blue"])])
+    b = _multi("B", "2", [("rgb", ["Red", "Green", "Blue"])])
+    assert libmod.find_duplicates([a, b]) == []
+    assert len(libmod.find_duplicates([a, b], min_channels=3)) == 1
+
+
+def test_unique_layouts_are_not_reported():
+    a = _multi("A", "1", [("m", RGBW)])
+    b = _multi("B", "2", [("m", RGBW + ["Pan", "Tilt"])])
+    assert libmod.find_duplicates([a, b]) == []
+
+
+def test_groups_are_ordered_by_size():
+    fixtures = [_multi(f"M{i}", f"X{i}", [("m", RGBW)]) for i in range(5)]
+    fixtures += [_multi("Q", "Y", [("m", RGBW + ["Zoom"])]),
+                 _multi("R", "Z", [("m", RGBW + ["Zoom"])])]
+    groups = libmod.find_duplicates(fixtures)
+    assert [g.size for g in groups] == [5, 2]

@@ -242,6 +242,42 @@ def cmd_triage(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dupes(args: argparse.Namespace) -> int:
+    """Find modes in a library that share a DMX fingerprint."""
+    lib = _load_libraries(args)
+    groups = libmod.find_duplicates(lib.fixtures, min_channels=args.min_channels)
+
+    redundant = [g for g in groups if g.redundant()]
+    alike = [g for g in groups if g.interchangeable()]
+    covered = sum(g.size for g in groups)
+
+    print(f"\n{len(groups)} group(s) of identical layout, covering {covered} modes")
+    print("(a shared layout is normal - one fixture's effect modes all look "
+          "alike)\n")
+
+    if redundant:
+        print(f"TRUE DUPLICATES ({len(redundant)}) - same fixture and mode stored twice")
+        for g in redundant[:args.limit]:
+            print(f"  {g.channel_count:>3} ch  x{g.size}  {g.names[0]}")
+            for n in g.names[1:]:
+                print(f"                 {n}")
+        print()
+
+    if alike:
+        print(f"DIFFERENT FIXTURES, SAME LAYOUT ({len(alike)}) - interchangeable")
+        for g in alike[:args.limit]:
+            attrs = ", ".join(a for a, _ in g.signature[:6])
+            print(f"  {g.channel_count:>3} ch  x{g.size}  {attrs}...")
+            for n in g.names[:args.show]:
+                print(f"                 {n}")
+            if g.size > args.show:
+                print(f"                 ... and {g.size - args.show} more")
+        print()
+
+    print(f"{len(redundant)} redundant, {len(alike)} interchangeable")
+    return 0
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
     if not args.source and not args.ofl:
         print("give a source file, or --ofl <key-or-search>", file=sys.stderr)
@@ -388,6 +424,17 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--close-threshold", type=float, default=0.60)
     t.add_argument("--cache", help="catalogue cache directory")
     t.set_defaults(func=cmd_triage)
+
+    d2 = sub.add_parser("dupes", help="find fixtures with identical channel layouts")
+    d2.add_argument("folder", nargs="?", help="library folder (omit to auto-detect)")
+    d2.add_argument("--library", action="append", metavar="PATH")
+    d2.add_argument("--with-ofl", action="store_true")
+    d2.add_argument("--min-channels", type=int, default=4,
+                    help="ignore modes smaller than this (default 4)")
+    d2.add_argument("--limit", type=int, default=15, help="groups to print")
+    d2.add_argument("--show", type=int, default=4, help="members to print per group")
+    d2.add_argument("--cache")
+    d2.set_defaults(func=cmd_dupes)
 
     r = sub.add_parser("rig", help="summarise a whole patch from an MVR file")
     r.add_argument("file")

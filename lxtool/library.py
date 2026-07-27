@@ -58,6 +58,80 @@ class Library:
         return dict(sorted(out.items()))
 
 
+def signature(mode) -> tuple:
+    """A mode's DMX fingerprint: what sits on each slot, in order.
+
+    Two modes with the same signature are interchangeable at the desk
+    whatever they are called, which is what makes this useful for finding
+    redundancy in a library that has grown for twenty years.
+    """
+    return tuple(
+        (c.attribute, c.fine)
+        for c in sorted(mode.channels, key=lambda c: c.offset)
+    )
+
+
+@dataclass
+class DuplicateGroup:
+    """Modes that share a DMX fingerprint."""
+
+    signature: tuple
+    members: list[tuple[Fixture, object]] = field(default_factory=list)
+
+    @property
+    def channel_count(self) -> int:
+        return self.members[0][1].channel_count if self.members else 0
+
+    @property
+    def size(self) -> int:
+        return len(self.members)
+
+    @property
+    def names(self) -> list[str]:
+        return [f"{fx.key} [{m.name}]" for fx, m in self.members]
+
+    def redundant(self) -> bool:
+        """True when this really is the same thing stored more than once.
+
+        Sharing a layout is not enough. One fixture's effect modes - "M20
+        Fire", "M20 Strobe" - are all 11 channels with identical attributes
+        but are genuinely different modes, and calling those redundant would
+        invite someone to delete working parts of their library. Real
+        duplication means the same fixture *and* the same mode name.
+        """
+        seen = {(fx.key.lower(), m.name.strip().lower()) for fx, m in self.members}
+        return len(seen) < len(self.members)
+
+    def interchangeable(self) -> bool:
+        """True when distinct fixtures share a layout - useful, not a problem."""
+        return len({fx.key.lower() for fx, _ in self.members}) > 1
+
+
+def find_duplicates(fixtures: list[Fixture], *, min_channels: int = 4) -> list[DuplicateGroup]:
+    """Group every mode in the library by DMX fingerprint.
+
+    Modes below ``min_channels`` are skipped: a 1-channel dimmer or a 3-channel
+    RGB par is identical across hundreds of fixtures by definition, and
+    reporting those would bury the findings that matter.
+    """
+    groups: dict[tuple, DuplicateGroup] = {}
+    for fx in fixtures:
+        for mode in fx.modes:
+            if mode.channel_count < min_channels or not mode.channels:
+                continue
+            sig = signature(mode)
+            if not sig:
+                continue
+            group = groups.get(sig)
+            if group is None:
+                group = groups[sig] = DuplicateGroup(signature=sig)
+            group.members.append((fx, mode))
+
+    dupes = [g for g in groups.values() if g.size > 1]
+    dupes.sort(key=lambda g: (-g.size, -g.channel_count))
+    return dupes
+
+
 def detect_sources() -> list[Path]:
     """Fixture libraries present on this machine."""
     found = list(chamsys.find_heads_folders())

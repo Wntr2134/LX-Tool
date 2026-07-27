@@ -181,6 +181,29 @@ folder, so ranking is two-stage: a cheap pass on footprint, colour system and
 name narrows the field, then the alignment scorer ranks the survivors. Below
 the pool size every candidate survives, so small libraries are unaffected.
 
+### Finding redundancy in your own library
+
+```bash
+lx dupes --library ~/Documents/MagicQ/show/heads
+```
+
+Groups every mode by DMX fingerprint and splits the result two ways:
+
+- **True duplicates** — the same fixture *and* mode name stored more than
+  once. Real clutter.
+- **Interchangeable** — different fixtures with an identical layout. Not a
+  problem, but useful: if you lack the exact head, any of these will drive
+  the fixture.
+
+A shared layout on its own is not duplication. One fixture's effect modes
+("M20 Fire", "M20 Strobe") are all the same channels, and calling those
+redundant would invite deleting working modes — so the classification
+requires the mode names to match too.
+
+On a stock ChamSys library the honest answer is usually *no* true duplicates
+and a great many interchangeable groups: 1,411 fixtures share a plain 4-channel
+RGBW layout, which is expected rather than wrong.
+
 ## How matching works
 
 Three things are scored separately, because they mean different things to
