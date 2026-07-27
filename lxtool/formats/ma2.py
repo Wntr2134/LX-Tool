@@ -125,6 +125,15 @@ def parse(xml: str | bytes) -> Fixture:
         if mode.channels:
             fixture.modes.append(mode)
 
+    if not fixture.modes:
+        # Returning an empty fixture would report success on a file we did not
+        # understand at all, which is worse than failing.
+        raise ValueError(
+            "no DMX channels found - this does not look like a grandMA2 "
+            "fixture export. grandMA3 fixture XML is a different format and "
+            "is not supported; export the fixture as GDTF instead."
+        )
+
     return fixture
 
 
