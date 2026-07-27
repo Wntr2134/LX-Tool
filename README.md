@@ -141,6 +141,46 @@ Changes are ordered by how badly they break the fixture — intensity and
 position first, then colour, then beam, then control — and within that by
 patch order, so you walk the channel list once.
 
+## Searching every library at once
+
+`lx match` and `lx triage` search all the libraries you have, not just one,
+and label each result with where it came from:
+
+```
+ 1. [  93%] Martin Mac700W [Normal]   <ChamSys>
+ 2. [  88%] Martin MAC 700 Wash [Basic 16-channel]   <grandMA3>
+```
+
+With no folder argument they auto-detect: MagicQ heads folders, grandMA3
+`lib_fixture_types`, and any folder of `.gdtf` files you name with
+`--library`. `--with-ofl` adds the cached Open Fixture Library.
+
+### Triage a folder of new fixtures
+
+```
+$ lx triage ~/Downloads/new-kit --library ~/Documents/MagicQ/show/heads
+Triaging 5 file(s) against 21677 fixtures
+
+ALREADY HAVE (1)
+   led-par-56-tcl.gdtf        98%  Eurolite LED PAR [Default] <ChamSys>
+
+CLOSE - usable with edits (3)
+   mac-250-krypton.gdtf       86%  Martin Mac250+ [Mode 1] <ChamSys>
+   mac-700-wash.gdtf          84%  Martin Mac700W [Normal] <ChamSys>
+   led-flat-par-rgbw.gdtf     77%  Shehds LEDZoomPar18x12 [10ch] <ChamSys>
+
+NEW - need building (1)
+   imaginary.gdtf             39%  Showtec GalacticB1000 [13ch] <ChamSys>
+```
+
+Thresholds are `--have-threshold` (default 0.90) and `--close-threshold`
+(0.60).
+
+Matching a fixture against 68,000 modes is too slow to do naively for a whole
+folder, so ranking is two-stage: a cheap pass on footprint, colour system and
+name narrows the field, then the alignment scorer ranks the survivors. Below
+the pool size every candidate survives, so small libraries are unaffected.
+
 ## How matching works
 
 Three things are scored separately, because they mean different things to

@@ -295,6 +295,27 @@ def score_pair(target: Fixture, t_mode: Mode, cand: Fixture, c_mode: Mode) -> Ma
     return Match(fixture=cand, mode=c_mode, score=round(score, 4), reasons=reasons, edits=edits)
 
 
+def _cheap_score(target: Fixture, t_mode: Mode, cand: Fixture, c_mode: Mode) -> float:
+    """A rough score with no sequence alignment.
+
+    Alignment is the expensive part, so triaging a folder against tens of
+    thousands of modes needs a first pass that avoids it. This uses only
+    footprint distance, colour system and name similarity - all cheap - to
+    decide which candidates are worth aligning properly.
+    """
+    t_size, c_size = _footprint(t_mode), _footprint(c_mode)
+    if t_size and c_size:
+        size = 1.0 - abs(t_size - c_size) / max(t_size, c_size)
+    else:
+        size = 0.0
+
+    colour = 1.0 if (attributes.colour_system(t_mode.attribute_set())
+                     == attributes.colour_system(c_mode.attribute_set())) else 0.0
+    name = max(name_similarity(target.model, cand.model),
+               name_similarity(target.manufacturer, cand.manufacturer))
+    return 0.5 * size + 0.2 * colour + 0.3 * name
+
+
 def find_candidates(
     target: Fixture,
     target_mode: Mode,
@@ -302,13 +323,25 @@ def find_candidates(
     *,
     limit: int = 10,
     min_score: float = 0.0,
+    pool: int = 400,
 ) -> list[Match]:
-    """Rank every (fixture, mode) in ``library`` against the target mode."""
-    matches = [
-        score_pair(target, target_mode, cand, c_mode)
-        for cand in library
-        for c_mode in cand.modes
-    ]
+    """Rank every (fixture, mode) in ``library`` against the target mode.
+
+    Two-stage: a cheap pass narrows the field to ``pool`` candidates, then the
+    full alignment scorer ranks those. On a small library every candidate
+    survives the first stage, so results are identical; on a 68,000-mode
+    library it is the difference between seconds and minutes.
+    """
+    pairs = [(cand, c_mode) for cand in library for c_mode in cand.modes]
+
+    if len(pairs) > pool:
+        ranked = sorted(
+            pairs,
+            key=lambda p: -_cheap_score(target, target_mode, p[0], p[1]),
+        )
+        pairs = ranked[:pool]
+
+    matches = [score_pair(target, target_mode, cand, c_mode) for cand, c_mode in pairs]
     matches = [m for m in matches if m.score >= min_score]
     matches.sort(key=lambda m: (-m.score, len(m.edits), m.label))
     return matches[:limit]

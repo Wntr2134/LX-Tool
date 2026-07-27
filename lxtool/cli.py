@@ -15,7 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import catalog, matching
+from . import catalog, library as libmod, matching
 from .formats import chamsys, gdtf, ma2, ma3, mvr, ofl
 from .model import Fixture, Mode
 
@@ -128,8 +128,8 @@ def cmd_match(args: argparse.Namespace) -> int:
         return 1
 
     target = _resolve_target(args)
-    lib = chamsys.ChamSysLibrary.scan(args.folder)
-    library = lib.as_fixtures()
+    lib = _load_libraries(args)
+    library = lib.fixtures
 
     if not target.modes:
         print(f"{args.fixture}: no DMX modes found", file=sys.stderr)
@@ -150,7 +150,8 @@ def cmd_match(args: argparse.Namespace) -> int:
 
     for i, m in enumerate(matches, 1):
         flag = "EXACT" if m.exact else f"{m.score:.0%}"
-        print(f"{i:>2}. [{flag:>5}] {m.label}")
+        where = libmod.label_for(m.fixture.source)
+        print(f"{i:>2}. [{flag:>5}] {m.label}   <{where}>")
         for r in m.reasons:
             print(f"        - {r}")
 
@@ -161,6 +162,83 @@ def cmd_match(args: argparse.Namespace) -> int:
             print(f"   {e}")
     elif best.exact:
         print("\nExact match - patch it as-is.")
+    return 0
+
+
+def _load_libraries(args: argparse.Namespace) -> "libmod.Library":
+    """Load every library named on the command line, or auto-detect."""
+    paths = list(getattr(args, "library", None) or [])
+    if getattr(args, "folder", None):
+        paths.append(args.folder)
+
+    lib = libmod.load(paths or None,
+                      include_ofl=getattr(args, "with_ofl", False),
+                      cache=getattr(args, "cache", None))
+
+    if not lib.fixtures:
+        detected = libmod.detect_sources()
+        hint = ("\n".join(f"  {p}" for p in detected)
+                if detected else "  (none found automatically)")
+        raise SystemExit(
+            "No fixture libraries loaded. Point at one with --library, or use\n"
+            f"a detected folder:\n{hint}"
+        )
+
+    counts = ", ".join(f"{n} from {src}" for src, n in lib.counts().items())
+    print(f"Libraries: {counts}", file=sys.stderr)
+    for err in lib.errors[:5]:
+        print(f"  note: {err}", file=sys.stderr)
+    return lib
+
+
+def cmd_triage(args: argparse.Namespace) -> int:
+    """Sort a folder of new fixtures into have / close / new."""
+    folder = Path(args.inbox)
+    files = [p for p in sorted(folder.iterdir())
+             if p.suffix.lower() in {".gdtf", ".json", ".xml"}]
+    if not files:
+        print(f"no fixture files in {folder}", file=sys.stderr)
+        return 1
+
+    lib = _load_libraries(args)
+    print(f"\nTriaging {len(files)} file(s) against {len(lib)} fixtures\n")
+
+    have, close, new = [], [], []
+    for path in files:
+        try:
+            fx = load_fixture(path)
+        except (SystemExit, ValueError, OSError) as exc:
+            print(f"  ?  {path.name}: {exc}")
+            continue
+        if not fx.modes:
+            new.append((path.name, None, 0.0))
+            continue
+
+        best = matching.find_candidates(fx, fx.modes[0], lib.fixtures, limit=1)
+        if not best:
+            new.append((path.name, None, 0.0))
+        elif best[0].score >= args.have_threshold:
+            have.append((path.name, best[0], best[0].score))
+        elif best[0].score >= args.close_threshold:
+            close.append((path.name, best[0], best[0].score))
+        else:
+            new.append((path.name, best[0], best[0].score))
+
+    def show(title: str, rows: list) -> None:
+        print(f"{title} ({len(rows)})")
+        for name, match, score in rows:
+            if match is None:
+                print(f"   {name}")
+            else:
+                where = libmod.label_for(match.fixture.source)
+                print(f"   {name:<44} {score:.0%}  {match.label} <{where}>")
+        print()
+
+    show("ALREADY HAVE", have)
+    show("CLOSE - usable with edits", close)
+    show("NEW - need building", new)
+
+    print(f"{len(have)} have, {len(close)} close, {len(new)} new")
     return 0
 
 
@@ -271,7 +349,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser("match", help="find the closest head in a ChamSys library")
     m.add_argument("fixture", nargs="?", help="GDTF / OFL JSON / MA2 XML file")
-    m.add_argument("folder", help="ChamSys heads folder")
+    m.add_argument("folder", nargs="?", help="a library folder (omit to auto-detect)")
+    m.add_argument("--library", action="append", metavar="PATH",
+                   help="extra library folder; repeatable")
+    m.add_argument("--with-ofl", action="store_true",
+                   help="also search the cached Open Fixture Library")
     m.add_argument("--ofl", metavar="KEY", help="match a fixture from the OFL catalogue instead of a file")
     m.add_argument("--mode", help="which mode of the source fixture to match")
     m.add_argument("--limit", type=int, default=10)
@@ -296,6 +378,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="convert a fixture from the OFL catalogue instead of a file")
     c.add_argument("--cache", help="catalogue cache directory")
     c.set_defaults(func=cmd_convert)
+
+    t = sub.add_parser("triage", help="sort a folder of fixtures into have/close/new")
+    t.add_argument("inbox", help="folder of .gdtf / .json / .xml fixtures to sort")
+    t.add_argument("--library", action="append", metavar="PATH",
+                   help="library folder to check against; repeatable")
+    t.add_argument("--with-ofl", action="store_true")
+    t.add_argument("--have-threshold", type=float, default=0.90)
+    t.add_argument("--close-threshold", type=float, default=0.60)
+    t.add_argument("--cache", help="catalogue cache directory")
+    t.set_defaults(func=cmd_triage)
 
     r = sub.add_parser("rig", help="summarise a whole patch from an MVR file")
     r.add_argument("file")

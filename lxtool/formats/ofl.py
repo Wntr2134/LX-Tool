@@ -54,6 +54,34 @@ def _capabilities(chan: dict[str, Any]) -> list[Range]:
     return out
 
 
+def dmx_default(raw: Any, default: int = 0) -> int:
+    """Parse an OFL default/highlight value.
+
+    These are usually a plain DMX number but may be a percentage string -
+    "50%" is legal and common - so a bare int() raises on real library data.
+    """
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return default
+    if isinstance(raw, (int, float)):
+        return max(0, min(255, int(raw)))
+
+    text = str(raw).strip()
+    if not text:
+        return default
+    if text.endswith("%"):
+        try:
+            pct = float(text[:-1])
+        except ValueError:
+            return default
+        return max(0, min(255, round(pct * 255 / 100)))
+    try:
+        return max(0, min(255, int(float(text))))
+    except ValueError:
+        return default
+
+
 def _fine_alias_map(available: dict[str, Any]) -> dict[str, str]:
     """Map each fine-channel alias back to its coarse channel key."""
     aliases: dict[str, str] = {}
@@ -115,8 +143,9 @@ def parse(data: dict[str, Any] | str | bytes, *, manufacturer: str = "") -> Fixt
                     name=key,
                     attribute=attr,
                     fine=is_fine,
-                    default=int(chan_data.get("defaultValue", 0) or 0) if not is_fine else 0,
-                    highlight=chan_data.get("highlightValue"),
+                    default=dmx_default(chan_data.get("defaultValue")) if not is_fine else 0,
+                    highlight=(dmx_default(chan_data["highlightValue"])
+                               if chan_data.get("highlightValue") is not None else None),
                     htp=attr == "Dimmer",
                     invert=bool(chan_data.get("invert", False)),
                     ranges=_capabilities(chan_data) if not is_fine else [],
