@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from lxtool import index as index_mod
 from lxtool import library as libmod
 from lxtool import matching
 from lxtool.formats import chamsys, gdtf, ofl
@@ -34,11 +35,11 @@ def test_label_for(source, label):
 
 
 def test_counts_group_by_source():
-    lib = libmod.Library(fixtures=[
+    lib = libmod.Library(rows=index_mod.build([
         _fixture("A", "1", ["Dimmer"], source="chamsys"),
         _fixture("B", "2", ["Dimmer"], source="chamsys"),
         _fixture("C", "3", ["Dimmer"], source="ma3"),
-    ])
+    ]))
     assert lib.counts() == {"ChamSys": 2, "grandMA3": 1}
     assert len(lib) == 3
     assert lib.modes == 3
@@ -206,7 +207,7 @@ def test_effect_modes_are_not_called_duplicates():
     fx = _multi("Aputure", "MCPro", [
         ("M21 Fire", RGBW), ("M21 Strobe", RGBW), ("M21 TV", RGBW),
     ])
-    groups = libmod.find_duplicates([fx])
+    groups = libmod.find_duplicates(index_mod.build([fx]))
     assert len(groups) == 1
     assert groups[0].size == 3
     assert groups[0].redundant() is False
@@ -217,14 +218,14 @@ def test_same_fixture_and_mode_twice_is_a_duplicate():
     """The same head stored under two filenames is real clutter."""
     a = _multi("Robe", "Pointe", [("16ch", RGBW)])
     b = _multi("Robe", "Pointe", [("16ch", RGBW)])
-    groups = libmod.find_duplicates([a, b])
+    groups = libmod.find_duplicates(index_mod.build([a, b]))
     assert groups[0].redundant() is True
 
 
 def test_different_fixtures_same_layout_are_interchangeable():
     a = _multi("Robe", "Pointe", [("16ch", RGBW)])
     b = _multi("Martin", "MAC", [("Mode 1", RGBW)])
-    groups = libmod.find_duplicates([a, b])
+    groups = libmod.find_duplicates(index_mod.build([a, b]))
     assert groups[0].interchangeable() is True
     assert groups[0].redundant() is False
     assert sorted(groups[0].names) == ["Martin MAC [Mode 1]", "Robe Pointe [16ch]"]
@@ -234,19 +235,89 @@ def test_tiny_modes_are_skipped():
     """A 3-channel RGB par is identical across hundreds of fixtures."""
     a = _multi("A", "1", [("rgb", ["Red", "Green", "Blue"])])
     b = _multi("B", "2", [("rgb", ["Red", "Green", "Blue"])])
-    assert libmod.find_duplicates([a, b]) == []
-    assert len(libmod.find_duplicates([a, b], min_channels=3)) == 1
+    assert libmod.find_duplicates(index_mod.build([a, b])) == []
+    assert len(libmod.find_duplicates(index_mod.build([a, b]), min_channels=3)) == 1
 
 
 def test_unique_layouts_are_not_reported():
     a = _multi("A", "1", [("m", RGBW)])
     b = _multi("B", "2", [("m", RGBW + ["Pan", "Tilt"])])
-    assert libmod.find_duplicates([a, b]) == []
+    assert libmod.find_duplicates(index_mod.build([a, b])) == []
 
 
 def test_groups_are_ordered_by_size():
     fixtures = [_multi(f"M{i}", f"X{i}", [("m", RGBW)]) for i in range(5)]
     fixtures += [_multi("Q", "Y", [("m", RGBW + ["Zoom"])]),
                  _multi("R", "Z", [("m", RGBW + ["Zoom"])])]
-    groups = libmod.find_duplicates(fixtures)
+    groups = libmod.find_duplicates(index_mod.build(fixtures))
     assert [g.size for g in groups] == [5, 2]
+
+
+# --------------------------------------------------------------------------
+# the compact index
+# --------------------------------------------------------------------------
+
+def test_index_round_trips_a_mode(tmp_path):
+    fx = _fixture("Robe", "Robin 600", ["Dimmer", "Pan", "Tilt", "Zoom"])
+    fx.modes[0].channels[1].fine = True
+    rows = index_mod.build([fx])
+
+    index_mod.save(rows, tmp_path / "i.index")
+    back = index_mod.load(tmp_path / "i.index")
+
+    assert len(back) == 1
+    row = back[0]
+    assert row.key == "Robe Robin 600"
+    assert row.footprint == 4
+    assert row.attributes() == ["Dimmer", "Pan", "Tilt", "Zoom"]
+    assert row.signature() == rows[0].signature()
+
+    mode = row.to_mode()
+    assert [c.attribute for c in mode.channels] == ["Dimmer", "Pan", "Tilt", "Zoom"]
+    assert mode.channels[1].fine is True
+    assert [c.offset for c in mode.channels] == [1, 2, 3, 4]
+
+
+def test_index_ranking_matches_object_ranking():
+    """The whole optimisation is void if it changes an answer."""
+    target = Fixture(manufacturer="Martin", model="MAC 700")
+    t_mode = _mode(["Dimmer", "Pan", "Tilt", "Cyan", "Magenta", "Yellow"])
+
+    lib = [
+        _fixture("Martin", "MAC 700", ["Dimmer", "Pan", "Tilt", "Cyan", "Magenta", "Yellow"]),
+        _fixture("Martin", "MAC 600", ["Dimmer", "Pan", "Tilt", "Cyan", "Magenta"]),
+        _fixture("Robe", "Pointe", ["Dimmer", "Red", "Green", "Blue"]),
+        _fixture("Other", "Thing", ["Zoom", "Iris", "Frost", "Gobo1", "Prism"]),
+    ]
+
+    by_object = matching.find_candidates(target, t_mode, lib, limit=4)
+    by_index = matching.find_candidates(target, t_mode, index_mod.build(lib), limit=4)
+
+    assert [(m.score, m.label) for m in by_object] == [(m.score, m.label) for m in by_index]
+    assert [str(e) for e in by_object[0].edits] == [str(e) for e in by_index[0].edits]
+
+
+def test_index_rejects_a_stale_format(tmp_path):
+    import pickle
+
+    path = tmp_path / "old.index"
+    with path.open("wb") as fh:
+        pickle.dump({"version": index_mod.FORMAT_VERSION + 99, "rows": []}, fh)
+    assert index_mod.load(path) is None       # rebuilt rather than misread
+
+
+def test_index_handles_a_missing_or_corrupt_file(tmp_path):
+    assert index_mod.load(tmp_path / "absent.index") is None
+    bad = tmp_path / "bad.index"
+    bad.write_bytes(b"not a pickle")
+    assert index_mod.load(bad) is None
+
+
+def test_index_survives_a_separator_in_a_channel_name(tmp_path):
+    """Packing is separator-delimited, so a name containing one must not corrupt it."""
+    fx = _fixture("ACME", "Thing", ["Dimmer", "Pan"])
+    fx.modes[0].channels[0].name = "Dim|mer"
+    row = index_mod.build([fx])[0]
+    mode = row.to_mode()
+    assert len(mode.channels) == 2
+    assert mode.channels[0].attribute == "Dimmer"

@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import index as index_mod
 from .formats import chamsys, gdtf, ma3
 from .model import Fixture
 
@@ -38,24 +39,34 @@ def label_for(source: str) -> str:
 
 @dataclass
 class Library:
-    """Every fixture we could load, and where each came from."""
+    """Every fixture we could load, held as compact index rows.
 
-    fixtures: list[Fixture] = field(default_factory=list)
+    Rows rather than objects: a real library is tens of thousands of modes,
+    and rebuilding them as objects on every command is the single largest
+    cost in the tool. See :mod:`lxtool.index`.
+    """
+
+    rows: list = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def __len__(self) -> int:
-        return len(self.fixtures)
+        return len({(r.source, r.key.lower()) for r in self.rows})
 
     @property
     def modes(self) -> int:
-        return sum(len(f.modes) for f in self.fixtures)
+        return len(self.rows)
+
+    @property
+    def fixtures(self) -> list:
+        """The rows. Named for the callers that rank against them."""
+        return self.rows
 
     def counts(self) -> dict[str, int]:
-        """Fixtures per source, for reporting what actually got loaded."""
-        out: dict[str, int] = {}
-        for f in self.fixtures:
-            out[label_for(f.source)] = out.get(label_for(f.source), 0) + 1
-        return dict(sorted(out.items()))
+        """Distinct fixtures per source, for reporting what got loaded."""
+        seen: dict[str, set] = {}
+        for r in self.rows:
+            seen.setdefault(label_for(r.source), set()).add(r.key.lower())
+        return dict(sorted((k, len(v)) for k, v in seen.items()))
 
 
 def signature(mode) -> tuple:
@@ -76,11 +87,11 @@ class DuplicateGroup:
     """Modes that share a DMX fingerprint."""
 
     signature: tuple
-    members: list[tuple[Fixture, object]] = field(default_factory=list)
+    members: list = field(default_factory=list)      # of index.ModeRow
 
     @property
     def channel_count(self) -> int:
-        return self.members[0][1].channel_count if self.members else 0
+        return self.members[0].footprint if self.members else 0
 
     @property
     def size(self) -> int:
@@ -88,7 +99,7 @@ class DuplicateGroup:
 
     @property
     def names(self) -> list[str]:
-        return [f"{fx.key} [{m.name}]" for fx, m in self.members]
+        return [r.label for r in self.members]
 
     def redundant(self) -> bool:
         """True when this really is the same thing stored more than once.
@@ -99,15 +110,15 @@ class DuplicateGroup:
         invite someone to delete working parts of their library. Real
         duplication means the same fixture *and* the same mode name.
         """
-        seen = {(fx.key.lower(), m.name.strip().lower()) for fx, m in self.members}
+        seen = {(r.key.lower(), r.mode_name.strip().lower()) for r in self.members}
         return len(seen) < len(self.members)
 
     def interchangeable(self) -> bool:
         """True when distinct fixtures share a layout - useful, not a problem."""
-        return len({fx.key.lower() for fx, _ in self.members}) > 1
+        return len({r.key.lower() for r in self.members}) > 1
 
 
-def find_duplicates(fixtures: list[Fixture], *, min_channels: int = 4) -> list[DuplicateGroup]:
+def find_duplicates(rows: list, *, min_channels: int = 4) -> list[DuplicateGroup]:
     """Group every mode in the library by DMX fingerprint.
 
     Modes below ``min_channels`` are skipped: a 1-channel dimmer or a 3-channel
@@ -115,17 +126,16 @@ def find_duplicates(fixtures: list[Fixture], *, min_channels: int = 4) -> list[D
     reporting those would bury the findings that matter.
     """
     groups: dict[tuple, DuplicateGroup] = {}
-    for fx in fixtures:
-        for mode in fx.modes:
-            if mode.channel_count < min_channels or not mode.channels:
-                continue
-            sig = signature(mode)
-            if not sig:
-                continue
-            group = groups.get(sig)
-            if group is None:
-                group = groups[sig] = DuplicateGroup(signature=sig)
-            group.members.append((fx, mode))
+    for row in rows:
+        if row.footprint < min_channels:
+            continue
+        sig = row.signature()
+        if not sig:
+            continue
+        group = groups.get(sig)
+        if group is None:
+            group = groups[sig] = DuplicateGroup(signature=sig)
+        group.members.append(row)
 
     dupes = [g for g in groups.values() if g.size > 1]
     dupes.sort(key=lambda g: (-g.size, -g.channel_count))
@@ -171,7 +181,8 @@ def _load_folder(path: Path) -> tuple[list[Fixture], list[str]]:
     container = path / "heads.all"
     if heads or container.is_file():
         try:
-            fixtures.extend(chamsys.ChamSysLibrary.scan(path).as_fixtures())
+            fixtures.extend(chamsys.ChamSysLibrary.scan(path, include_library=False)
+                            .as_fixtures())
         except Exception as exc:      # noqa: BLE001
             errors.append(f"{path}: {exc}")
         return fixtures, errors
@@ -218,8 +229,18 @@ def load(
         if not path.is_dir():
             lib.errors.append(f"{path}: not a directory")
             continue
+
+        # The bundled library comes straight from its cached index; the loose
+        # files alongside it are parsed and indexed here.
+        container = path / "heads.all"
+        if container.is_file():
+            try:
+                lib.rows.extend(chamsys.container_index(container))
+            except Exception as exc:      # noqa: BLE001
+                lib.errors.append(f"{container.name}: {exc}")
+
         fixtures, errors = _load_folder(path)
-        lib.fixtures.extend(fixtures)
+        lib.rows.extend(index_mod.build(fixtures))
         lib.errors.extend(errors)
 
     if include_ofl:
@@ -232,7 +253,7 @@ def load(
             bad = 0
             for entry in cat.entries:
                 try:
-                    lib.fixtures.append(entry.to_fixture())
+                    lib.rows.extend(index_mod.build([entry.to_fixture()]))
                 except Exception:     # noqa: BLE001 - see note above
                     bad += 1
             if bad:

@@ -36,6 +36,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # Dependency downloads dominate an otherwise short build.
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install
         run: |

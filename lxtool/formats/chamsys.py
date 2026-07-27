@@ -800,42 +800,35 @@ def read_container(path: Path | str) -> list[Fixture]:
     return out
 
 
-def _cached_container(path: Path) -> list[Fixture]:
-    """Parse ``heads.all``, caching the result.
+def container_index(path: Path) -> list:
+    """Index ``heads.all``, caching the result.
 
     Decoding 389 MB takes about a minute, which is fine once and intolerable
-    on every command, so the parsed fixtures are pickled next to the other
-    LX-Tool caches and keyed on the file's size and mtime.
+    on every command. The cache holds the compact index rather than parsed
+    objects: rebuilding 1.47 million Channel instances cost eleven seconds on
+    every command, against a fifth of a second to load the index.
     """
-    import pickle
-
+    from .. import index as index_mod
     from ..catalog import cache_dir
 
     stat = path.stat()
-    key = f"{path.name}-{stat.st_size}-{int(stat.st_mtime)}"
-    cache = Path(cache_dir()) / f"heads-all-{key}.pickle"
+    key = f"{path.name}-{stat.st_size}-{int(stat.st_mtime)}-v{index_mod.FORMAT_VERSION}"
+    cache = Path(cache_dir()) / f"heads-all-{key}.index"
 
-    if cache.is_file():
-        try:
-            with cache.open("rb") as fh:
-                return pickle.load(fh)
-        except (pickle.UnpicklingError, EOFError, AttributeError, ImportError):
-            cache.unlink(missing_ok=True)   # stale or written by another version
+    rows = index_mod.load(cache)
+    if rows is not None:
+        return rows
 
-    fixtures = read_container(path)
+    rows = index_mod.build(read_container(path))
     try:
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cache.with_suffix(".part")
-        with tmp.open("wb") as fh:
-            pickle.dump(fixtures, fh, protocol=pickle.HIGHEST_PROTOCOL)
-        tmp.replace(cache)
-        # Drop caches for older heads.all versions.
-        for old in cache.parent.glob("heads-all-*.pickle"):
+        index_mod.save(rows, cache)
+        # Drop indexes for older heads.all versions or layouts.
+        for old in cache.parent.glob("heads-all-*"):
             if old != cache:
                 old.unlink(missing_ok=True)
     except OSError:
         pass    # a read-only cache dir must not break the scan
-    return fixtures
+    return rows
 
 
 def encode_hed(text: str) -> bytes:

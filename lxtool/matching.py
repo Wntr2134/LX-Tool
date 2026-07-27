@@ -316,6 +316,49 @@ def _cheap_score(target: Fixture, t_mode: Mode, cand: Fixture, c_mode: Mode) -> 
     return 0.5 * size + 0.2 * colour + 0.3 * name
 
 
+def _cheap_score_row(target: Fixture, t_mode: Mode, row) -> float:
+    """The cheap pass against an index row, with nothing unpacked.
+
+    Deliberately mirrors :func:`_cheap_score`; it reads the same three
+    signals, but straight off the row instead of building objects to ask.
+    """
+    t_size = _footprint(t_mode)
+    size = (1.0 - abs(t_size - row.footprint) / max(t_size, row.footprint)
+            if t_size and row.footprint else 0.0)
+    colour = 1.0 if attributes.colour_system(t_mode.attribute_set()) == row.colour else 0.0
+    name = max(name_similarity(target.model, row.model),
+               name_similarity(target.manufacturer, row.manufacturer))
+    return 0.5 * size + 0.2 * colour + 0.3 * name
+
+
+def find_in_index(
+    target: Fixture,
+    target_mode: Mode,
+    rows: list,
+    *,
+    limit: int = 10,
+    min_score: float = 0.0,
+    pool: int = 400,
+) -> list[Match]:
+    """Rank against a :mod:`lxtool.index` library.
+
+    Same two stages as :func:`find_candidates`, except the cheap pass never
+    leaves the compact rows, so only ``pool`` modes are ever turned back into
+    objects.
+    """
+    if len(rows) > pool:
+        rows = sorted(rows, key=lambda r: -_cheap_score_row(target, target_mode, r))[:pool]
+
+    matches = []
+    for row in rows:
+        fixture = row.to_fixture()
+        matches.append(score_pair(target, target_mode, fixture, fixture.modes[0]))
+
+    matches = [m for m in matches if m.score >= min_score]
+    matches.sort(key=lambda m: (-m.score, len(m.edits), m.label))
+    return matches[:limit]
+
+
 def find_candidates(
     target: Fixture,
     target_mode: Mode,
@@ -332,6 +375,11 @@ def find_candidates(
     survives the first stage, so results are identical; on a 68,000-mode
     library it is the difference between seconds and minutes.
     """
+    # An index is far cheaper to rank, so use it when handed one.
+    if library and hasattr(library[0], "footprint") and hasattr(library[0], "to_fixture"):
+        return find_in_index(target, target_mode, library,
+                             limit=limit, min_score=min_score, pool=pool)
+
     pairs = [(cand, c_mode) for cand in library for c_mode in cand.modes]
 
     if len(pairs) > pool:

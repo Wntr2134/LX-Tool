@@ -186,6 +186,23 @@ folder, so ranking is two-stage: a cheap pass on footprint, colour system and
 name narrows the field, then the alignment scorer ranks the survivors. Below
 the pool size every candidate survives, so small libraries are unaffected.
 
+### Why it is fast
+
+A stock ChamSys library is 68,227 modes and 1.47 million channels. Holding
+that as objects cost about 11 seconds of rebuilding on *every* command,
+before any work started.
+
+So the cache holds a compact index — one flat row per mode with the
+per-channel detail packed into strings — and only the few hundred candidates
+that survive ranking are turned back into objects. Loading went from 11.6s to
+0.2s, the cache from 82 MB to 31 MB, and `lx match` against the full library
+from ~19s to under 3s. Results are identical, scores and edit plans alike,
+which a test enforces.
+
+The first run after a `heads.all` changes still decodes all 389 MB (about two
+minutes); the index is rebuilt automatically and keyed on the file's size and
+timestamp.
+
 ### GDTF Share
 
 The biggest fixture library there is, and where new fixtures appear first.
