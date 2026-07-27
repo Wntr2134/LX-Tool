@@ -102,6 +102,13 @@ _ALIASES: dict[str, str] = {
     "colorrgb_l": "Lime", "colorrgb_c": "Cyan", "colorrgb_m": "Magenta",
     "colorrgb_y": "Yellow",
     "tiltmode": "Control", "panmode": "Control", "positionmodes": "Control",
+    # ChamSys abbreviations, from 21,677 real personalities in heads.all
+    "col": "ColorWheel", "col 2": "ColorWheel2", "col wheel": "ColorWheel",
+    "col macro": "ColorMacro", "col macros": "ColorMacro",
+    "rot gobo": "Gobo1", "static gobo": "Gobo2", "fixed gobo": "Gobo2",
+    "p/t speed": "PanTiltSpeed", "pt speed": "PanTiltSpeed",
+    "cct": "CTO", "col temp": "CTO",
+    "ww": "White", "cw": "White", "warm white": "White",
     # control
     "control": "Control", "function": "Function", "reset": "Reset",
     "lamp": "Lamp", "lampcontrol": "Lamp", "fan": "Fan", "fanspeed": "Fan",

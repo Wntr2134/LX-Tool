@@ -170,18 +170,36 @@ LTP = 2
 MAGICQ_ATTRIBUTES: dict[int, str] = {
     0x00: "Dimmer",
     0x02: "Shutter",
+    0x03: "Iris",
     0x04: "Pan",
     0x05: "Tilt",
     0x06: "ColorWheel",
+    0x07: "ColorWheel2",
     0x08: "Gobo1",
+    0x09: "Gobo2",
+    0x0A: "Gobo1Rot",
+    0x0B: "Gobo2Rot",
+    0x0C: "Focus",
+    0x0D: "Zoom",
     0x0E: "Prism",
+    # 0x10-0x12 are the three colour-mix slots, carrying RGB on additive
+    # fixtures and CMY on subtractive ones. Red/Green/Blue is the far more
+    # common reading; the channel name resolves which it actually is.
     0x10: "Red",
     0x11: "Green",
     0x12: "Blue",
     0x13: "White",
-    0x1A: "Strobe",
-    0x26: "Macro",
-    0x27: "Reset",
+    0x14: "Control",
+    0x16: "Macro",
+    0x17: "Speed",
+    0x18: "CTO",
+    0x1B: "Amber",
+    0x1F: "PrismRot",
+    0x20: "Frost",
+    0x2A: "FramingRot",
+    0x33: "PanTiltSpeed",
+    0x34: "Framing", 0x35: "Framing", 0x36: "Framing", 0x37: "Framing",
+    0x38: "Framing", 0x39: "Framing", 0x3A: "Framing", 0x3B: "Framing",
     0x3F: "Unknown",      # MagicQ's own "Reserved (63)"
 }
 
@@ -297,6 +315,10 @@ def _parse_channel_line(line: str) -> tuple[str, int, int] | None:
 
 
 _ATTR_NUMBERS = {v: k for k, v in MAGICQ_ATTRIBUTES.items() if v != "Unknown"}
+# Subtractive mixing shares the colour-mix slots with RGB, so writing needs
+# these explicitly - without them CMY channels would go out as "Reserved".
+_ATTR_NUMBERS.update({"Cyan": 0x10, "Magenta": 0x11, "Yellow": 0x12,
+                      "Strobe": 0x02, "UV": 0x3C, "Lime": 0x3C, "CTB": 0x18})
 _RESERVED = 0x3F
 
 _BANK_OF = {

@@ -165,7 +165,11 @@ def cmd_match(args: argparse.Namespace) -> int:
 
 
 def cmd_convert(args: argparse.Namespace) -> int:
-    fixture = load_fixture(args.source)
+    if not args.source and not args.ofl:
+        print("give a source file, or --ofl <key-or-search>", file=sys.stderr)
+        return 1
+
+    fixture = _resolve_target(args) if args.ofl else load_fixture(args.source)
     out = Path(args.dest)
     suffix = out.suffix.lower()
 
@@ -286,8 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
     se.set_defaults(func=cmd_search)
 
     c = sub.add_parser("convert", help="convert a fixture between formats")
-    c.add_argument("source")
-    c.add_argument("dest")
+    c.add_argument("source", nargs="?", help="GDTF / OFL JSON / MA2 / MA3 XML / .hed")
+    c.add_argument("dest", help="output .gdtf, .xml or .hed")
+    c.add_argument("--ofl", metavar="KEY",
+                   help="convert a fixture from the OFL catalogue instead of a file")
+    c.add_argument("--cache", help="catalogue cache directory")
     c.set_defaults(func=cmd_convert)
 
     r = sub.add_parser("rig", help="summarise a whole patch from an MVR file")
