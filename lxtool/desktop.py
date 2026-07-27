@@ -67,25 +67,51 @@ def main() -> int:
         print("LX-Tool: the local server did not start", file=sys.stderr)
         return 1
 
-    try:
-        import webview      # type: ignore
-
-        webview.create_window("LX-Tool", url, width=1100, height=800)
-        webview.start()
+    if _run_native_window(url):
         return 0
-    except ImportError:
-        pass
 
+    # No native webview available: fall back to the browser rather than
+    # failing, so the tool still works on a machine missing the GUI bits.
     import webbrowser
 
     print(f"LX-Tool is running at {url}")
-    print("Close this window to quit.")
+    print("Opened in your browser. Close this window to quit.")
     webbrowser.open(url)
     try:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
         return 0
+
+
+def _run_native_window(url: str) -> bool:
+    """Show the UI in a real application window.
+
+    Returns False when no native webview is available, so the caller can fall
+    back. pywebview drives the platform's own engine - WKWebView on macOS,
+    WebView2 on Windows - which is what makes this an app with its own dock
+    icon rather than a browser tab.
+    """
+    try:
+        import webview      # type: ignore
+    except ImportError:
+        return False
+
+    try:
+        webview.create_window(
+            "LX-Tool",
+            url,
+            width=1150,
+            height=820,
+            min_size=(900, 600),
+            text_select=True,      # so channel lists can be copied out
+        )
+        webview.start()
+        return True
+    except Exception as exc:      # noqa: BLE001 - any backend failure falls back
+        print(f"LX-Tool: native window unavailable ({exc}); using browser",
+              file=sys.stderr)
+        return False
 
 
 if __name__ == "__main__":

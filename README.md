@@ -22,6 +22,11 @@ The easiest way in is the desktop app - no Python, no terminal. Grab it from
 | macOS | `LX-Tool-macos.zip` - unzip, drag to Applications |
 | Windows | `LX-Tool.exe` - double-click |
 
+It opens as a normal application window - its own dock/taskbar icon, no
+browser, no address bar - drawn by the platform's own webview (WKWebView on
+macOS, WebView2 on Windows). If neither is available it falls back to opening
+your default browser rather than failing.
+
 It runs entirely on your machine: it reads your MagicQ heads folder, and
 nothing about your library leaves the computer. On first launch it finds your
 heads folder automatically.

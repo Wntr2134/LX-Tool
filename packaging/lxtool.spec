@@ -26,6 +26,12 @@ hidden = [
     "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan.on",
     "uvicorn.lifespan.off",
+    # pywebview picks its backend at runtime, so the platform module has to be
+    # named explicitly or the frozen app silently falls back to a browser.
+    "webview",
+    "webview.platforms.cocoa",
+    "webview.platforms.winforms",
+    "webview.platforms.edgechromium",
 ]
 
 a = Analysis(
@@ -38,7 +44,7 @@ a = Analysis(
     runtime_hooks=[],
     # Nothing here needs a GUI toolkit or scientific stack; excluding them
     # keeps the download small.
-    excludes=["tkinter", "matplotlib", "numpy", "PIL", "pytest"],
+    excludes=["matplotlib", "numpy", "PIL", "pytest"],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
