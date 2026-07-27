@@ -1,0 +1,13 @@
+# Fixture files are binary. Without this, Git's line-ending conversion
+# rewrites every 0x0A on a Windows checkout, which corrupts an obfuscated
+# .hed - its payload bytes are 0x80-0xFF with literal newlines between them,
+# so turning those into CRLF shifts the keystream and the file no longer
+# decodes. That broke the Windows CI build and would break any Windows clone.
+*.hed   binary
+*.gdtf  binary
+*.mvr   binary
+*.ofl   binary
+*.all   binary
+
+# XML fixture data stays LF everywhere so byte-for-byte comparisons hold.
+*.xml   text eol=lf

@@ -576,6 +576,21 @@ def _key(i: int) -> int:
     return k
 
 
+def _line_endings_mangled(data: bytes) -> bool:
+    """True when an obfuscated body has been through CRLF conversion.
+
+    Payload bytes are all >= 0x80, so a 0x0D can only have been inserted by a
+    text-mode transfer. Detecting it turns an inscrutable wall of nonsense
+    into an actionable error.
+    """
+    if b"\r\n" not in data:
+        return False
+    body = [b for b in data if b not in (0x0A, 0x0D)]
+    if not body:
+        return False
+    return sum(1 for b in body if b >= 0x80) / len(body) > 0.9
+
+
 def looks_obfuscated(data: bytes) -> bool:
     """True when a .hed body is in the encoded form rather than plain text.
 
@@ -593,6 +608,15 @@ def decode_hed(data: bytes) -> str:
     Plain-text heads (older MagicQ versions and hand-written heads) are
     returned unchanged.
     """
+    if _line_endings_mangled(data):
+        raise HedDecodeError(
+            "This .hed has had its line endings converted to CRLF, which "
+            "corrupts the payload - an obfuscated body is 0x80-0xFF bytes "
+            "separated by bare newlines, so inserting 0x0D shifts everything "
+            "after it. Re-fetch the file without text conversion "
+            "(git: see .gitattributes; scp/ftp: use binary mode)."
+        )
+
     if not looks_obfuscated(data):
         return data.decode("utf-8", errors="replace")
 

@@ -740,3 +740,17 @@ def test_ma3_to_gdtf_bridges_to_chamsys(tmp_path):
     back = gdtf.read(out)
     assert back.manufacturer == "Ayrton"
     assert {"Pan", "Tilt", "Dimmer", "Red", "Green", "Blue", "White"} <= back.modes[0].attribute_set()
+
+
+def test_crlf_corruption_is_reported_clearly():
+    """A Windows checkout without .gitattributes mangles .hed line endings.
+
+    That produced three baffling test failures in CI; the decoder should name
+    the cause rather than returning nonsense.
+    """
+    mangled = REAL_HEAD.read_bytes().replace(b"\n", b"\r\n")
+    with pytest.raises(chamsys.HedDecodeError, match="CRLF"):
+        chamsys.decode_hed(mangled)
+
+    # The intact file must still decode, so the check cannot be over-eager.
+    assert chamsys.decode_hed(REAL_HEAD.read_bytes()).startswith("# MagicQ")
