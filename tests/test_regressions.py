@@ -570,3 +570,29 @@ def test_header_second_line_is_not_mistaken_for_defaults():
     fx = chamsys.parse_personality(AURA.read_text())
     # Header line 2 field order would give Dimmer 0, not 255.
     assert fx.modes[0].channels[1].default == 255
+
+
+def test_built_personality_has_the_complete_v008f_tail():
+    """The tail must be complete, not merely plausible.
+
+    Third on-desk result: a head with an invented, truncated tail patched but
+    was mis-read - phantom elements in the Hd no column ("4.245"), Pan's
+    16-bit flag dropped while Tilt kept its, defaults ignored. The desk hit
+    end-of-file in the middle of the section grammar and made something up.
+    The writer now emits the full V,008f skeleton; the size rules here were
+    checked across 2,245 stock heads of that version.
+    """
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=i, name=f"c{i}", attribute="Dimmer") for i in range(1, 6)
+    ])])
+    lines = chamsys.build_personality(fx).rstrip("\n").split("\n")
+
+    assert 'V,008f,"MagicQ 1";' in lines
+    assert lines[-1] == ";", "file must terminate the grammar"
+    assert '"{00000000-0000-0000-0000-000000000000}",' in lines
+    # zeros row: one field per channel
+    assert ",".join(["00000000"] * 5) + "," in lines
+    # near-final row: count+1 fields after the two 8-hex ones
+    assert "00000000,00000000," + ",".join(["0000"] * 6) + "," in lines
+    # no truncated palette rows keyed to attribute zero
+    assert "00000000,0000,0100,01ff," not in lines

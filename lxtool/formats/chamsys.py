@@ -510,7 +510,11 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out: list[str] = [
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
         f"\\ Personality file for {fixture.model or 'fixture'} ",
-        'V,008c,"MagicQ 1";',
+        # The V number is the file-format version, and it matters: the stock
+        # library's current heads say 008f, and the trailing-section grammar
+        # emitted below is the 008f one. Writing an older number over a
+        # modern layout invites the desk to parse the tail as something else.
+        'V,008f,"MagicQ 1";',
         # The field after P is NOT the channel count: across 68,418 real
         # heads it is a small enum (0x0000 in 25,124, 0x0002 in 23,319, the
         # rest a tail of single digits) whose meaning is unknown, and it
@@ -518,7 +522,10 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         # belongs on the next line. 0x0000 is the most common value and what
         # ChamSys's own MAC Aura uses.
         f'P,0000,"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
-        f"{count:04x},0000,0000,0000,0000,0000,0001,0001,01f5,00000000,",
+        # 0200,00000000 is a pair real heads actually carry together (605 of
+        # them); the remaining fields vary per head and zero is the most
+        # common value for each.
+        f"{count:04x},0000,0000,0000,0000,0000,0001,0001,0200,00000000,",
     ]
 
     for ch in channels:
@@ -553,16 +560,38 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
             label = r.name.replace('"', '""')
             out.append(f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},0000,00000000,')
 
-    # Trailing sections, sized to the channel count.
-    out.append("0000,")
+    # Trailing sections. This follows the real V,008f skeleton line for line
+    # - shapes taken from the smallest stock head of that version and sized
+    # by rules checked across 2,245 V,008f heads (the zeros row carries one
+    # field per channel; the near-final row carries count+1). An earlier
+    # version invented a shorter tail and stopped, and MagicQ, hitting EOF
+    # mid-grammar, mis-read the whole head: phantom multi-element channels,
+    # a dropped 16-bit flag, defaults ignored. The sections here are emitted
+    # empty but *complete*, which is what the desk needs.
+    n = len(channels)
     out.append("00000000,")
-    out.append(",".join(["00000000"] * max(count, 1)) + ",")
+    out.append(",".join(["00000000"] * n) + ("," if n else ""))
     out.append('"",00000000,0000,0000,0000,0000,0000,')
-    for ch in channels:
-        # Real heads carry zero in the first field here; the default value
-        # lives in the pairs line above, not in this block.
-        out.append("00000000,0000,0100,01ff,")
-    out.append('"",')
+    out.append(f'"{fixture.model}",')
+    out.append('0000,"","","",0000,0000,0000,0000,0000,00000000,')
+    out.append("00000008,")
+    out.append('"","","",')
+    out.append("0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,")
+    out.append('"",0000,')
+    out.append("0,0,0,0,0,0,0,0,0.000000,")
+    out.append("0,0,0,0,0,0,0,0,0,0,0,")
+    out.append("0,0,0,")
+    out.append("0,")
+    out.append("00000000,00000000," + ",".join(["0000"] * (n + 1)) + ",")
+    out.append("0000,0000,0000,00000004,68858000,0,")
+    out.append(f'"{fixture.model}",')
+    out.append("0,")
+    out.append('"{00000000-0000-0000-0000-000000000000}",')
+    out.append("1.000000,0000,0000,")
+    out.append("0000,")
+    out.append("0.850000,0.850000,0.000000,0.000000,")
+    out.append("0.000000,0.000000,0.000000,0.000000,0,0,")
+    out.append(";")
     out.append("")
     return "\n".join(out)
 
