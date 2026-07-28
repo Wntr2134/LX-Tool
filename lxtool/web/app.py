@@ -255,7 +255,8 @@ def api_head_plan(key: str = Form(""), mode: str = Form(""),
         note = fixture.source_id
         return {"plan": plan.dump(fixture),
                 "channels": len(fixture.modes[0].channels),
-                "unparsed": note}
+                "unparsed": note,
+                "warnings": plan.warnings(fixture)}
 
     if not key.strip():
         raise HTTPException(400, "give a catalogue key or paste a DMX chart")
@@ -275,7 +276,29 @@ def api_head_plan(key: str = Form(""), mode: str = Form(""),
         names = ", ".join(x.name for x in fixture.modes)
         raise HTTPException(404, f"no mode {mode!r}. Available: {names}")
     return {"plan": plan.dump(fixture, m),
-            "channels": len((m or fixture.modes[0]).channels), "unparsed": ""}
+            "channels": len((m or fixture.modes[0]).channels), "unparsed": "",
+            "warnings": []}
+
+
+@app.post("/api/head-check")
+def api_head_check(plan_text: str = Form(...)) -> dict:
+    """Parse a plan and lint it, without building anything."""
+    from .. import plan
+
+    try:
+        fixture = plan.parse(plan_text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    m = fixture.modes[0]
+    return {
+        "label": f"{fixture.key} [{m.name}]",
+        "channels": [
+            {"n": c.offset, "name": c.name, "attribute": c.attribute,
+             "fine": c.fine, "ranges": len(c.ranges)}
+            for c in m.channels
+        ],
+        "warnings": plan.warnings(fixture),
+    }
 
 
 @app.post("/api/head-build")
@@ -395,7 +418,8 @@ PAGE = """<!doctype html>
  <p><button onclick="headChart()">Read chart into editor</button></p>
  <label for="planbox">The plan - edit names, reorder channel lines, set manufacturer</label>
  <textarea id="planbox" rows="14" style="width:100%;font-family:monospace"></textarea>
- <p><button onclick="headBuild()">Build .hed &amp; download</button></p>
+ <p><button onclick="headCheck(false)">Check plan</button>
+    <button onclick="headBuild()">Build .hed &amp; download</button></p>
  <div id="headout"></div>
 </fieldset>
 
@@ -518,15 +542,29 @@ async function headChart() {
   } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
+async function headCheck(quiet) {
+  const fd = new FormData(); fd.append('plan_text', $('planbox').value);
+  const d = await (await post('/api/head-check', fd)).json();
+  let h = `<p><b>${esc(d.label)}</b> - ${d.channels.length} channel(s)</p>`;
+  h += '<table><tr><th>#</th><th>Name</th><th>Attribute</th><th>Ranges</th></tr>' +
+    d.channels.map(c => `<tr><td>${c.n}</td><td>${esc(c.name)}</td>
+      <td>${esc(c.attribute)}${c.fine ? ' (fine)' : ''}</td><td>${c.ranges || ''}</td></tr>`).join('') +
+    '</table>';
+  h += d.warnings.map(w => `<p class="sev5">warning: ${esc(w)}</p>`).join('');
+  if (!quiet || d.warnings.length) $('headout').innerHTML = h;
+  return d.warnings.length;
+}
+
 async function headBuild() {
   const fd = new FormData(); fd.append('plan_text', $('planbox').value);
   try {
+    try { await headCheck(true); } catch (e) { /* build reports its own error */ }
     const r = await post('/api/head-build', fd);
     const blob = await r.blob();
     const name = (r.headers.get('content-disposition')||'').match(/filename="?([^"]+)"?/)?.[1] || 'head.hed';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name; a.click();
-    $('headout').innerHTML = `<p class="exact">Downloaded ${esc(name)} - copy it into the MagicQ heads folder and restart MagicQ.</p>`;
+    $('headout').innerHTML += `<p class="exact">Downloaded ${esc(name)} - copy it into the MagicQ heads folder and restart MagicQ.</p>`;
   } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 

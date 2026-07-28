@@ -389,12 +389,15 @@ def cmd_head(args: argparse.Namespace) -> int:
     from .formats import chamsys as _ch
 
     if args.action == "template":
-        if getattr(args, "ofl", None):
+        if getattr(args, "blank", None):
+            fixture = plan.blank(args.blank)
+        elif getattr(args, "ofl", None):
             fixture = _resolve_target(args)
         elif args.source:
             fixture = load_fixture(args.source)
         else:
-            raise SystemExit("give a source file, or --ofl <key>, for the template")
+            raise SystemExit(
+                "give a source file, --ofl <key>, or --blank <channels>")
         mode = fixture.mode(args.mode) if args.mode else None
         if args.mode and mode is None:
             available = ", ".join(m.name for m in fixture.modes) or "none"
@@ -414,6 +417,8 @@ def cmd_head(args: argparse.Namespace) -> int:
         print(f"recognised {n} channel(s) -> {out}")
         if fixture.source_id:
             print(f"  could not read: {fixture.source_id}")
+        for w in plan.warnings(fixture):
+            print(f"  warning: {w}")
         print(f"CHECK THE PLAN against the manual, then: lx head build {out}")
         return 0
 
@@ -425,6 +430,8 @@ def cmd_head(args: argparse.Namespace) -> int:
     else:
         stem = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
         out = Path(re.sub(r"[^A-Za-z0-9 ._+-]", "", stem) + ".hed")
+    for w in plan.warnings(fixture):
+        print(f"warning: {w}", file=sys.stderr)
     _ch.write(fixture, out, mode)
     print(f"{fixture.key}: wrote {mode.name} ({mode.channel_count} ch) -> {out}")
     print("copy it into the MagicQ heads folder and restart MagicQ")
@@ -579,6 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
     ht.add_argument("out", help="plan file to write, e.g. plan.txt")
     ht.add_argument("source", nargs="?", help="GDTF / OFL JSON / MA2 XML / .hed reference")
     ht.add_argument("--ofl", metavar="KEY", help="use a catalogue fixture as the reference")
+    ht.add_argument("--blank", type=int, metavar="N", help="start from N empty channels")
     ht.add_argument("--mode", help="which mode of the reference to start from")
     ht.add_argument("--cache", help="catalogue cache directory")
     ht.set_defaults(func=cmd_head)

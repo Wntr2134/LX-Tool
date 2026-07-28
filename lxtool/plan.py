@@ -91,6 +91,66 @@ def dump(fixture: Fixture, mode: Mode | None = None) -> str:
     return "\n".join(out)
 
 
+def warnings(fixture: Fixture) -> list[str]:
+    """Lint a plan's fixture for the mistakes that reach desks.
+
+    None of these block a build - a clone can genuinely have two dimmers -
+    but every one deserves a human glance before the file goes on a stick.
+    """
+    out: list[str] = []
+    channels = fixture.modes[0].channels if fixture.modes else []
+    attrs = [c.attribute for c in channels]
+
+    if "Dimmer" not in attrs:
+        out.append("no Dimmer channel - the head will not respond to intensity")
+
+    seen: dict[str, int] = {}
+    for i, ch in enumerate(channels, start=1):
+        if ch.fine:
+            prev = channels[i - 2] if i >= 2 else None
+            if prev is None or prev.attribute != ch.attribute or prev.fine:
+                out.append(
+                    f"channel {i} ({ch.name}): fine half without a matching "
+                    "coarse channel directly before it - MagicQ will not pair "
+                    "them as 16-bit"
+                )
+            continue
+        if ch.attribute == "Unknown":
+            out.append(
+                f"channel {i} ({ch.name}): attribute not recognised - it will "
+                "land on a generic encoder; add attr=<Attribute> if it matters"
+            )
+        elif ch.attribute in seen and ch.attribute not in ("Macro", "Control"):
+            out.append(
+                f"channel {i} ({ch.name}): second {ch.attribute} channel "
+                f"(first was channel {seen[ch.attribute]}) - intended?"
+            )
+        seen.setdefault(ch.attribute, i)
+
+        spans = sorted((r.dmx_from, r.dmx_to, r.name) for r in ch.ranges)
+        for (a_lo, a_hi, a_nm), (b_lo, b_hi, b_nm) in zip(spans, spans[1:]):
+            if b_lo <= a_hi:
+                out.append(
+                    f"channel {i} ({ch.name}): ranges overlap - "
+                    f"'{a_nm}' {a_lo}-{a_hi} and '{b_nm}' {b_lo}-{b_hi}"
+                )
+    return out
+
+
+def blank(count: int, *, manufacturer: str = "", model: str = "MyFixture") -> Fixture:
+    """An empty scratch fixture: `count` channels waiting to be named."""
+    if not 1 <= count <= 512:
+        raise ValueError("channel count must be 1-512")
+    channels = [
+        Channel(offset=i, name=f"Channel {i}", attribute="Unknown")
+        for i in range(1, count + 1)
+    ]
+    channels[0] = Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True)
+    return Fixture(manufacturer=manufacturer, model=model,
+                   modes=[Mode(name=f"{count}ch", channels=channels)],
+                   source="plan")
+
+
 def _looks_fine(name: str) -> bool:
     return attributes.normalise(name, default="") != "" and bool(
         re.search(r"\bfine\b|\blsb\b", name.lower())

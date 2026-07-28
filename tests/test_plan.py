@@ -100,3 +100,51 @@ def test_chart_to_plan_to_hed():
     back = chamsys.parse_personality(head)
     assert [c.attribute for c in back.modes[0].channels] == \
         ["Pan", "Tilt", "Dimmer", "Red", "Green", "Blue"]
+
+
+def test_warnings_catch_the_common_mistakes():
+    fx = plan.parse(
+        "model: X\n"
+        "channel: Red\n"
+        "channel: Pan fine\n"
+        "channel: Mystery knob\n"
+        "channel: Red\n"
+        "channel: Strobe\n"
+        "  0-100  A\n"
+        "  50-200  B\n"
+    )
+    w = "\n".join(plan.warnings(fx))
+    assert "no Dimmer" in w
+    assert "fine half without a matching coarse" in w
+    assert "attribute not recognised" in w
+    assert "second Red channel" in w
+    assert "ranges overlap" in w
+
+    clean = plan.parse(
+        "model: X\nchannel: Dimmer\nchannel: Pan\nchannel: Pan fine\n")
+    assert plan.warnings(clean) == []
+
+
+def test_blank_template():
+    fx = plan.blank(8)
+    assert len(fx.modes[0].channels) == 8
+    assert fx.modes[0].channels[0].attribute == "Dimmer"
+    back = plan.parse(plan.dump(fx))
+    assert len(back.modes[0].channels) == 8
+    with pytest.raises(ValueError):
+        plan.blank(0)
+
+
+def test_chart_column_wise_ocr():
+    """Phone OCR reads tables one column at a time; zip them back."""
+    fx = chart.parse_chart(
+        "DMX functions\n1\n2\n3\n4\n5\nPan\nPan fine\nTilt\nDimmer\nRed\n")
+    chans = fx.modes[0].channels
+    assert [c.attribute for c in chans] == ["Pan", "Pan", "Tilt", "Dimmer", "Red"]
+    assert chans[1].fine
+
+
+def test_chart_dotted_range_separators():
+    fx = chart.parse_chart("1 Strobe\n0..9 Open\n10…255 Strobe fast")
+    assert [(r.dmx_from, r.dmx_to) for r in fx.modes[0].channels[0].ranges] == \
+        [(0, 9), (10, 255)]

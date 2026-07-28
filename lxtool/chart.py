@@ -35,10 +35,12 @@ from .model import Channel, Fixture, Mode, Range
 
 # "CH 3 - Dimmer", "3. Dimmer", "3-4 Pan (16bit)", "3 | Dimmer", "3\tDimmer"
 _LINE = re.compile(
-    r"^(?:ch(?:annel)?\s*)?(\d{1,3})(?:\s*[-–—]\s*(\d{1,3}))?"
+    r"^(?:ch(?:annel)?\s*)?(\d{1,3})(?:\s*(?:[-–—]|\.\.+|…)\s*(\d{1,3}))?"
     r"\s*[:.|\-–—\t ]\s*(.+?)\s*$",
     re.IGNORECASE,
 )
+_BARE_NUMBER = re.compile(r"^(?:ch(?:annel)?\s*)?(\d{1,3})\s*[:.|]?\s*$",
+                          re.IGNORECASE)
 _NOISE = re.compile(r"^[\s>*•●\-–—|]+|[\s|]+$")
 
 
@@ -84,6 +86,10 @@ def parse_chart(text: str, *, manufacturer: str = "", model: str = "",
         else:
             skipped.append(line)
 
+    if len(channels) < 2:
+        columns = _parse_columns(text)
+        if columns:
+            channels, skipped = columns, []
     if not channels:
         raise ValueError(
             "no channel rows recognised - expected lines like '1  Pan' or "
@@ -98,6 +104,33 @@ def parse_chart(text: str, *, manufacturer: str = "", model: str = "",
     )
     fixture.source_id = "; ".join(skipped[:5])
     return fixture
+
+
+def _parse_columns(text: str) -> list[Channel]:
+    """Fallback for column-wise OCR output.
+
+    Phone OCR often reads a table one column at a time: a run of bare
+    channel numbers 1..N, then a run of N names. Zip them back together
+    when both runs are present and the same length.
+    """
+    numbers: list[int] = []
+    names: list[str] = []
+    for raw in text.split("\n"):
+        line = _NOISE.sub("", raw.strip())
+        if not line:
+            continue
+        m = _BARE_NUMBER.match(line)
+        if m and not names:
+            n = int(m.group(1))
+            if n == len(numbers) + 1:
+                numbers.append(n)
+            continue
+        if numbers and not any(c.isdigit() for c in line):
+            names.append(_clean_name(line))
+
+    if len(numbers) >= 2 and len(numbers) == len(names):
+        return [_channel(i + 1, nm) for i, nm in enumerate(names)]
+    return []
 
 
 def _clean_name(name: str) -> str:
