@@ -497,6 +497,13 @@ def _default_for(ch: "Channel") -> int:
         return max(0, min(255, ch.default))
     if ch.fine:
         return 0
+    if ch.attribute in ("Shutter", "Strobe"):
+        # Home the shutter on its first Open range - the reference MacAuraXB
+        # defaults its shutter to 22, the midpoint of Open at 20-24 - so the
+        # fixture lights when located instead of sitting closed.
+        for r in ch.ranges:
+            if re.search(r"\bopen\b", r.name.lower()):
+                return (r.dmx_from + r.dmx_to) // 2
     return _DEFAULT_OF.get(ch.attribute, 0)
 
 
@@ -742,11 +749,11 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out: list[str] = [
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
         f"\\ Personality file for {fixture.model or 'fixture'} ",
-        # The V number is the file-format version, and it matters: the stock
-        # library's current heads say 008f, and the trailing-section grammar
-        # emitted below is the 008f one. Writing an older number over a
-        # modern layout invites the desk to parse the tail as something else.
-        'V,008f,"MagicQ 1";',
+        # The V number is the file-format version, and it matters: the desk
+        # parses by it. 0095 is what the 2025 stock library's clean heads
+        # carry, and the grammar below is verified against 2,500 of them -
+        # same sizing rules as 008f plus one extra trailing field.
+        'V,0095,"MagicQ 1";',
         # The field after P is NOT the channel count: across 68,418 real
         # heads it is a small enum (0x0000 in 25,124, 0x0002 in 23,319, the
         # rest a tail of single digits) whose meaning is unknown, and it
@@ -754,12 +761,16 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         # belongs on the next line. 0x0000 is the most common value and what
         # ChamSys's own MAC Aura uses.
         f'P,0000,"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
-        # count, range-row count, colour-table row count, macro count (0 -
-        # none are emitted), then fields that vary per head with zero the
-        # most common value. The 0200,00000000 pair is one real heads carry
-        # together.
+        # count, range rows, colour-table rows, macro count (0 - none are
+        # emitted), pan and tilt travel in degrees, two constants, a
+        # version-counter field (01f3, as the reference head carries), and
+        # a flags word whose 0x2000 bit tracks additive colour mix - set on
+        # 62% of additive stock heads and 11% of the rest, and carried as
+        # 80002003 by the clean reference.
         f"{count:04x},{len(range_rows):04x},{len(colour_rows):04x},0000,"
-        "0000,0000,0001,0001,0200,00000000,",
+        f"{min(fixture.pan_range, 0xFFFF):04x},{min(fixture.tilt_range, 0xFFFF):04x},"
+        "0001,0001,01f3,"
+        + ("80002003," if colour_rows else "00000000,"),
     ]
 
     for ch in channels:
@@ -803,26 +814,47 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out.append(",".join(["00000000"] * n) + ("," if n else ""))
     out.append('"",00000000,0000,0000,0000,0000,0000,')
     # One palette row per channel: the attribute's palette id, then three
-    # 0x100|value fields. Column 3 tracks the channel default in 97% of
-    # stock rows; the other columns vary (locate/highlight, presumably), so
-    # all three carry the default - "home equals default" is the safe
-    # reading and matches what 22% of stock rows do exactly.
+    # value fields where 0x100|value means "set" and 0000 means "unset".
+    # The column patterns are read off both reference Auras, which agree
+    # with each other attribute for attribute.
     for ch in channels:
         pid = _PALETTE_ID.get(_ATTR_NUMBERS.get(ch.attribute, _RESERVED), 0x00)
-        v = 0x100 | _default_for(ch)
-        out.append(f"000000{pid:02x},{v:04x},{v:04x},{v:04x},")
+        d = 0x100 | _default_for(ch)
+        zero, unset = 0x100, 0x0000
+        if pid == 0x07:                       # dimmer
+            row = (zero, 0x1FF, 0x1FF)
+        elif pid == 0xC0:                     # shutter
+            row = (d, unset, d)
+        elif pid in (0x47, 0x46):             # pan / tilt
+            row = (zero if ch.fine else d, unset, unset)
+        elif pid == 0xD8:                     # control
+            row = (zero, unset, zero)
+        elif pid == 0x82:                     # blue: both reference heads
+            row = (d, 0x1FF, d)               # set its middle column full
+        elif 0x80 <= pid <= 0x83:             # colour mix R, G, W
+            row = (d, zero, d)
+        elif pid in (0x86, 0x87, 0x88):       # colour wheels, CTC
+            row = (zero, zero, zero)
+        else:
+            row = (d, d, d)
+        out.append(f"000000{pid:02x}," + ",".join(f"{v:04x}" for v in row) + ",")
     out.append(f'"{fixture.model}",')
     out.append('0000,"","","",0000,0000,0000,0000,0000,00000000,')
-    out.append("00000008,")
-    out.append('"","","",')
-    out.append("0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,")
+    out.append("0000001a,")
+    out.append(f'"{fixture.manufacturer}","{fixture.model}","{fixture.model}",')
+    # Fields 3-4 are the lens angles in degrees - the reference head carries
+    # 11.0/58.0, exactly OFL's degreesMinMax for the same fixture.
+    out.append(f"0.000000,0.000000,{fixture.beam_min:.6f},{fixture.beam_max:.6f},"
+               "0.000000,0.000000,")
     out.append('"",0000,')
-    out.append("0,0,0,0,0,0,0,0,0.000000,")
+    # The final field is the weight in kilograms; both reference heads carry
+    # exactly their fixture's mass here.
+    out.append(f"0,0,0,0,0,0,0,0,{fixture.weight:.6f},")
     out.append("0,0,0,0,0,0,0,0,0,0,0,")
     out.append("0,0,0,")
     out.append("0,")
-    out.append("00000000,00000000," + ",".join(["0000"] * (n + 1)) + ",")
-    out.append("0000,0000,0000,00000004,68858000,0,")
+    out.append("00000000,00000001," + ",".join(["0000"] * (n + 1)) + ",")
+    out.append("4d50,0001,0000,00000004,68858000,0,")
     out.append(f'"{fixture.model}",')
     # The colour-channel table: a count, then one row per distinct
     # colour-mix attribute - 0x10-0x13 plus amber and UV - with three
@@ -838,8 +870,11 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out.append('"{00000000-0000-0000-0000-000000000000}",')
     out.append("1.000000,0000,0000,")
     out.append("0000,")
-    out.append("0.850000,0.850000,0.000000,0.000000,")
+    out.append("0.800000,0.800000,0.000000,0.000000,")
     out.append("0.000000,0.000000,0.000000,0.000000,0,0,")
+    # The V,0095 grammar carries one more field here than 008f did; 91% of
+    # 0095 stock heads end with a bare zero before the terminator.
+    out.append("0,")
     out.append(";")
     out.append("")
     return "\n".join(out)
@@ -869,6 +904,11 @@ def write(fixture: Fixture, path: Path | str, mode: Mode | None = None) -> Path:
             source=fixture.source,
             source_id=fixture.source_id,
             fixture_type=fixture.fixture_type,
+            pan_range=fixture.pan_range,
+            tilt_range=fixture.tilt_range,
+            beam_min=fixture.beam_min,
+            beam_max=fixture.beam_max,
+            weight=fixture.weight,
         )
     path.write_bytes(encode_hed(build_personality(fixture, mode)))
     return path

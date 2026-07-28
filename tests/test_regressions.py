@@ -572,7 +572,7 @@ def test_header_second_line_is_not_mistaken_for_defaults():
     assert fx.modes[0].channels[1].default == 255
 
 
-def test_built_personality_has_the_complete_v008f_tail():
+def test_built_personality_has_the_complete_tail():
     """The tail must be complete, not merely plausible.
 
     Third on-desk result: a head with an invented, truncated tail patched but
@@ -587,13 +587,14 @@ def test_built_personality_has_the_complete_v008f_tail():
     ])])
     lines = chamsys.build_personality(fx).rstrip("\n").split("\n")
 
-    assert 'V,008f,"MagicQ 1";' in lines
+    assert 'V,0095,"MagicQ 1";' in lines
     assert lines[-1] == ";", "file must terminate the grammar"
+    assert lines[-2] == "0,", "the 0095 grammar's extra trailing field"
     assert '"{00000000-0000-0000-0000-000000000000}",' in lines
     # zeros row: one field per channel
     assert ",".join(["00000000"] * 5) + "," in lines
     # near-final row: count+1 fields after the two 8-hex ones
-    assert "00000000,00000000," + ",".join(["0000"] * 6) + "," in lines
+    assert "00000000,00000001," + ",".join(["0000"] * 6) + "," in lines
     # no truncated palette rows keyed to attribute zero
     assert "00000000,0000,0100,01ff," not in lines
 
@@ -648,11 +649,13 @@ def test_palette_rows_carry_the_defaults():
     rows = [l for l in lines
             if re.fullmatch(r'000000[0-9a-f]{2},[0-9a-f]{4},[0-9a-f]{4},[0-9a-f]{4},', l)]
 
+    # Column patterns per attribute, as both reference Auras carry them:
+    # 0x100|value = set, 0000 = unset.
     assert rows == [
-        "00000007,01ff,01ff,01ff,",   # Dimmer id 0x07, default 255
-        "00000047,0180,0180,0180,",   # Pan id 0x47, centred 128
-        "00000047,0100,0100,0100,",   # Pan fine, same id, 0
-        "00000080,01ff,01ff,01ff,",   # Red id 0x80, full
+        "00000007,0100,01ff,01ff,",   # dimmer: fixed stock pattern
+        "00000047,0180,0000,0000,",   # pan: centred 128, cols 2-3 unset
+        "00000047,0100,0000,0000,",   # pan fine
+        "00000080,01ff,0100,01ff,",   # red: full, middle column zero
     ]
 
 

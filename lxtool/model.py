@@ -85,6 +85,11 @@ class Fixture:
     source: str = ""          # which format/file this came from
     source_id: str = ""       # native identifier, e.g. the .hed filename
     fixture_type: str = ""    # 'Moving Head', 'LED Par', ... when the source says
+    pan_range: int = 0        # degrees of pan travel, 0 when the source is silent
+    tilt_range: int = 0       # degrees of tilt travel
+    beam_min: float = 0.0     # narrowest beam angle in degrees
+    beam_max: float = 0.0     # widest beam angle in degrees
+    weight: float = 0.0       # kilograms
 
     @property
     def key(self) -> str:

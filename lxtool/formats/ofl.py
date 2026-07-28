@@ -128,6 +128,35 @@ def _fine_alias_map(available: dict[str, Any]) -> dict[str, str]:
     return aliases
 
 
+def _number(raw: Any) -> float:
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _lens_angle(data: dict[str, Any], index: int) -> float:
+    lens = (data.get("physical") or {}).get("lens")
+    if not isinstance(lens, dict):
+        return 0.0
+    pair = lens.get("degreesMinMax")
+    if isinstance(pair, list) and len(pair) == 2:
+        return _number(pair[index])
+    return 0.0
+
+
+def _degrees(physical: dict[str, Any], key: str) -> int:
+    """Pan/tilt travel in whole degrees, 0 when absent or non-numeric."""
+    focus = physical.get("focus")
+    if not isinstance(focus, dict):
+        return 0
+    raw = focus.get(key)
+    try:
+        return max(0, int(float(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def parse(data: dict[str, Any] | str | bytes, *, manufacturer: str = "") -> Fixture:
     """Parse one OFL fixture document into a :class:`Fixture`."""
     if isinstance(data, (str, bytes)):
@@ -146,6 +175,13 @@ def parse(data: dict[str, Any] | str | bytes, *, manufacturer: str = "") -> Fixt
         model=data.get("name", "") or "",
         source="ofl",
         fixture_type=", ".join(data.get("categories", []) or []),
+        # Movement range from the physical block; MagicQ carries these in
+        # its header (0x21c,0xe8 on the MAC Aura = 540 and 232 degrees).
+        pan_range=_degrees((data.get("physical") or {}), "panMax"),
+        tilt_range=_degrees((data.get("physical") or {}), "tiltMax"),
+        beam_min=_lens_angle(data, 0),
+        beam_max=_lens_angle(data, 1),
+        weight=_number((data.get("physical") or {}).get("weight")),
     )
 
     modes = data.get("modes") or []
