@@ -602,9 +602,18 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     # cured it; the header telling the truth is the actual fix.
     range_rows: list[str] = []
     for index, ch in enumerate(channels):
-        for r in ch.ranges:
-            if not r.name:
-                continue
+        named = [r for r in ch.ranges if r.name]
+        # A lone 0-255 range on a continuous channel ("ColorIntensity",
+        # "Pan", "Zoom") says nothing the channel row doesn't. ChamSys's own
+        # heads omit these - the stock Aura has no rows at all for its
+        # dimmer, pan/tilt, RGBW or CTC - and on a colour channel an
+        # untyped filler row keeps the Head Editor's "Col Types" complaint
+        # alive. A wheel channel is different: its lone full-span row is a
+        # real slot (a fixture with a single fixed gobo) and stays.
+        if (len(named) == 1 and named[0].dmx_from == 0 and named[0].dmx_to == 255
+                and ch.attribute not in _WHEEL_ATTRS):
+            continue
+        for r in named:
             label = r.name.replace('"', '""')
             flags = _range_flags(r.name)
             extra = 0

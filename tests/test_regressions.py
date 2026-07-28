@@ -760,3 +760,26 @@ def test_colour_slots_get_types_and_swatches():
         ("White", "1000", "06000026"),
         ("Rainbow CW>", "2000", "0600001f"),
     ]
+
+
+def test_trivial_full_range_rows_are_omitted():
+    """A lone 0-255 row on a continuous channel is noise ChamSys omits.
+
+    Ninth on-desk round: colour swatches lit up, but "ERRORS Col Types"
+    survived on the untyped single "ColorIntensity" 0-255 rows the RGB mix
+    channels carried - rows the stock Aura simply does not have. They are
+    dropped; a wheel's lone full-span slot (a one-gobo fixture) stays.
+    """
+    from lxtool.model import Range
+
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Red", attribute="Red",
+                ranges=[Range(0, 255, "ColorIntensity")]),
+        Channel(offset=2, name="Gobo", attribute="Gobo1",
+                ranges=[Range(0, 255, '6" Dish')]),
+    ])])
+    text = chamsys.build_personality(fx)
+    assert "ColorIntensity" not in text
+    assert '6"" Dish' in text
+    header = text.split("\n")[4].split(",")
+    assert int(header[1], 16) == 1
