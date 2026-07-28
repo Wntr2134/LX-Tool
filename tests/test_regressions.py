@@ -654,3 +654,40 @@ def test_palette_rows_carry_the_defaults():
         "00000047,0100,0100,0100,",   # Pan fine, same id, 0
         "00000080,01ff,01ff,01ff,",   # Red id 0x80, full
     ]
+
+
+def test_shutter_ranges_are_typed():
+    """Untyped shutter ranges are a Head Editor error.
+
+    Sixth on-desk round: the head patches and homes perfectly and every slot
+    name displays, but the editor title reads "ERRORS Shutter Types" because
+    every range carried type 0 ("None"). Types are inferred from the slot
+    name using the majority vocabulary of 3.69M stock rows.
+    """
+    from lxtool.model import Range
+
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Shutter", attribute="Shutter", ranges=[
+            Range(0, 19, "Closed"),
+            Range(20, 24, "Open"),
+            Range(25, 64, "ShutterStrobe"),
+            Range(65, 69, "Rnd Strobe"),
+            Range(70, 84, "Pulse Open"),
+            Range(85, 255, "Sine wave"),
+        ]),
+        Channel(offset=2, name="Gobo", attribute="Gobo1", ranges=[
+            Range(0, 9, "Open gobo"), Range(10, 19, "Stars"),
+        ]),
+    ])])
+    text = chamsys.build_personality(fx)
+    flags = {m.group(1): m.group(2) for m in re.finditer(
+        r'^[0-9a-f]{4},"((?:[^"]|"")*)",[0-9a-f]{4},[0-9a-f]{4},([0-9a-f]{4}),', text, re.M)}
+
+    assert flags["Closed"] == "2000"
+    assert flags["Open"] == "1000"
+    assert flags["ShutterStrobe"] == "3000"
+    assert flags["Rnd Strobe"] == "5000"
+    assert flags["Pulse Open"] == "7000"
+    assert flags["Sine wave"] == "0000"     # unrecognised: None, like most rows
+    assert flags["Open gobo"] == "1000"
+    assert flags["Stars"] == "0000"

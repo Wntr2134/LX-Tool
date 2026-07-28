@@ -478,6 +478,28 @@ def _default_for(ch: "Channel") -> int:
     return _DEFAULT_OF.get(ch.attribute, 0)
 
 
+def _range_flags(name: str) -> int:
+    """The range-type field, inferred from the slot name.
+
+    Untyped shutter ranges are a hard error in the Head Editor ("ERRORS
+    Shutter Types"), so the shutter vocabulary gets typed; everything else
+    stays 0 ("None"), which is what 60% of stock rows carry. The mapping is
+    the majority value over 3.69 million stock range rows: open 0x1000
+    (70%), closed 0x2000 (57%), strobe 0x3000 (51%), random strobe 0x5000,
+    pulse 0x7000.
+    """
+    n = name.lower()
+    if "strobe" in n:
+        return 0x5000 if ("rnd" in n or "random" in n) else 0x3000
+    if "pulse" in n:
+        return 0x7000
+    if "close" in n:
+        return 0x2000
+    if re.search(r"\bopen\b", n):
+        return 0x1000
+    return 0x0000
+
+
 def _flags_for(
     attribute: str,
     htp: bool,
@@ -542,7 +564,8 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
                 continue
             label = r.name.replace('"', '""')
             range_rows.append(
-                f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},0000,00000000,'
+                f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},'
+                f"{_range_flags(r.name):04x},00000000,"
             )
 
     name = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
