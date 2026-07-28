@@ -136,7 +136,11 @@ def _channel_name(chan: ET.Element, logical: ET.Element | None) -> str:
 
 def parse_description(xml: str | bytes) -> Fixture:
     """Parse a GDTF ``description.xml`` into a :class:`Fixture`."""
-    root = ET.fromstring(xml)
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        # Malformed input is the caller's problem to see, not a stack trace.
+        raise ValueError(f"not valid XML: {exc}") from exc
     ft = root.find(".//FixtureType")
     if ft is None:
         raise ValueError("no FixtureType element - not a GDTF description")
@@ -206,11 +210,14 @@ def read(path: Path | str) -> Fixture:
     if path.suffix.lower() == ".xml":
         fx = parse_description(path.read_bytes())
     else:
-        with zipfile.ZipFile(path) as zf:
-            names = [n for n in zf.namelist() if n.lower().endswith(_DESCRIPTION)]
-            if not names:
-                raise ValueError(f"{path.name} has no {_DESCRIPTION}")
-            fx = parse_description(zf.read(names[0]))
+        try:
+            with zipfile.ZipFile(path) as zf:
+                names = [n for n in zf.namelist() if n.lower().endswith(_DESCRIPTION)]
+                if not names:
+                    raise ValueError(f"{path.name} has no {_DESCRIPTION}")
+                fx = parse_description(zf.read(names[0]))
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"{path.name} is not a GDTF archive: {exc}") from exc
     fx.source_id = path.name
     return fx
 

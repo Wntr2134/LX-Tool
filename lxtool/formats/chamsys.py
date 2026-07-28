@@ -207,6 +207,30 @@ _QUOTED = re.compile(r'"((?:[^"]|"")*)"')
 HTP = 1
 LTP = 2
 
+# Bits in the flags word, read off 1,459,430 real channel rows.
+#
+# COARSE/FINE mark the two halves of a 16-bit pair, and they are what makes
+# MagicQ treat them as one 16-bit parameter rather than two faders. Evidence:
+# of 157,795 channels carrying FINE, 154,515 have "fine" in their name and
+# 152,809 sit immediately after a COARSE row on the same attribute; only 779
+# fine-named channels lack it.
+CH_COARSE = 0x04
+CH_FINE = 0x08
+
+# Additive colour mix. Attributes 0x10-0x12 are shared between RGB and CMY,
+# and this bit is what separates them: set on 193,848 Red / 193,716 Green /
+# 191,626 Blue rows, clear on Cyan/Magenta/Yellow, and never set on White -
+# 0 of 94,318.
+CH_ADDITIVE = 0x2000
+
+# One bit is deliberately not modelled: 0x40000000 appears on roughly half of
+# all rows, is mixed within a single head, and correlates with nothing tested
+# (named ranges, 16-bit, attribute, bank). 51,943 heads have it clear
+# throughout, so emitting it clear is well-precedented rather than a guess.
+
+# Additive primaries, which is exactly the set that carries CH_ADDITIVE.
+_ADDITIVE = {"Red", "Green", "Blue"}
+
 # MagicQ attribute numbers seen in real personalities.  The channel *name* is
 # human-readable and normalises well on its own, so this table is used to
 # corroborate and to catch cases where the name is idiosyncratic.
@@ -257,6 +281,7 @@ def parse_personality(text: str) -> Fixture:
     manufacturer = model = mode_name = ""
     channels: list[tuple[str, int, int]] = []
     ranges_by_channel: dict[int, list[Range]] = {}
+    defaults_by_channel: list[int] | None = None
     declared = 0
 
     lines = [ln.rstrip("\r") for ln in text.split("\n")]
@@ -295,6 +320,20 @@ def parse_personality(text: str) -> Fixture:
         chan = _parse_channel_line(line)
         if chan:
             channels.append(chan)
+            continue
+
+        # The defaults line: count then (channel, value) pairs, all 4-hex
+        # fields - which is what tells it apart from the header's second line,
+        # whose last field is 8 hex digits. Only accept it once the channel
+        # block has been seen and the count agrees.
+        if channels and defaults_by_channel is None:
+            fields = line.rstrip(",").split(",")
+            if (len(fields) == 1 + 2 * len(channels)
+                    and all(re.fullmatch(r"[0-9a-f]{4}", f, re.I) for f in fields)):
+                values = [int(f, 16) for f in fields]
+                if (values[0] == len(channels)
+                        and values[1::2] == list(range(len(channels)))):
+                    defaults_by_channel = values[2::2]
 
     mode = Mode(name=mode_name or "Default")
     prev_attr: str | None = None
@@ -322,6 +361,9 @@ def parse_personality(text: str) -> Fixture:
             attribute=canonical,
             fine=fine,
             htp=(flags & 0x0F) == HTP,
+            default=(defaults_by_channel[offset - 1]
+                     if defaults_by_channel and offset <= len(defaults_by_channel)
+                     else 0),
             # Range rows index channels from zero.
             ranges=[] if fine else ranges_by_channel.get(offset - 1, []),
         ))
@@ -372,7 +414,14 @@ _ATTR_NUMBERS = {v: k for k, v in MAGICQ_ATTRIBUTES.items() if v != "Unknown"}
 # Subtractive mixing shares the colour-mix slots with RGB, so writing needs
 # these explicitly - without them CMY channels would go out as "Reserved".
 _ATTR_NUMBERS.update({"Cyan": 0x10, "Magenta": 0x11, "Yellow": 0x12,
-                      "Strobe": 0x02, "UV": 0x3C, "Lime": 0x3C, "CTB": 0x18})
+                      "Strobe": 0x02, "UV": 0x3C, "Lime": 0x3C, "CTB": 0x18,
+                      # 0x07 is the general "second colour" slot rather than a
+                      # strict second wheel: of 11,002 rows it is named "col
+                      # macro" 611 times and "col 2" 562, plus hue, tint, gel
+                      # and colour FX. Reading it back as ColorWheel2 is the
+                      # better default, but a colour macro has nowhere else to
+                      # go, and Reserved would be worse.
+                      "ColorMacro": 0x07})
 _RESERVED = 0x3F
 
 _BANK_OF = {
@@ -383,67 +432,512 @@ _BANK_OF = {
     "control": 1,
 }
 
+# MagicQ's encoder banks agree with our attribute groups for 28 of the 29
+# attributes that appear in the library. The exception is the shutter: we
+# group it with intensity, which is right for HTP/LTP reasoning, but MagicQ
+# puts it on the beam encoders - 51,210 rows say bank 1. Overriding here
+# keeps the shared vocabulary honest and the .hed correct.
+_BANK_OVERRIDE = {"Shutter": 1, "Strobe": 1}
 
-def _flags_for(attribute: str, htp: bool) -> int:
-    """MagicQ's flags word: (encoder bank << 4) | HTP/LTP."""
+
+# Palette id for each attribute number, harvested from 64,652 heads whose
+# palette block aligns one row per channel (agreement 88-100% per attribute).
+# These rows are how idle output and Locate actually reach the desk: no
+# stock head carries live defaults without them, and a head whose pairs
+# line said Pan 128 still idled at zero until this block was present.
+_PALETTE_ID = {
+    0x00: 0x07, 0x01: 0x06, 0x02: 0xc0, 0x03: 0xc1, 0x04: 0x47, 0x05: 0x46,
+    0x06: 0x87, 0x07: 0x86, 0x08: 0xc7, 0x09: 0xc6, 0x0a: 0xc5, 0x0b: 0xc4,
+    0x0c: 0xc2, 0x0d: 0xc3, 0x0e: 0xca, 0x0f: 0xcb, 0x10: 0x80, 0x11: 0x81,
+    0x12: 0x82, 0x13: 0x83, 0x14: 0xd8, 0x15: 0xd9, 0x16: 0xd0, 0x17: 0xd1,
+    0x18: 0x88, 0x19: 0x89, 0x1a: 0x85, 0x1b: 0x84, 0x1c: 0xcf, 0x1d: 0xce,
+    0x1e: 0xcd, 0x1f: 0xcc, 0x20: 0xc8, 0x21: 0xc9, 0x22: 0xd2, 0x23: 0xd3,
+    0x24: 0xd7, 0x25: 0xd6, 0x26: 0xd5, 0x27: 0xd4, 0x28: 0xda, 0x29: 0xdb,
+    0x2a: 0xdf, 0x2b: 0xde, 0x2c: 0xdd, 0x2d: 0xdc, 0x2e: 0x40, 0x2f: 0x41,
+    0x30: 0x42, 0x31: 0x43, 0x32: 0x44, 0x33: 0x45, 0x34: 0xe0, 0x35: 0xe1,
+    0x36: 0xe2, 0x37: 0xe3, 0x38: 0xe4, 0x39: 0xe5, 0x3a: 0xe6, 0x3b: 0xe7,
+    0x3c: 0x85, 0x3d: 0x8a, 0x3e: 0x8b, 0x3f: 0x00,
+}
+
+# The head's colour-types table: the ten standard colours every colour-mix
+# head defines, with their swatch ids and channel recipes. Harvested from
+# the stock library at 97-99% agreement per value (526,783 rows; pair count
+# matches the declared count in every single one). This table is what the
+# desk's colour buttons run on, header field 3 is its row count, and a head
+# with colour channels but no table is what the Head Editor flags as
+# "ERRORS Col Types".
+_STD_COLOURS: list[tuple[str, int, dict[int, int]]] = [
+    ("White", 0x26, {0x10: 0xFF, 0x11: 0xFF, 0x12: 0xFF, 0x13: 0xFF,
+                     0x1B: 0xFF, 0x3C: 0xFF}),
+    ("Red", 0x20, {0x10: 0xFF}),
+    ("Amber", 0x01, {0x10: 0xFF, 0x11: 0x7F, 0x1B: 0xFF}),
+    ("Yellow", 0x27, {0x10: 0xFF, 0x11: 0xFF}),
+    ("Green", 0x11, {0x11: 0xFF}),
+    ("Cyan", 0x08, {0x11: 0xFF, 0x12: 0xFF}),
+    ("Blue", 0x02, {0x12: 0xFF}),
+    ("Pink", 0x15, {0x10: 0xFF, 0x11: 0x69, 0x12: 0xB4}),
+    ("UV", 0x0F, {0x10: 0x4B, 0x12: 0x82, 0x3C: 0xFF}),
+    ("Magenta", 0x17, {0x10: 0xFF, 0x12: 0xFF}),
+]
+
+
+# Fallback defaults, from the pairs lines of 65,187 real heads. The stock
+# library is close to unanimous: Dimmer 255 (98%), Pan and Tilt centred at
+# 128 (95-96%) with their fine halves at 0 (82-83%), the additive mix full
+# on (92-97%) so Locate produces white light, and everything else 0.
+_DEFAULT_OF = {
+    "Dimmer": 255,
+    "Pan": 128, "Tilt": 128,
+    "Red": 255, "Green": 255, "Blue": 255, "White": 255,
+}
+
+
+def _default_for(ch: "Channel") -> int:
+    if ch.default:
+        return max(0, min(255, ch.default))
+    if ch.fine:
+        return 0
+    if ch.attribute in ("Shutter", "Strobe"):
+        # Home the shutter on its first Open range - the reference MacAuraXB
+        # defaults its shutter to 22, the midpoint of Open at 20-24 - so the
+        # fixture lights when located instead of sitting closed.
+        for r in ch.ranges:
+            if re.search(r"\bopen\b", r.name.lower()):
+                return (r.dmx_from + r.dmx_to) // 2
+    return _DEFAULT_OF.get(ch.attribute, 0)
+
+
+# MagicQ's colour chart, decoded from 319,403 stock colour-wheel rows whose
+# extra field carries 0x06000000 | id. A slot name's majority id explains 93%
+# of rows, so matching by name keyword recovers the swatch MagicQ shows on
+# the desk. First match wins - compounds before their base colour.
+_COLOUR_CHART: list[tuple[str, int]] = [
+    ("light blue", 0x12), ("dark blue", 0x0b), ("deep blue", 0x0b),
+    ("congo", 0x0b), ("sky blue", 0x43), ("peacock", 0x44),
+    ("mist blue", 0x41), ("pale blue", 0x42), ("steel blue", 0x02),
+    ("light green", 0x14), ("dark green", 0x0d), ("blue green", 0x29),
+    ("minus green", 0x28), ("minusgreen", 0x28),
+    ("lime", 0x45), ("fern", 0x46), ("moss", 0x11), ("jade", 0x0d),
+    ("turquoise", 0x19), ("aqua", 0x08), ("cyan", 0x08),
+    ("light red", 0x2a), ("flame", 0x2b), ("fire", 0x2b), ("scarlet", 0x37),
+    ("dark amber", 0x36), ("gold amber", 0x35), ("deep amber", 0x33),
+    ("amber", 0x01), ("straw", 0x23), ("gold", 0x33), ("salmon", 0x48),
+    ("light yellow", 0x24), ("pale yellow", 0x31), ("spring yellow", 0x32),
+    ("deep orange", 0x2c), ("dark orange", 0x2d), ("orange", 0x1c),
+    ("rose pink", 0x3d), ("rose purple", 0x3c), ("rose", 0x1d),
+    ("medium pink", 0x3e), ("pink", 0x15),
+    ("dark lavender", 0x2e), ("special lavender", 0x3f),
+    ("light lavender", 0x40), ("lavender", 0x16),
+    ("mauve", 0x2f), ("lilac", 0x30), ("magenta", 0x17),
+    ("purple", 0x1e), ("violet", 0x1e), ("indigo", 0x1e), ("uv", 0x0f),
+    ("blue", 0x02), ("green", 0x11), ("red", 0x20), ("yellow", 0x27),
+    ("warm white", 0x06), ("white", 0x26),
+    ("ctb", 0x04), ("5600", 0x04), ("6000", 0x04),
+    ("cto", 0x07), ("3200", 0x07), ("rainbow", 0x1f),
+    ("peach", 0x05), ("apricot", 0x05), ("brown", 0x03), ("chocolate", 0x03),
+]
+
+
+def _colour_id(name: str) -> int | None:
+    n = name.lower()
+    for kw, cid in _COLOUR_CHART:
+        if re.search(rf"\b{re.escape(kw)}", n):
+            return cid
+    return None
+
+
+_WHEEL_ATTRS = {"ColorWheel", "ColorWheel2", "ColorMacro", "Gobo1", "Gobo2"}
+_COLOUR_ATTRS = {"ColorWheel", "ColorWheel2", "ColorMacro"}
+
+
+def _range_flags(name: str) -> int:
+    """The range-type field, inferred from the slot name.
+
+    Untyped shutter ranges are a hard error in the Head Editor ("ERRORS
+    Shutter Types"), so the shutter vocabulary gets typed; everything else
+    stays 0 ("None"), which is what 60% of stock rows carry. The mapping is
+    the majority value over 3.69 million stock range rows: open 0x1000
+    (70%), closed 0x2000 (57%), strobe 0x3000 (51%), random strobe 0x5000,
+    pulse 0x7000.
+    """
+    n = name.lower()
+    rnd = "rnd" in n or "random" in n
+    f_to_s = "f>s" in n
+    # Stock leaves bursts, sine waves and random pulses untyped, and the
+    # editor screenshots of ChamSys's own Aura confirm it.
+    if "burst" in n or "sine" in n:
+        return 0x0000
+    if "pulse" in n:
+        if rnd:
+            return 0x0000
+        if "open" in n:
+            return 0x9000
+        if "clos" in n:
+            return 0xA000
+        return 0x7000
+    if "strobe" in n:
+        # The low bit of the nibble carries the ramp direction: 3=S>F, 4=F>S
+        # (5/6 for their random variants), read off the stock Aura where the
+        # editor displays each.
+        if rnd:
+            return 0x6000 if f_to_s else 0x5000
+        return 0x4000 if f_to_s else 0x3000
+    if "close" in n:
+        return 0x2000
+    if re.search(r"\bopen\b", n):
+        return 0x1000
+    return 0x0000
+
+
+# Function ids for the extra field, read off ChamSys's MAC Aura where the
+# Head Editor displays each pairing. The extra is not merely an icon: with
+# the same flag value, 0x02000069 displays as "Pulse Open" and 0x03000010 as
+# "None", and a slot flag (0x1000) paired with a colour swatch reads "Fixed"
+# while paired with 0x0200000d it reads "None" - the (flag, extra) pair is
+# the type. A slot flag with an effect swatch is the one combination stock
+# heads never produce.
+_FN_NO_FUNCTION = 0x0200006B
+_FN_OPEN = 0x0200008B
+_FN_CLOSED = 0x0200008A
+_FN_STROBE = 0x01000029
+_FN_PULSE_OPEN = 0x02000069
+_FN_PULSE_CLOSED = 0x02000067
+_FN_RANDOM = 0x03000010
+_FN_SINE = 0x03000012
+_FN_SCROLL_CW = 0x0200000C
+_FN_SCROLL_CCW = 0x0200000B
+_FN_NO_ROTATE = 0x0200000D
+_FN_RND_COLOUR = 0x02000082
+
+
+def _range_meta(name: str, attribute: str) -> tuple[int, int]:
+    """The (flags, extra) pair for one range row."""
+    n = name.lower()
+    if "no function" in n or "nofunction" in n or "reserved" in n:
+        return 0x0000, _FN_NO_FUNCTION
+
+    if attribute in _COLOUR_ATTRS:
+        if re.search(r"\bccw\b", n):
+            return 0x4000, _FN_SCROLL_CCW
+        if (re.search(r"\bcw\b", n) or "scroll" in n or "rotat" in n
+                or "virtual" in n or "rainbow" in n):
+            return 0x3000, _FN_SCROLL_CW
+        if "no rot" in n or "stop" in n:
+            return 0x1000, _FN_NO_ROTATE
+        if "rnd" in n or "random" in n or "effect" in n or "macro" in n:
+            return 0x0000, _FN_RND_COLOUR
+        cid = _colour_id(name)
+        return 0x1000, 0x06000000 | (cid if cid is not None else 0x47)
+
+    flags = _range_flags(name)
+    if attribute in _WHEEL_ATTRS and not flags:
+        # Gobo wheels: fixed slots and ramps, like the colour wheel.
+        flags = 0x2000 if ">" in name else 0x1000
+        return flags, 0
+
+    if "burst" in n or "sine" in n or (("rnd" in n or "random" in n) and "pulse" in n):
+        return flags, _FN_SINE if "sine" in n else _FN_RANDOM
+    if "pulse" in n:
+        return flags, _FN_PULSE_CLOSED if "clos" in n else _FN_PULSE_OPEN
+    if "strobe" in n:
+        return flags, _FN_STROBE
+    if flags == 0x2000:
+        return flags, _FN_CLOSED
+    if flags == 0x1000:
+        return flags, _FN_OPEN
+    return flags, 0
+
+
+def _flags_for(
+    attribute: str,
+    htp: bool,
+    *,
+    fine: bool = False,
+    has_fine: bool = False,
+) -> int:
+    """MagicQ's flags word for one channel.
+
+    ``(bank << 4) | HTP/LTP``, plus the 16-bit and colour-mix bits. Pass
+    ``fine`` for the fine half of a pair and ``has_fine`` for the coarse half;
+    without them MagicQ shows a 16-bit parameter as two unrelated faders.
+    """
     from .. import attributes as _attrs
 
-    bank = _BANK_OF.get(_attrs.group_of(attribute), 1)
-    return (bank << 4) | (HTP if htp else LTP)
+    bank = _BANK_OVERRIDE.get(attribute, _BANK_OF.get(_attrs.group_of(attribute), 1))
+    flags = (bank << 4) | (HTP if htp else LTP)
+
+    # Snap (no-fade) channels: control and macro functions jump rather than
+    # fade, as the reference heads mark them (0x8000 on Control/Col Macro).
+    if attribute in ("Control", "ColorMacro", "Macro", "Reset"):
+        flags |= 0x8000
+
+    if fine:
+        flags |= CH_FINE
+    elif has_fine:
+        flags |= CH_COARSE
+
+    if attribute in _ADDITIVE:
+        flags |= CH_ADDITIVE
+
+    return flags
 
 
 def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int = 2026) -> str:
     """Render a fixture as a MagicQ personality.
 
-    EXPERIMENTAL.  The header and channel block are modelled directly on real
-    personalities and are believed correct, but a ``.hed`` also carries
-    trailing sections (palettes, ranges, per-channel defaults) whose meaning
-    has not been fully decoded.  What is emitted here is the minimum MagicQ
-    needs to describe the DMX layout; test the result in the Head Editor
-    before relying on it, and prefer GDTF import if it misbehaves.
+    Verified against a real MagicQ desk (July 2026, MAC Aura vs the stock
+    head): patches cleanly, correct encoder banks and HTP/LTP, 16-bit
+    pairs recognised, and idle/Locate output driven by the palette block.
+    Every section here earned its shape either from an on-desk failure or
+    from a rule checked across the stock library; see docs/hed-format.md.
+
+    Not yet verified on a desk: how range rows *display* (slot names on
+    wheels) and snap-vs-fade markers, whose flag fields are written as
+    zero. GDTF import remains available if a particular head misbehaves.
     """
     mode = mode or (fixture.modes[0] if fixture.modes else Mode(name="Default"))
     channels = sorted(mode.channels, key=lambda c: c.offset)
     count = mode.channel_count or len(channels)
 
+    # Which attributes have a fine channel, so the coarse half can be marked
+    # as the other end of a 16-bit pair.
+    fine_attrs = {c.attribute for c in channels if c.fine}
+
+    # Range rows are built before the header because the header must count
+    # them. Field 2 of the line after P is the number of range rows - true
+    # in 68,417 of 68,418 stock heads - and MagicQ trusts it: declare zero
+    # and then include rows, and the desk reads those rows as later grammar.
+    # On a real desk that produced phantom multi-element channels ("4.245")
+    # and a dropped 16-bit flag. Removing either the rows or the mismatch
+    # cured it; the header telling the truth is the actual fix.
+    range_rows: list[str] = []
+    for index, ch in enumerate(channels):
+        named = [r for r in ch.ranges if r.name]
+        # A lone 0-255 range on a continuous channel ("ColorIntensity",
+        # "Pan", "Zoom") says nothing the channel row doesn't. ChamSys's own
+        # heads omit these - the stock Aura has no rows at all for its
+        # dimmer, pan/tilt, RGBW or CTC - and on a colour channel an
+        # untyped filler row keeps the Head Editor's "Col Types" complaint
+        # alive. A wheel channel is different: its lone full-span row is a
+        # real slot (a fixture with a single fixed gobo) and stays.
+        if (len(named) == 1 and named[0].dmx_from == 0 and named[0].dmx_to == 255
+                and ch.attribute not in _WHEEL_ATTRS):
+            named = []
+        if ch.attribute == "Zoom" and not named:
+            # A zoom with no typed ranges is its own Head Editor error
+            # ("ERRORS Zoom Types"). The stock pattern is three rows -
+            # Wide, the ramp, Narrow - with wide at zero; emitted verbatim
+            # from the reference head when the source gives us nothing.
+            range_rows.append(f'{index:04x},"Wide",0000,0000,1000,02000031,')
+            range_rows.append(f'{index:04x},"Wide > Narrow",0001,00fe,3000,02000030,')
+            range_rows.append(f'{index:04x},"Narrow",00ff,00ff,2000,01000019,')
+            continue
+        for r in named:
+            label = r.name.replace('"', '""')
+            flags, extra = _range_meta(r.name, ch.attribute)
+            range_rows.append(
+                f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},'
+                f"{flags:04x},{extra:08x},"
+            )
+
+    # The colour-types table: one row per standard colour, each carrying the
+    # swatch id and a (channel, value) recipe over this head's colour-mix
+    # channels. Only additive heads get one, matching stock practice.
+    colour_rows: list[str] = []
+    mix_channels = [
+        (i, _ATTR_NUMBERS[c.attribute])
+        for i, c in enumerate(channels)
+        if not c.fine and c.attribute in
+        ("Red", "Green", "Blue", "White", "Amber", "UV", "Lime")
+    ]
+    if {a for _, a in mix_channels} >= {0x10, 0x11, 0x12}:
+        for cname, cid, values in _STD_COLOURS:
+            pairs = ",".join(
+                f"{i:04x},{values.get(attr, 0):04x}" for i, attr in mix_channels
+            )
+            colour_rows.append(
+                f'"{cname}",{len(mix_channels):04x},0020,{0x06000000 | cid:08x},{pairs},'
+            )
+
+    # A moving head declaring zero travel reads as broken head parameters
+    # ("ERRORS Head params"). When the source is silent, fall back to the
+    # stock library's dominant convention: 540/270, carried by 6,593 and
+    # 5,117 of the movers that declare at all.
+    is_mover = any(c.attribute in ("Pan", "Tilt") for c in channels)
+    pan_deg = fixture.pan_range or (540 if is_mover else 0)
+    tilt_deg = fixture.tilt_range or (270 if is_mover else 0)
+
     name = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
     out: list[str] = [
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
         f"\\ Personality file for {fixture.model or 'fixture'} ",
-        'V,008c,"MagicQ 1";',
-        f'P,{count:04x},"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
-        f"{count:04x},0000,0000,0000,0000,0000,0001,0001,01f5,00000000,",
+        # The V number is the file-format version, and it matters: the desk
+        # parses by it. 0095 is what the 2025 stock library's clean heads
+        # carry, and the grammar below is verified against 2,500 of them -
+        # same sizing rules as 008f plus one extra trailing field.
+        'V,0095,"MagicQ 1";',
+        # The field after P is NOT the channel count: across 68,418 real
+        # heads it is a small enum (0x0000 in 25,124, 0x0002 in 23,319, the
+        # rest a tail of single digits) whose meaning is unknown, and it
+        # coincides with the channel count in only 72 of them. The count
+        # belongs on the next line. 0x0000 is the most common value and what
+        # ChamSys's own MAC Aura uses.
+        f'P,0000,"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
+        # count, range rows, colour-table rows, macro count (0 - none are
+        # emitted), pan and tilt travel in degrees, two constants, a
+        # version-counter field (01f3, as the reference head carries), and
+        # a flags word whose 0x2000 bit tracks additive colour mix - set on
+        # 62% of additive stock heads and 11% of the rest, and carried as
+        # 80002003 by the clean reference.
+        f"{count:04x},{len(range_rows):04x},{len(colour_rows):04x},0000,"
+        f"{min(pan_deg, 0xFFFF):04x},{min(tilt_deg, 0xFFFF):04x},"
+        "0001,0001,01f3,"
+        + ("80002003," if colour_rows else "00000000,"),
     ]
 
     for ch in channels:
         attr_num = _ATTR_NUMBERS.get(ch.attribute, _RESERVED)
-        flags = _flags_for(ch.attribute, ch.htp)
+        flags = _flags_for(
+            ch.attribute, ch.htp,
+            fine=ch.fine,
+            has_fine=not ch.fine and ch.attribute in fine_attrs,
+        )
         out.append(f'"{ch.name}",{flags:08x},{attr_num:08x},')
+
+    # Default values: count, then a (channel, value) pair per channel. This
+    # is what the desk outputs when the head is idle and where Locate sends
+    # it. Leaving it out is not neutral - the head sits shutter-closed and
+    # slammed to the pan/tilt end stop, which is exactly what the first
+    # on-desk test showed. Sources that carry defaults keep them; a source
+    # default of 0 falls back to the library's overwhelming conventions
+    # (see _DEFAULT_OF) because 0 on a dimmer or a pan is far more likely
+    # to mean "unspecified" than a deliberate choice the stock library
+    # makes almost nowhere.
+    defaults = ",".join(
+        f"{i:04x},{_default_for(ch):04x}" for i, ch in enumerate(channels)
+    )
+    out.append(f"{len(channels):04x},{defaults},")
 
     # Named slots - gobo and colour names - so they survive the conversion
     # instead of arriving on the desk as bare numbers.
-    for index, ch in enumerate(channels):
-        for r in ch.ranges:
-            if not r.name:
-                continue
-            label = r.name.replace('"', '""')
-            out.append(f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},0000,00000000,')
+    out.extend(range_rows)
+    out.extend(colour_rows)
 
-    # Trailing sections, sized to the channel count.
-    out.append("0000,")
+    # Trailing sections. Shapes taken from real stock heads and sized by
+    # verified rules: the zeros row carries one field per channel PLUS one
+    # per macro (67,821 of 67,906 stock heads; a mismatch here crashed
+    # MagicQ outright on a hand-patched test file), and the near-final row
+    # carries count+1. No macros are emitted, so the row is channel-sized.
+    # An earlier version invented a shorter tail and stopped, and MagicQ,
+    # hitting EOF mid-grammar, mis-read the whole head: phantom
+    # multi-element channels, a dropped 16-bit flag, defaults ignored. The
+    # sections here are emitted empty but *complete*.
+    n = len(channels)
     out.append("00000000,")
-    out.append(",".join(["00000000"] * max(count, 1)) + ",")
+    out.append(",".join(["00000000"] * n) + ("," if n else ""))
     out.append('"",00000000,0000,0000,0000,0000,0000,')
+    # One palette row per channel: the attribute's palette id, then three
+    # value fields where 0x100|value means "set" and 0000 means "unset".
+    # The column patterns are read off both reference Auras, which agree
+    # with each other attribute for attribute.
     for ch in channels:
-        out.append(f"{ch.default:08x},0000,0100,01ff,")
-    out.append('"",')
+        pid = _PALETTE_ID.get(_ATTR_NUMBERS.get(ch.attribute, _RESERVED), 0x00)
+        d = 0x100 | _default_for(ch)
+        zero, unset = 0x100, 0x0000
+        if pid == 0x07:                       # dimmer
+            row = (zero, 0x1FF, 0x1FF)
+        elif pid == 0xC0:                     # shutter
+            row = (d, unset, d)
+        elif pid in (0x47, 0x46):             # pan / tilt
+            row = (zero if ch.fine else d, unset, unset)
+        elif pid == 0xD8:                     # control
+            row = (zero, unset, zero)
+        elif pid == 0x82:                     # blue: both reference heads
+            row = (d, 0x1FF, d)               # set its middle column full
+        elif 0x80 <= pid <= 0x83:             # colour mix R, G, W
+            row = (d, zero, d)
+        elif pid in (0x86, 0x87, 0x88):       # colour wheels, CTC
+            row = (zero, zero, zero)
+        else:
+            row = (d, d, d)
+        out.append(f"000000{pid:02x}," + ",".join(f"{v:04x}" for v in row) + ",")
+    out.append(f'"{fixture.model}",')
+    out.append('0000,"","","",0000,0000,0000,0000,0000,00000000,')
+    out.append("0000001a,")
+    out.append(f'"{fixture.manufacturer}","{fixture.model}","{fixture.model}",')
+    # Fields 3-4 are the lens angles in degrees - the reference head carries
+    # 11.0/58.0, exactly OFL's degreesMinMax for the same fixture.
+    out.append(f"0.000000,0.000000,{fixture.beam_min:.6f},{fixture.beam_max:.6f},"
+               "0.000000,0.000000,")
+    out.append('"",0000,')
+    # Movement/parameter rows. The values are the clean reference head's,
+    # and the combination is desk-verified: the "ERRORS Head params" check
+    # only cleared once these carried them (LX18/LX19 experiments). The
+    # final field of the first row is the weight in kilograms.
+    if is_mover:
+        out.append(f"2,12e,c4,47,c8,be,c3,14c,{fixture.weight:.6f},")
+    else:
+        out.append(f"0,0,0,0,0,0,0,0,{fixture.weight:.6f},")
+    out.append("1,5,0,0,0,0,0,0,0,0,0,")
+    out.append("1,0,0,")
+    out.append("0,")
+    out.append("00000003,00000001," + ",".join(["0000"] * (n + 1)) + ",")
+    out.append("4d50,0003,0000,00000008,68858000,0,")
+    out.append(f'"{fixture.model}",')
+    # The colour-channel table: a count, then one row per distinct
+    # colour-mix attribute - 0x10-0x13 plus amber and UV - with three
+    # floats ChamSys leaves at zero. The stock Aura carries exactly its
+    # RGBW here; we declared zero entries against four colour channels,
+    # which reads as a head whose colour types are missing.
+    mix = sorted({
+        _ATTR_NUMBERS.get(c.attribute, _RESERVED) for c in channels
+    } & {0x10, 0x11, 0x12, 0x13, 0x1B, 0x3C})
+    out.append(f"{len(mix):04x}," if mix else "0,")
+    for a in mix:
+        out.append(f'00{a:02x},"",0.000000,0.000000,0.000000,')
+    out.append('"{00000000-0000-0000-0000-000000000000}",')
+    out.append("1.000000,0000,0000,")
+    out.append("0000,")
+    out.append("0.800000,0.800000,0.000000,0.000000,")
+    out.append("0.000000,0.000000,0.000000,0.000000,0,0,")
+    # The V,0095 grammar carries one more field here than 008f did; 91% of
+    # 0095 stock heads end with a bare zero before the terminator.
+    out.append("0,")
+    out.append(";")
     out.append("")
     return "\n".join(out)
 
 
 def write(fixture: Fixture, path: Path | str, mode: Mode | None = None) -> Path:
-    """Write a fixture as an obfuscated ``.hed`` MagicQ reads directly."""
+    """Write a fixture as an obfuscated ``.hed`` MagicQ reads directly.
+
+    The personality's internal identity is taken from the *filename* when it
+    follows MagicQ's ``Manufacturer_Model_Mode`` convention. That is not
+    cosmetic: Choose Head lists heads by the fields inside the file, and in
+    67,861 of 68,418 stock heads those match the filename exactly. Writing a
+    file called ``Martin_MACAuraLX_Standard.hed`` whose insides say
+    ``MAC Aura`` puts the head somewhere the user is not looking for it.
+    """
     path = Path(path)
+    head = parse_head_filename(path)
+    if head.manufacturer and head.model:
+        mode = mode or (fixture.modes[0] if fixture.modes else Mode(name="Default"))
+        if head.mode:
+            mode = Mode(name=head.mode, channels=mode.channels,
+                        declared_count=mode.declared_count)
+        fixture = Fixture(
+            manufacturer=head.manufacturer,
+            model=head.model,
+            modes=[mode],
+            source=fixture.source,
+            source_id=fixture.source_id,
+            fixture_type=fixture.fixture_type,
+            pan_range=fixture.pan_range,
+            tilt_range=fixture.tilt_range,
+            beam_min=fixture.beam_min,
+            beam_max=fixture.beam_max,
+            weight=fixture.weight,
+        )
     path.write_bytes(encode_hed(build_personality(fixture, mode)))
     return path
 
@@ -497,7 +991,10 @@ class ChamSysLibrary:
         library: list[Fixture] = []
         container = folder / "heads.all"
         if include_library and container.is_file():
-            library = _cached_container(container)
+            # container_index caches compact rows; expand them here so this
+            # API keeps returning Fixtures. Callers that only need to rank
+            # should use lxtool.library, which stays on the rows.
+            library = [row.to_fixture() for row in container_index(container)]
 
         return cls(
             heads=heads,
@@ -688,6 +1185,29 @@ _SECTION_RE = re.compile(r'^PP,"([^"]*)","([^"]*)"', re.M)
 # decisive, short enough to stay cheap at every resync.
 _PROBE = 160
 
+# Every section begins, on its own line, with the literal ``PP,"``. The phase
+# it starts on varies and the framing that picks it is not worked out - but
+# ciphering that fixed prefix under all 127 phases gives 127 distinct byte
+# patterns, so a section header can be recognised in the *ciphertext* and its
+# phase read straight off. That is an anchor rather than a guess.
+#
+# It matters because resynchronising by printability alone only recovers a
+# boundary once the wrong phase happens to produce an unprintable byte. That
+# can take several characters, and the characters it eats are the ``PP,"..."``
+# line naming the head - so the section is not merely garbled, it stops being
+# found at all. The stock heads.all happens never to hit that case (decoding
+# it is byte-for-byte identical with and without this anchor), but "happens
+# never to" is not a property to rely on across MagicQ versions.
+_SECTION_MARK = 'PP,"'
+_SECTION_MARKERS: dict[bytes, int] = {
+    bytes(
+        (ord(c) ^ _KEYBLOCK[(phase + i) % _MODULUS]) | 0x80
+        for i, c in enumerate(_SECTION_MARK)
+    ): phase
+    for phase in range(_MODULUS)
+}
+_MARK_LEN = len(_SECTION_MARK)
+
 
 def _xor_line(line: bytes, phase: int) -> bytes:
     """XOR one line against the keystream starting at ``phase``."""
@@ -724,20 +1244,48 @@ def _run_length(data: bytes, pos: int, phase: int, limit: int = _PROBE) -> int:
 
 
 def decode_container(data: bytes) -> str:
-    """Decode a ``heads.all`` container, resynchronising at section boundaries."""
+    """Decode a ``heads.all`` container.
+
+    The framing works out as: each section opens with a ``PP,"...hed",...``
+    header line on its own phase, and the personality body *after* that line
+    restarts the counter from zero, exactly as a standalone ``.hed`` does.
+    Both halves are pinned rather than inferred - the header by its ciphered
+    marker, the body by the restart - so no guessing is involved for a
+    well-formed container. The printability resync below is kept purely as a
+    fallback for damage.
+    """
     out = bytearray()
     j = 0
     i = 0
     end = len(data)
+    at_line_start = True
+    in_header = False
 
     while j < end:
         b = data[j]
         if b == 0x0A:
             out.append(0x0A)
             j += 1
+            at_line_start = True
+            if in_header:
+                # End of the header line: the body starts a fresh keystream.
+                in_header = False
+                i = 0
             continue
 
-        c = (b & 0x7F) ^ _KEYBLOCK[i % _MODULUS]
+        if at_line_start:
+            # A section header is identifiable in the ciphertext, so read its
+            # phase off the marker rather than waiting for printability to fail.
+            phase = _SECTION_MARKERS.get(bytes(data[j:j + _MARK_LEN]))
+            if phase is not None:
+                # Phase 0 is not index 0: index 0 is the one position whose key
+                # is 0 rather than 127, and that rule belongs to a body start,
+                # not to a header resuming mid-keystream.
+                i = phase or _MODULUS
+                in_header = True
+            at_line_start = False
+
+        c = (b & 0x7F) ^ _key(i)
         if 32 <= c < 127:
             out.append(c)
             i += 1
@@ -758,7 +1306,7 @@ def decode_container(data: bytes) -> str:
             out.append(0x7F)
             j += 1
             continue
-        i = best_phase
+        i = best_phase or _MODULUS      # same phase, but never index 0
 
     return out.decode("latin1")
 

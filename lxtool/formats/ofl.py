@@ -49,9 +49,44 @@ def _capabilities(chan: dict[str, Any]) -> list[Range]:
             lo, hi = int(rng[0]) // scale, int(rng[1]) // scale
         else:
             lo, hi = 0, 255
-        name = cap.get("comment") or cap.get("type") or ""
+        name = cap.get("comment") or _cap_name(cap)
         out.append(Range(max(0, min(255, lo)), max(0, min(255, hi)), name))
     return out
+
+
+# OFL shutterEffect -> the name ChamSys's own library uses for the same
+# thing. Verified against the MAC Aura, where OFL's RampUp 70-84 is
+# byte-identical to ChamSys's "Pulse Open" 0x46-0x54. These names matter
+# beyond cosmetics: MagicQ types shutter ranges by vocabulary, and a
+# shutter with no Open/Closed range is a Head Editor error.
+_SHUTTER_EFFECT = {
+    "Open": "Open", "Closed": "Closed", "Strobe": "Strobe",
+    "RampUp": "Pulse Open", "RampDown": "Pulse Closed",
+    "RampUpDown": "Pulse", "Pulse": "Pulse",
+    "Lightning": "Lightning", "Spikes": "Burst", "Burst": "Burst",
+}
+
+
+def _cap_name(cap: dict[str, Any]) -> str:
+    """A usable slot name for a capability that has no comment.
+
+    The capability type alone ("ShutterStrobe" twenty-two times over) tells
+    an operator nothing; the typed fields are where the meaning lives.
+    """
+    ctype = cap.get("type") or ""
+    if ctype == "ShutterStrobe":
+        name = _SHUTTER_EFFECT.get(cap.get("shutterEffect", ""), "Strobe")
+        if cap.get("randomTiming"):
+            name = f"Rnd {name}"
+        start, end = cap.get("speedStart"), cap.get("speedEnd")
+        if start and end:
+            name += f" {str(start)[:1].upper()}>{str(end)[:1].upper()}"
+        return name
+    if ctype == "NoFunction":
+        return "No Function"
+    if ctype == "ColorPreset" and cap.get("colors"):
+        return ctype
+    return ctype
 
 
 def dmx_default(raw: Any, default: int = 0) -> int:
@@ -93,6 +128,35 @@ def _fine_alias_map(available: dict[str, Any]) -> dict[str, str]:
     return aliases
 
 
+def _number(raw: Any) -> float:
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _lens_angle(data: dict[str, Any], index: int) -> float:
+    lens = (data.get("physical") or {}).get("lens")
+    if not isinstance(lens, dict):
+        return 0.0
+    pair = lens.get("degreesMinMax")
+    if isinstance(pair, list) and len(pair) == 2:
+        return _number(pair[index])
+    return 0.0
+
+
+def _degrees(physical: dict[str, Any], key: str) -> int:
+    """Pan/tilt travel in whole degrees, 0 when absent or non-numeric."""
+    focus = physical.get("focus")
+    if not isinstance(focus, dict):
+        return 0
+    raw = focus.get(key)
+    try:
+        return max(0, int(float(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def parse(data: dict[str, Any] | str | bytes, *, manufacturer: str = "") -> Fixture:
     """Parse one OFL fixture document into a :class:`Fixture`."""
     if isinstance(data, (str, bytes)):
@@ -111,9 +175,24 @@ def parse(data: dict[str, Any] | str | bytes, *, manufacturer: str = "") -> Fixt
         model=data.get("name", "") or "",
         source="ofl",
         fixture_type=", ".join(data.get("categories", []) or []),
+        # Movement range from the physical block; MagicQ carries these in
+        # its header (0x21c,0xe8 on the MAC Aura = 540 and 232 degrees).
+        pan_range=_degrees((data.get("physical") or {}), "panMax"),
+        tilt_range=_degrees((data.get("physical") or {}), "tiltMax"),
+        beam_min=_lens_angle(data, 0),
+        beam_max=_lens_angle(data, 1),
+        weight=_number((data.get("physical") or {}).get("weight")),
     )
 
-    for mode_data in data.get("modes", []) or []:
+    modes = data.get("modes") or []
+    if not isinstance(modes, list):
+        raise ValueError("'modes' must be a list")
+
+    for mode_data in modes:
+        if not isinstance(mode_data, dict):
+            # Real library data is occasionally malformed; skip the bad mode
+            # rather than losing the whole fixture.
+            continue
         mode = Mode(name=mode_data.get("name", "Default") or "Default")
         for index, entry in enumerate(mode_data.get("channels", []) or [], start=1):
             if entry is None:

@@ -64,7 +64,10 @@ def _attr_of(el: ET.Element) -> str:
 
 def parse(xml: str | bytes) -> Fixture:
     """Parse a grandMA2 fixture-type XML document."""
-    root = ET.fromstring(xml)
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        raise ValueError(f"not valid XML: {exc}") from exc
 
     ft_els = _find_all(root, "FixtureType")
     ft = ft_els[0] if ft_els else root

@@ -71,10 +71,33 @@ P,0008,"China_7x9WMiniParRGB_7ch","China","7ch","7x9WMiniParRGB",
 | Line | Meaning |
 |---|---|
 | `#` / `\` | Comments |
-| `V,<hex>,"MagicQ 1";` | File version |
-| `P,<hex>,"<name>","<manufacturer>","<mode>","<model>",` | Header. Note the order: manufacturer, then **mode**, then model |
-| next line | First field is the channel count |
+| `V,<hex>,"MagicQ 1";` | File version. Current stock heads say `008f`; the trailing-section grammar below is the 008f one |
+| `P,<hex>,"<name>","<manufacturer>","<mode>","<model>",` | Header. Note the order: manufacturer, then **mode**, then model. `<name>` matches the filename stem in 99.2% of stock heads, and Choose Head lists by these fields, not the filename. The hex field is a small enum of unknown meaning (0 and 2 dominate) - it is *not* the channel count |
+| next line | `count, n_ranges, ?, n_macros, ...` - the channel count, then **the number of range rows** (68,417 of 68,418 stock heads; MagicQ trusts this over the file contents, and a wrong count makes it parse the rows as later grammar), an unknown field, and the macro count (99.9%) |
 | `"<name>",<flags>,<attribute>,` | One per channel, in patch order |
+| defaults line | Straight after the channel block: `count`, then a `(channel, value)` pair per channel, all 4-hex fields. Where the desk idles and where Locate sends the head. Distinguished from the header's second line by field width (that line ends in an 8-hex field) |
+
+The channel `<flags>` word: `(encoder bank << 4) | HTP(1)/LTP(2)`, plus
+`0x04`/`0x08` marking the coarse and fine halves of a 16-bit pair and
+`0x2000` marking additive colour mix (set on RGB, clear on CMY and White).
+Banks: 0 intensity, 1 beam (including shutter), 2 colour, 3 position.
+
+### Palette rows
+
+Later in the file, one row per channel in channel order:
+
+```
+00000047,0180,0180,0180,
+00000080,01ff,01ff,01ff,
+```
+
+`palette_id, v1, v2, v3` - the id is attribute-specific (RGBW are
+`0x80-0x83`, Pan `0x47`, Tilt `0x46`; full table in `chamsys._PALETTE_ID`,
+harvested from 64,652 heads) and each value is `0x100 | dmx_value`.
+**This block, not the defaults pairs line, is what drives the desk's idle
+output and Locate** - verified on a desk, and no stock head carries live
+defaults without it. Column 3 tracks the channel default in 97% of stock
+rows; columns 1-2 vary (locate/highlight, presumably).
 
 ### Range rows
 
@@ -125,11 +148,12 @@ the table calls Shutter — so the parser normalises the human-readable channel
 `build_personality()` emits the header and channel block, which are modelled
 directly on real personalities.
 
-A `.hed` also carries trailing sections (palettes, ranges, per-channel
-defaults) whose meaning has **not** been fully decoded. What is written is the
-minimum needed to describe the DMX layout, so treat `.hed` output as
-experimental: check it in the Head Editor first. GDTF import remains the
-route with no unknowns in it.
+The trailing sections are decoded and written: per-channel defaults and
+palettes, the ten-colour colour-types table with channel recipes, typed
+range rows with function/icon ids, movement parameters, lens angles and
+weight, and the tail grammar (whose zeros row is sized channels + macros -
+a mismatch there crashes MagicQ). Generated output passes every Head Editor
+validation check, verified on a real desk.
 
 ## Other plain-text files in the `heads` folder
 
