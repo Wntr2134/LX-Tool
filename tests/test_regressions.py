@@ -688,9 +688,11 @@ def test_shutter_ranges_are_typed():
     assert flags["ShutterStrobe"] == "3000"
     assert flags["Rnd Strobe"] == "5000"
     assert flags["Pulse Open"] == "7000"
-    assert flags["Sine wave"] == "0000"     # unrecognised: None, like most rows
+    assert flags["Sine wave"] == "0000"     # not a wheel: unrecognised stays None
     assert flags["Open gobo"] == "1000"
-    assert flags["Stars"] == "0000"
+    # Wheel slots are typed 0x1000 too - untyped wheel ranges are the same
+    # Head Editor error the shutter raised, just spelled "Col Types".
+    assert flags["Stars"] == "1000"
 
 
 def test_ofl_shutter_capabilities_get_real_names():
@@ -727,3 +729,34 @@ def test_ofl_shutter_capabilities_get_real_names():
     assert chamsys._range_flags("Open") == 0x1000
     assert chamsys._range_flags("Pulse Open F>S") == 0x7000
     assert chamsys._range_flags("Rnd Strobe") == 0x5000
+
+
+def test_colour_slots_get_types_and_swatches():
+    """Eighth on-desk round: "ERRORS Col Types".
+
+    Same complaint as the shutter, next channel over: colour-wheel slots
+    were untyped. Fixed slots are 0x1000 and ramps 0x2000, and the extra
+    field carries MagicQ's colour chart (0x06000000 | id), decoded from
+    319,403 stock rows - the generated Aura's swatches now match ChamSys's
+    own file id for id (Congo Blue 0x0b, Steel Blue 0x02, Fern 0x46).
+    """
+    from lxtool.model import Range
+
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Colour", attribute="ColorWheel", ranges=[
+            Range(0, 9, "No Function"),
+            Range(10, 19, "LEE 181 - Congo Blue"),
+            Range(20, 29, "White"),
+            Range(30, 39, "Rainbow CW>"),
+        ]),
+    ])])
+    rows = re.findall(
+        r'^0000,"((?:[^"]|"")*)",[0-9a-f]{4},[0-9a-f]{4},([0-9a-f]{4}),([0-9a-f]{8}),',
+        chamsys.build_personality(fx), re.M)
+
+    assert rows == [
+        ("No Function", "0000", "00000000"),
+        ("LEE 181 - Congo Blue", "1000", "0600000b"),
+        ("White", "1000", "06000026"),
+        ("Rainbow CW>", "2000", "0600001f"),
+    ]

@@ -478,6 +478,49 @@ def _default_for(ch: "Channel") -> int:
     return _DEFAULT_OF.get(ch.attribute, 0)
 
 
+# MagicQ's colour chart, decoded from 319,403 stock colour-wheel rows whose
+# extra field carries 0x06000000 | id. A slot name's majority id explains 93%
+# of rows, so matching by name keyword recovers the swatch MagicQ shows on
+# the desk. First match wins - compounds before their base colour.
+_COLOUR_CHART: list[tuple[str, int]] = [
+    ("light blue", 0x12), ("dark blue", 0x0b), ("deep blue", 0x0b),
+    ("congo", 0x0b), ("sky blue", 0x43), ("peacock", 0x44),
+    ("mist blue", 0x41), ("pale blue", 0x42), ("steel blue", 0x02),
+    ("light green", 0x14), ("dark green", 0x0d), ("blue green", 0x29),
+    ("minus green", 0x28), ("minusgreen", 0x28),
+    ("lime", 0x45), ("fern", 0x46), ("moss", 0x11), ("jade", 0x0d),
+    ("turquoise", 0x19), ("aqua", 0x08), ("cyan", 0x08),
+    ("light red", 0x2a), ("flame", 0x2b), ("fire", 0x2b), ("scarlet", 0x37),
+    ("dark amber", 0x36), ("gold amber", 0x35), ("deep amber", 0x33),
+    ("amber", 0x01), ("straw", 0x23), ("gold", 0x33), ("salmon", 0x48),
+    ("light yellow", 0x24), ("pale yellow", 0x31), ("spring yellow", 0x32),
+    ("deep orange", 0x2c), ("dark orange", 0x2d), ("orange", 0x1c),
+    ("rose pink", 0x3d), ("rose purple", 0x3c), ("rose", 0x1d),
+    ("medium pink", 0x3e), ("pink", 0x15),
+    ("dark lavender", 0x2e), ("special lavender", 0x3f),
+    ("light lavender", 0x40), ("lavender", 0x16),
+    ("mauve", 0x2f), ("lilac", 0x30), ("magenta", 0x17),
+    ("purple", 0x1e), ("violet", 0x1e), ("indigo", 0x1e), ("uv", 0x0f),
+    ("blue", 0x02), ("green", 0x11), ("red", 0x20), ("yellow", 0x27),
+    ("warm white", 0x06), ("white", 0x26),
+    ("ctb", 0x04), ("5600", 0x04), ("6000", 0x04),
+    ("cto", 0x07), ("3200", 0x07), ("rainbow", 0x1f),
+    ("peach", 0x05), ("apricot", 0x05), ("brown", 0x03), ("chocolate", 0x03),
+]
+
+
+def _colour_id(name: str) -> int | None:
+    n = name.lower()
+    for kw, cid in _COLOUR_CHART:
+        if re.search(rf"\b{re.escape(kw)}", n):
+            return cid
+    return None
+
+
+_WHEEL_ATTRS = {"ColorWheel", "ColorWheel2", "ColorMacro", "Gobo1", "Gobo2"}
+_COLOUR_ATTRS = {"ColorWheel", "ColorWheel2", "ColorMacro"}
+
+
 def _range_flags(name: str) -> int:
     """The range-type field, inferred from the slot name.
 
@@ -563,9 +606,23 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
             if not r.name:
                 continue
             label = r.name.replace('"', '""')
+            flags = _range_flags(r.name)
+            extra = 0
+            lname = r.name.lower()
+            functional = "no function" in lname or "nofunction" in lname
+            if ch.attribute in _WHEEL_ATTRS and not flags and not functional:
+                # Untyped wheel slots are a Head Editor error ("Col Types"),
+                # the same complaint the shutter raised. Fixed slots are
+                # 0x1000 and ramps 0x2000, per ChamSys's own current heads.
+                flags = 0x2000 if ">" in r.name else 0x1000
+            if ch.attribute in _COLOUR_ATTRS:
+                cid = _colour_id(r.name)
+                if cid is not None:
+                    # The swatch MagicQ shows for this slot on the desk.
+                    extra = 0x06000000 | cid
             range_rows.append(
                 f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},'
-                f"{_range_flags(r.name):04x},00000000,"
+                f"{flags:04x},{extra:08x},"
             )
 
     name = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
