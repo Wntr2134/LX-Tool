@@ -506,6 +506,23 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     # as the other end of a 16-bit pair.
     fine_attrs = {c.attribute for c in channels if c.fine}
 
+    # Range rows are built before the header because the header must count
+    # them. Field 2 of the line after P is the number of range rows - true
+    # in 68,417 of 68,418 stock heads - and MagicQ trusts it: declare zero
+    # and then include rows, and the desk reads those rows as later grammar.
+    # On a real desk that produced phantom multi-element channels ("4.245")
+    # and a dropped 16-bit flag. Removing either the rows or the mismatch
+    # cured it; the header telling the truth is the actual fix.
+    range_rows: list[str] = []
+    for index, ch in enumerate(channels):
+        for r in ch.ranges:
+            if not r.name:
+                continue
+            label = r.name.replace('"', '""')
+            range_rows.append(
+                f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},0000,00000000,'
+            )
+
     name = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
     out: list[str] = [
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
@@ -522,10 +539,10 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         # belongs on the next line. 0x0000 is the most common value and what
         # ChamSys's own MAC Aura uses.
         f'P,0000,"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
-        # 0200,00000000 is a pair real heads actually carry together (605 of
-        # them); the remaining fields vary per head and zero is the most
-        # common value for each.
-        f"{count:04x},0000,0000,0000,0000,0000,0001,0001,0200,00000000,",
+        # count, range-row count, ?, macro count (0 - none are emitted),
+        # then fields that vary per head with zero the most common value.
+        # The 0200,00000000 pair is one real heads carry together.
+        f"{count:04x},{len(range_rows):04x},0000,0000,0000,0000,0001,0001,0200,00000000,",
     ]
 
     for ch in channels:
@@ -553,12 +570,7 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
 
     # Named slots - gobo and colour names - so they survive the conversion
     # instead of arriving on the desk as bare numbers.
-    for index, ch in enumerate(channels):
-        for r in ch.ranges:
-            if not r.name:
-                continue
-            label = r.name.replace('"', '""')
-            out.append(f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},0000,00000000,')
+    out.extend(range_rows)
 
     # Trailing sections. This follows the real V,008f skeleton line for line
     # - shapes taken from the smallest stock head of that version and sized

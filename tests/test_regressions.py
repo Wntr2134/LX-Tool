@@ -596,3 +596,34 @@ def test_built_personality_has_the_complete_v008f_tail():
     assert "00000000,00000000," + ",".join(["0000"] * 6) + "," in lines
     # no truncated palette rows keyed to attribute zero
     assert "00000000,0000,0100,01ff," not in lines
+
+
+def test_header_declares_the_range_row_count():
+    """Field 2 of the line after P is the number of range rows.
+
+    True in 68,417 of 68,418 stock heads, and MagicQ trusts it over the file
+    contents: fourth on-desk result was that declaring zero and then writing
+    95 rows made the desk parse those rows as later grammar - phantom
+    elements in the Hd no column, a dropped 16-bit flag. The control heads
+    proved it: ChamSys's own personality re-encoded by us was clean, and
+    removing the mismatch (either way) cured ours.
+    """
+    from lxtool.model import Range
+
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True,
+                ranges=[Range(0, 127, "Dim"), Range(128, 255, "Bright")]),
+        Channel(offset=2, name="Gobo", attribute="Gobo1",
+                ranges=[Range(0, 9, "Open"), Range(10, 19, "Stars"),
+                        Range(20, 29, "")]),      # unnamed: not written
+    ])])
+    lines = chamsys.build_personality(fx).split("\n")
+    header = lines[4].split(",")
+
+    n_rows = sum(1 for l in lines
+                 if re.fullmatch(r'[0-9a-f]{4},"(?:[^"]|"")*",[0-9a-f]{4},'
+                                 r'[0-9a-f]{4},[0-9a-f]{4},[0-9a-f]{8},', l))
+    assert n_rows == 4, "unnamed ranges must not be written"
+    assert int(header[1], 16) == n_rows
+    # macro count: none are emitted, so it must say zero
+    assert int(header[3], 16) == 0

@@ -71,10 +71,16 @@ P,0008,"China_7x9WMiniParRGB_7ch","China","7ch","7x9WMiniParRGB",
 | Line | Meaning |
 |---|---|
 | `#` / `\` | Comments |
-| `V,<hex>,"MagicQ 1";` | File version |
-| `P,<hex>,"<name>","<manufacturer>","<mode>","<model>",` | Header. Note the order: manufacturer, then **mode**, then model |
-| next line | First field is the channel count |
+| `V,<hex>,"MagicQ 1";` | File version. Current stock heads say `008f`; the trailing-section grammar below is the 008f one |
+| `P,<hex>,"<name>","<manufacturer>","<mode>","<model>",` | Header. Note the order: manufacturer, then **mode**, then model. `<name>` matches the filename stem in 99.2% of stock heads, and Choose Head lists by these fields, not the filename. The hex field is a small enum of unknown meaning (0 and 2 dominate) - it is *not* the channel count |
+| next line | `count, n_ranges, ?, n_macros, ...` - the channel count, then **the number of range rows** (68,417 of 68,418 stock heads; MagicQ trusts this over the file contents, and a wrong count makes it parse the rows as later grammar), an unknown field, and the macro count (99.9%) |
 | `"<name>",<flags>,<attribute>,` | One per channel, in patch order |
+| defaults line | Straight after the channel block: `count`, then a `(channel, value)` pair per channel, all 4-hex fields. Where the desk idles and where Locate sends the head. Distinguished from the header's second line by field width (that line ends in an 8-hex field) |
+
+The channel `<flags>` word: `(encoder bank << 4) | HTP(1)/LTP(2)`, plus
+`0x04`/`0x08` marking the coarse and fine halves of a 16-bit pair and
+`0x2000` marking additive colour mix (set on RGB, clear on CMY and White).
+Banks: 0 intensity, 1 beam (including shutter), 2 colour, 3 position.
 
 ### Range rows
 
