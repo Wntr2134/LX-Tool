@@ -691,3 +691,39 @@ def test_shutter_ranges_are_typed():
     assert flags["Sine wave"] == "0000"     # unrecognised: None, like most rows
     assert flags["Open gobo"] == "1000"
     assert flags["Stars"] == "0000"
+
+
+def test_ofl_shutter_capabilities_get_real_names():
+    """shutterEffect must survive into the slot name.
+
+    Seventh on-desk round: shutter ranges were typed but the Head Editor
+    still flagged "ERRORS Shutter Types", because every OFL shutter
+    capability had been flattened to the name "ShutterStrobe" - so the
+    channel had strobes and nothing else. The effect field is where
+    Open/Closed live, and OFL's RampUp is byte-identical to ChamSys's own
+    "Pulse Open" on the MAC Aura.
+    """
+    fx = ofl.parse({
+        "name": "T",
+        "availableChannels": {"Shutter": {"capabilities": [
+            {"dmxRange": [0, 19], "type": "ShutterStrobe", "shutterEffect": "Closed"},
+            {"dmxRange": [20, 24], "type": "ShutterStrobe", "shutterEffect": "Open"},
+            {"dmxRange": [25, 64], "type": "ShutterStrobe", "shutterEffect": "Strobe",
+             "speedStart": "fast", "speedEnd": "slow"},
+            {"dmxRange": [65, 84], "type": "ShutterStrobe", "shutterEffect": "RampUp",
+             "speedStart": "fast", "speedEnd": "slow"},
+            {"dmxRange": [85, 99], "type": "ShutterStrobe", "shutterEffect": "Strobe",
+             "randomTiming": True},
+            {"dmxRange": [100, 255], "type": "NoFunction"},
+        ]}},
+        "modes": [{"name": "M", "channels": ["Shutter"]}],
+    })
+    names = [r.name for r in fx.modes[0].channels[0].ranges]
+    assert names == ["Closed", "Open", "Strobe F>S", "Pulse Open F>S",
+                     "Rnd Strobe", "No Function"]
+
+    # And the writer types them into what the Head Editor needs.
+    assert chamsys._range_flags("Closed") == 0x2000
+    assert chamsys._range_flags("Open") == 0x1000
+    assert chamsys._range_flags("Pulse Open F>S") == 0x7000
+    assert chamsys._range_flags("Rnd Strobe") == 0x5000

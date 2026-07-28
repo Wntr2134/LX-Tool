@@ -49,9 +49,44 @@ def _capabilities(chan: dict[str, Any]) -> list[Range]:
             lo, hi = int(rng[0]) // scale, int(rng[1]) // scale
         else:
             lo, hi = 0, 255
-        name = cap.get("comment") or cap.get("type") or ""
+        name = cap.get("comment") or _cap_name(cap)
         out.append(Range(max(0, min(255, lo)), max(0, min(255, hi)), name))
     return out
+
+
+# OFL shutterEffect -> the name ChamSys's own library uses for the same
+# thing. Verified against the MAC Aura, where OFL's RampUp 70-84 is
+# byte-identical to ChamSys's "Pulse Open" 0x46-0x54. These names matter
+# beyond cosmetics: MagicQ types shutter ranges by vocabulary, and a
+# shutter with no Open/Closed range is a Head Editor error.
+_SHUTTER_EFFECT = {
+    "Open": "Open", "Closed": "Closed", "Strobe": "Strobe",
+    "RampUp": "Pulse Open", "RampDown": "Pulse Closed",
+    "RampUpDown": "Pulse", "Pulse": "Pulse",
+    "Lightning": "Lightning", "Spikes": "Burst", "Burst": "Burst",
+}
+
+
+def _cap_name(cap: dict[str, Any]) -> str:
+    """A usable slot name for a capability that has no comment.
+
+    The capability type alone ("ShutterStrobe" twenty-two times over) tells
+    an operator nothing; the typed fields are where the meaning lives.
+    """
+    ctype = cap.get("type") or ""
+    if ctype == "ShutterStrobe":
+        name = _SHUTTER_EFFECT.get(cap.get("shutterEffect", ""), "Strobe")
+        if cap.get("randomTiming"):
+            name = f"Rnd {name}"
+        start, end = cap.get("speedStart"), cap.get("speedEnd")
+        if start and end:
+            name += f" {str(start)[:1].upper()}>{str(end)[:1].upper()}"
+        return name
+    if ctype == "NoFunction":
+        return "No Function"
+    if ctype == "ColorPreset" and cap.get("colors"):
+        return ctype
+    return ctype
 
 
 def dmx_default(raw: Any, default: int = 0) -> int:
