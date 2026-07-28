@@ -532,10 +532,27 @@ def _range_flags(name: str) -> int:
     pulse 0x7000.
     """
     n = name.lower()
-    if "strobe" in n:
-        return 0x5000 if ("rnd" in n or "random" in n) else 0x3000
+    rnd = "rnd" in n or "random" in n
+    f_to_s = "f>s" in n
+    # Stock leaves bursts, sine waves and random pulses untyped, and the
+    # editor screenshots of ChamSys's own Aura confirm it.
+    if "burst" in n or "sine" in n:
+        return 0x0000
     if "pulse" in n:
+        if rnd:
+            return 0x0000
+        if "open" in n:
+            return 0x9000
+        if "clos" in n:
+            return 0xA000
         return 0x7000
+    if "strobe" in n:
+        # The low bit of the nibble carries the ramp direction: 3=S>F, 4=F>S
+        # (5/6 for their random variants), read off the stock Aura where the
+        # editor displays each.
+        if rnd:
+            return 0x6000 if f_to_s else 0x5000
+        return 0x4000 if f_to_s else 0x3000
     if "close" in n:
         return 0x2000
     if re.search(r"\bopen\b", n):

@@ -687,7 +687,7 @@ def test_shutter_ranges_are_typed():
     assert flags["Open"] == "1000"
     assert flags["ShutterStrobe"] == "3000"
     assert flags["Rnd Strobe"] == "5000"
-    assert flags["Pulse Open"] == "7000"
+    assert flags["Pulse Open"] == "9000"
     assert flags["Sine wave"] == "0000"     # not a wheel: unrecognised stays None
     assert flags["Open gobo"] == "1000"
     # Wheel slots are typed 0x1000 too - untyped wheel ranges are the same
@@ -727,7 +727,7 @@ def test_ofl_shutter_capabilities_get_real_names():
     # And the writer types them into what the Head Editor needs.
     assert chamsys._range_flags("Closed") == 0x2000
     assert chamsys._range_flags("Open") == 0x1000
-    assert chamsys._range_flags("Pulse Open F>S") == 0x7000
+    assert chamsys._range_flags("Pulse Open F>S") == 0x9000
     assert chamsys._range_flags("Rnd Strobe") == 0x5000
 
 
@@ -814,3 +814,31 @@ def test_every_typed_colour_slot_declares_a_colour():
         ("1000", "0600001f"),
         ("1000", "06000047"),          # unrecognisable -> generic col id
     ]
+
+
+def test_shutter_types_match_the_stock_aura_exactly():
+    """The stock Aura, opened in the Head Editor, is the answer key.
+
+    Eleventh round: the control check came back - ChamSys's own Aura shows
+    NO errors, and its editor screenshots display every flag value, which
+    exposed two mismatches: the strobe nibble carries direction (3=S>F,
+    4=F>S, 5/6 random), pulses split open/closed (9000/a000), and random
+    pulses, bursts and sine waves stay untyped. This test walks our
+    generated shutter against the stock head's types row for row.
+    """
+    cases = [
+        ("Closed", 0x2000),
+        ("Open", 0x1000),
+        ("Strobe F>S", 0x4000),
+        ("Strobe S>F", 0x3000),
+        ("Pulse Open F>S", 0x9000),
+        ("Pulse Closed F>S", 0xA000),
+        ("Rnd Strobe F>S", 0x6000),
+        ("Rnd Strobe S>F", 0x5000),
+        ("Rnd Pulse Open F>S", 0x0000),
+        ("Rnd Pulse Closed F>S", 0x0000),
+        ("Burst F>S", 0x0000),
+        ("Sine wave", 0x0000),
+    ]
+    for name, want in cases:
+        assert chamsys._range_flags(name) == want, name
