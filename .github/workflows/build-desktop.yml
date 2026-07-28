@@ -67,9 +67,14 @@ jobs:
           if-no-files-found: warn
 
       - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          # A tag build publishes under its tag. A manually dispatched build
+          # publishes to the rolling "latest" release, so there is always a
+          # public download link for the newest main without needing a tag:
+          # https://github.com/Wntr2134/LX-Tool/releases/latest
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Latest build' }}
           files: |
             dist/LX-Tool-macos.zip
             dist/LX-Tool.exe
