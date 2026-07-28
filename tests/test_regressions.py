@@ -914,3 +914,31 @@ def test_colour_mix_heads_get_the_colour_types_table():
     plain = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
         Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True)])])
     assert int(chamsys.build_personality(plain).split("\n")[4].split(",")[2], 16) == 0
+
+
+def test_zoom_gets_typed_ranges_when_the_source_has_none():
+    """Sixteenth round: "ERRORS Col Types" cleared; "ERRORS Zoom Types" next.
+
+    The colour-types table fixed Col Types, and the surviving complaint was
+    the zoom: OFL gives it one 0-255 capability, the trivial-row rule drops
+    it, and a zoom with no typed ranges is its own error. The stock trio -
+    Wide, the ramp, Narrow - is emitted verbatim from the reference head.
+    """
+    from lxtool.model import Range
+
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Zoom", attribute="Zoom",
+                ranges=[Range(0, 255, "Zoom")]),
+    ])])
+    text = chamsys.build_personality(fx)
+    assert '0000,"Wide",0000,0000,1000,02000031,' in text
+    assert '0000,"Wide > Narrow",0001,00fe,3000,02000030,' in text
+    assert '0000,"Narrow",00ff,00ff,2000,01000019,' in text
+    assert int(text.split("\n")[4].split(",")[1], 16) == 3
+
+    # A zoom whose source provides real ranges keeps them instead.
+    fx2 = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Zoom", attribute="Zoom",
+                ranges=[Range(0, 127, "Narrow"), Range(128, 255, "Wide")]),
+    ])])
+    assert '"Wide > Narrow"' not in chamsys.build_personality(fx2)

@@ -717,6 +717,15 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         # real slot (a fixture with a single fixed gobo) and stays.
         if (len(named) == 1 and named[0].dmx_from == 0 and named[0].dmx_to == 255
                 and ch.attribute not in _WHEEL_ATTRS):
+            named = []
+        if ch.attribute == "Zoom" and not named:
+            # A zoom with no typed ranges is its own Head Editor error
+            # ("ERRORS Zoom Types"). The stock pattern is three rows -
+            # Wide, the ramp, Narrow - with wide at zero; emitted verbatim
+            # from the reference head when the source gives us nothing.
+            range_rows.append(f'{index:04x},"Wide",0000,0000,1000,02000031,')
+            range_rows.append(f'{index:04x},"Wide > Narrow",0001,00fe,3000,02000030,')
+            range_rows.append(f'{index:04x},"Narrow",00ff,00ff,2000,01000019,')
             continue
         for r in named:
             label = r.name.replace('"', '""')
