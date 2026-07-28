@@ -626,6 +626,15 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
                 flags = 0x2000 if ">" in r.name else 0x1000
             if ch.attribute in _COLOUR_ATTRS:
                 cid = _colour_id(r.name)
+                if cid is None and flags:
+                    # A typed colour slot with no colour is exactly what
+                    # "ERRORS Col Types" reads as. Stock heads give effects
+                    # the rainbow id and unrecognisable slots the generic
+                    # "col N" id rather than leaving them colourless.
+                    effecty = any(k in lname for k in
+                                  ("effect", "rainbow", "virtual", "macro",
+                                   "random", "rnd", "scroll"))
+                    cid = 0x1F if effecty else 0x47
                 if cid is not None:
                     # The swatch MagicQ shows for this slot on the desk.
                     extra = 0x06000000 | cid

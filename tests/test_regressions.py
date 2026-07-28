@@ -783,3 +783,34 @@ def test_trivial_full_range_rows_are_omitted():
     assert '6"" Dish' in text
     header = text.split("\n")[4].split(",")
     assert int(header[1], 16) == 1
+
+
+def test_every_typed_colour_slot_declares_a_colour():
+    """Tenth on-desk round: Fixed colour slots with an empty Icon column.
+
+    "ERRORS Col Types" survived every other fix; the remaining oddity was
+    colour-wheel rows typed Fixed but carrying no swatch - a typed colour
+    slot that declares no colour. Stock practice covers the gap: effects
+    take the rainbow id (0x1f) and unrecognisable slots the generic col-N
+    id (0x47).
+    """
+    from lxtool.model import Range
+
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Colour", attribute="ColorWheel", ranges=[
+            Range(0, 9, "No Function"),
+            Range(10, 19, "Virtual color wheel rotation"),
+            Range(20, 29, "Effect"),
+            Range(30, 39, "Split col 3+4"),
+        ]),
+    ])])
+    rows = re.findall(
+        r'^0000,"(?:[^"]|"")*",[0-9a-f]{4},[0-9a-f]{4},([0-9a-f]{4}),([0-9a-f]{8}),',
+        chamsys.build_personality(fx), re.M)
+
+    assert rows == [
+        ("0000", "00000000"),          # No Function: untyped, no swatch
+        ("1000", "0600001f"),          # effect-ish -> rainbow id
+        ("1000", "0600001f"),
+        ("1000", "06000047"),          # unrecognisable -> generic col id
+    ]
