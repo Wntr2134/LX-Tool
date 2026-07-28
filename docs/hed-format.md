@@ -148,11 +148,12 @@ the table calls Shutter — so the parser normalises the human-readable channel
 `build_personality()` emits the header and channel block, which are modelled
 directly on real personalities.
 
-A `.hed` also carries trailing sections (palettes, ranges, per-channel
-defaults) whose meaning has **not** been fully decoded. What is written is the
-minimum needed to describe the DMX layout, so treat `.hed` output as
-experimental: check it in the Head Editor first. GDTF import remains the
-route with no unknowns in it.
+The trailing sections are decoded and written: per-channel defaults and
+palettes, the ten-colour colour-types table with channel recipes, typed
+range rows with function/icon ids, movement parameters, lens angles and
+weight, and the tail grammar (whose zeros row is sized channels + macros -
+a mismatch there crashes MagicQ). Generated output passes every Head Editor
+validation check, verified on a real desk.
 
 ## Other plain-text files in the `heads` folder
 

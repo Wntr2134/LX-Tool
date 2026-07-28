@@ -117,7 +117,7 @@ lx match --ofl "mac 700" ~/Documents/MagicQ/heads
 
 # Convert between formats
 lx convert fixture.json fixture.gdtf     # OFL  -> GDTF (import into MagicQ)
-lx convert fixture.json fixture.hed      # OFL  -> ChamSys head (experimental)
+lx convert fixture.json fixture.hed      # OFL  -> ChamSys head (desk-verified)
 lx convert fixture.gdtf fixture.xml      # GDTF -> MA2
 lx convert ma2_export.xml fixture.gdtf   # MA2  -> GDTF
 
@@ -285,7 +285,7 @@ encoder instead of dumping it into a generic slot.
 | grandMA3 XML (`.xml`) | yes | via GDTF | Reads MA3's `lib_fixture_types/grandma3` library directly |
 | grandMA2 XML (`.xml`) | yes | yes | **Not yet validated against a real MA2 export** — see below |
 | grandMA2 `.pxml` | no | no | MA2's local library is encrypted — see below |
-| ChamSys (`.hed`) | yes | experimental | Obfuscation solved — see [docs/hed-format.md](docs/hed-format.md) |
+| ChamSys (`.hed`) | yes | yes | Fully decoded and desk-verified — see [docs/hed-format.md](docs/hed-format.md) |
 
 ### grandMA3
 
@@ -338,20 +338,21 @@ To use 'China 7x9WMiniParRGB [7ch]', change (most critical first):
 
 For getting a fixture *into* MagicQ, two routes: `lx convert x.json out.gdtf`
 and import it (no unknowns), or `lx convert x.json out.hed` and drop it in the
-heads folder (experimental — verify in the Head Editor).
+heads folder.
 
 ### Known limitations, stated plainly
 
 Gobo and colour slot names are read and written, so they survive a
 conversion in both directions.
 
-**ChamSys `.hed` writing is experimental.** *Reading* is solved and exact —
-the obfuscation is XOR against a down-counter mod 127, documented in
-[docs/hed-format.md](docs/hed-format.md) — so library scans and matches now
-work channel by channel. Writing emits a correct header and channel block,
-but a `.hed` also carries trailing sections (palettes, ranges, per-channel
-defaults) that have not been fully decoded. Check any generated `.hed` in the
-Head Editor; GDTF import is still the route with no unknowns in it.
+**ChamSys `.hed` writing is desk-verified.** Reading is exact — the
+obfuscation is XOR against a down-counter mod 127 — and writing emits the
+complete format: header parameters, channel flags (banks, HTP/LTP, 16-bit
+pairs, snap), defaults, palettes, the colour-types table, typed ranges with
+icons and colour swatches, and physical data. Generated heads pass every
+MagicQ Head Editor validation check (Shutter/Col/Zoom Types, Head params),
+verified against a real desk across twenty test builds. The full format is
+documented in [docs/hed-format.md](docs/hed-format.md).
 
 **MVR is unvalidated too.** Written against the published structure, parsed
 namespace-agnostically, and it degrades safely: a fixture whose GDTF isn't
