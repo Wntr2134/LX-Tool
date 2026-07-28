@@ -281,6 +281,7 @@ def parse_personality(text: str) -> Fixture:
     manufacturer = model = mode_name = ""
     channels: list[tuple[str, int, int]] = []
     ranges_by_channel: dict[int, list[Range]] = {}
+    defaults_by_channel: list[int] | None = None
     declared = 0
 
     lines = [ln.rstrip("\r") for ln in text.split("\n")]
@@ -319,6 +320,20 @@ def parse_personality(text: str) -> Fixture:
         chan = _parse_channel_line(line)
         if chan:
             channels.append(chan)
+            continue
+
+        # The defaults line: count then (channel, value) pairs, all 4-hex
+        # fields - which is what tells it apart from the header's second line,
+        # whose last field is 8 hex digits. Only accept it once the channel
+        # block has been seen and the count agrees.
+        if channels and defaults_by_channel is None:
+            fields = line.rstrip(",").split(",")
+            if (len(fields) == 1 + 2 * len(channels)
+                    and all(re.fullmatch(r"[0-9a-f]{4}", f, re.I) for f in fields)):
+                values = [int(f, 16) for f in fields]
+                if (values[0] == len(channels)
+                        and values[1::2] == list(range(len(channels)))):
+                    defaults_by_channel = values[2::2]
 
     mode = Mode(name=mode_name or "Default")
     prev_attr: str | None = None
@@ -346,6 +361,9 @@ def parse_personality(text: str) -> Fixture:
             attribute=canonical,
             fine=fine,
             htp=(flags & 0x0F) == HTP,
+            default=(defaults_by_channel[offset - 1]
+                     if defaults_by_channel and offset <= len(defaults_by_channel)
+                     else 0),
             # Range rows index channels from zero.
             ranges=[] if fine else ranges_by_channel.get(offset - 1, []),
         ))
@@ -422,6 +440,25 @@ _BANK_OF = {
 _BANK_OVERRIDE = {"Shutter": 1, "Strobe": 1}
 
 
+# Fallback defaults, from the pairs lines of 65,187 real heads. The stock
+# library is close to unanimous: Dimmer 255 (98%), Pan and Tilt centred at
+# 128 (95-96%) with their fine halves at 0 (82-83%), the additive mix full
+# on (92-97%) so Locate produces white light, and everything else 0.
+_DEFAULT_OF = {
+    "Dimmer": 255,
+    "Pan": 128, "Tilt": 128,
+    "Red": 255, "Green": 255, "Blue": 255, "White": 255,
+}
+
+
+def _default_for(ch: "Channel") -> int:
+    if ch.default:
+        return max(0, min(255, ch.default))
+    if ch.fine:
+        return 0
+    return _DEFAULT_OF.get(ch.attribute, 0)
+
+
 def _flags_for(
     attribute: str,
     htp: bool,
@@ -493,6 +530,20 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         )
         out.append(f'"{ch.name}",{flags:08x},{attr_num:08x},')
 
+    # Default values: count, then a (channel, value) pair per channel. This
+    # is what the desk outputs when the head is idle and where Locate sends
+    # it. Leaving it out is not neutral - the head sits shutter-closed and
+    # slammed to the pan/tilt end stop, which is exactly what the first
+    # on-desk test showed. Sources that carry defaults keep them; a source
+    # default of 0 falls back to the library's overwhelming conventions
+    # (see _DEFAULT_OF) because 0 on a dimmer or a pan is far more likely
+    # to mean "unspecified" than a deliberate choice the stock library
+    # makes almost nowhere.
+    defaults = ",".join(
+        f"{i:04x},{_default_for(ch):04x}" for i, ch in enumerate(channels)
+    )
+    out.append(f"{len(channels):04x},{defaults},")
+
     # Named slots - gobo and colour names - so they survive the conversion
     # instead of arriving on the desk as bare numbers.
     for index, ch in enumerate(channels):
@@ -508,7 +559,9 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out.append(",".join(["00000000"] * max(count, 1)) + ",")
     out.append('"",00000000,0000,0000,0000,0000,0000,')
     for ch in channels:
-        out.append(f"{ch.default:08x},0000,0100,01ff,")
+        # Real heads carry zero in the first field here; the default value
+        # lives in the pairs line above, not in this block.
+        out.append("00000000,0000,0100,01ff,")
     out.append('"",')
     out.append("")
     return "\n".join(out)

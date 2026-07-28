@@ -511,3 +511,62 @@ def test_p_line_second_field_is_not_the_channel_count(tmp_path):
     # The count still appears where it belongs, on the following line.
     body = text.split("\n")
     assert body[body.index(pline) + 1].startswith("000e,")
+
+
+# --------------------------------------------------------------------------
+# default values - found by patching a generated head next to a stock one
+# --------------------------------------------------------------------------
+#
+# Second on-desk result: the generated head patched and its 16-bit pairs
+# worked, but the desk's Output column read 0 on every channel while the
+# stock Aura idled at Pan/Tilt 128 and RGBW 255. The .hed carries a defaults
+# line - count, then a (channel, value) pair per channel - which we neither
+# wrote nor read. Format verified on 65,187 stock heads.
+
+def test_real_personality_defaults_are_read():
+    fx = chamsys.parse_personality(AURA.read_text())
+    defaults = {c.name: c.default for c in fx.modes[0].channels}
+    # These are the values the desk showed in the stock Aura's Output column.
+    assert defaults["Pan"] == 128
+    assert defaults["Tilt"] == 128
+    assert defaults["Pan F"] == 0
+    assert defaults["Dimmer"] == 255
+    assert defaults["Red"] == 255
+    assert defaults["White"] == 255
+    assert defaults["CTC"] == 0
+
+
+def test_built_personality_writes_a_defaults_line():
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
+        Channel(offset=2, name="Pan", attribute="Pan"),
+        Channel(offset=3, name="Pan fine", attribute="Pan", fine=True),
+        Channel(offset=4, name="Shutter", attribute="Shutter", default=22),
+    ])])
+    lines = chamsys.build_personality(fx).split("\n")
+
+    after_channels = lines[lines.index('"Shutter",00000012,00000002,') + 1]
+    # Dimmer falls back to 255, Pan to centre, the fine half to 0; the
+    # explicit shutter default is kept.
+    assert after_channels == "0004,0000,00ff,0001,0080,0002,0000,0003,0016,"
+
+
+def test_defaults_round_trip():
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
+        Channel(offset=2, name="Pan", attribute="Pan"),
+        Channel(offset=3, name="Shutter", attribute="Shutter", default=22),
+    ])])
+    back = chamsys.parse_personality(chamsys.build_personality(fx))
+    assert [c.default for c in back.modes[0].channels] == [255, 128, 22]
+
+
+def test_header_second_line_is_not_mistaken_for_defaults():
+    """The header's second line also starts with the channel count.
+
+    It is excluded because its last field is 8 hex digits - if that rule
+    broke, a head's defaults would be read from the wrong line entirely.
+    """
+    fx = chamsys.parse_personality(AURA.read_text())
+    # Header line 2 field order would give Dimmer 0, not 255.
+    assert fx.modes[0].channels[1].default == 255
