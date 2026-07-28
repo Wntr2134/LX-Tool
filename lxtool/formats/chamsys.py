@@ -754,6 +754,14 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
                 f'"{cname}",{len(mix_channels):04x},0020,{0x06000000 | cid:08x},{pairs},'
             )
 
+    # A moving head declaring zero travel reads as broken head parameters
+    # ("ERRORS Head params"). When the source is silent, fall back to the
+    # stock library's dominant convention: 540/270, carried by 6,593 and
+    # 5,117 of the movers that declare at all.
+    is_mover = any(c.attribute in ("Pan", "Tilt") for c in channels)
+    pan_deg = fixture.pan_range or (540 if is_mover else 0)
+    tilt_deg = fixture.tilt_range or (270 if is_mover else 0)
+
     name = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
     out: list[str] = [
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
@@ -777,7 +785,7 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         # 62% of additive stock heads and 11% of the rest, and carried as
         # 80002003 by the clean reference.
         f"{count:04x},{len(range_rows):04x},{len(colour_rows):04x},0000,"
-        f"{min(fixture.pan_range, 0xFFFF):04x},{min(fixture.tilt_range, 0xFFFF):04x},"
+        f"{min(pan_deg, 0xFFFF):04x},{min(tilt_deg, 0xFFFF):04x},"
         "0001,0001,01f3,"
         + ("80002003," if colour_rows else "00000000,"),
     ]

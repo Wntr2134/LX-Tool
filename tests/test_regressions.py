@@ -942,3 +942,30 @@ def test_zoom_gets_typed_ranges_when_the_source_has_none():
                 ranges=[Range(0, 127, "Narrow"), Range(128, 255, "Wide")]),
     ])])
     assert '"Wide > Narrow"' not in chamsys.build_personality(fx2)
+
+
+def test_movers_declare_their_travel():
+    """Seventeenth round: "ERRORS Head params".
+
+    Zoom Types cleared; the next complaint is the General-tab parameters,
+    and the guilty ones are pan/tilt travel: the stock head declares
+    540/232 degrees where ours said 0/0 - a mover that claims it cannot
+    move. Source data wins when present; otherwise the stock library's
+    dominant convention (540/270) fills in for anything with Pan or Tilt.
+    """
+    mover = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Pan", attribute="Pan"),
+        Channel(offset=2, name="Tilt", attribute="Tilt"),
+    ])])
+    hdr = chamsys.build_personality(mover).split("\n")[4].split(",")
+    assert (int(hdr[4], 16), int(hdr[5], 16)) == (540, 270)
+
+    mover.pan_range, mover.tilt_range = 630, 265
+    hdr = chamsys.build_personality(mover).split("\n")[4].split(",")
+    assert (int(hdr[4], 16), int(hdr[5], 16)) == (630, 265)
+
+    par = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
+    ])])
+    hdr = chamsys.build_personality(par).split("\n")[4].split(",")
+    assert (int(hdr[4], 16), int(hdr[5], 16)) == (0, 0)
