@@ -87,6 +87,41 @@ lx convert somefixture.gdtf Manufacturer_Model_Mode.hed
 
 ---
 
+## Making your own head (clones and manuals)
+
+Two situations the catalogue can't help with, and what to do:
+
+**The venue clone.** The fixture is badged as a known model but it's a copy
+with the channels in a different order — the genuine profile patches, then
+pan sits on the colour wheel. Start from the genuine profile and rearrange:
+
+```bash
+lx head template plan.txt --ofl martin/mac-aura --mode Standard
+# open plan.txt in any text editor: reorder the channel lines,
+# change "manufacturer:" to China (or whoever), fix what's wrong
+lx head build plan.txt
+```
+
+The plan is one line per DMX channel — moving a line moves the channel, and
+the gobo/colour ranges under it move too. The desktop app has the same
+thing in section 5, with the editor built in.
+
+**The manual-only fixture.** No profile anywhere, just a DMX chart in the
+manual. Photograph the chart, then use your phone or Mac's select-text-in-
+image (built into iOS/macOS Photos and Preview) to copy the table as text,
+and:
+
+```bash
+lx head from-text chart.txt          # writes head-plan.txt as a draft
+# CHECK the draft against the manual, fix anything misread
+lx head build head-plan.txt
+```
+
+It copes with messy manual layouts ("CH1 - Pan", "3. Tilt", "0-9 Open"),
+expands "5-6 Zoom (16 bit)" into a proper 16-bit pair, and attaches range
+rows to the right channel. In the app: paste into the chart box in
+section 5.
+
 ## Two other tricks worth trying
 
 **"What's the closest head I already have?"** — point it at a fixture file

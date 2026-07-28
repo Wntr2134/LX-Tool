@@ -241,6 +241,64 @@ async def api_convert(target: str = Form(...), file: UploadFile = File(...)) -> 
     return FileResponse(out, filename=out.name, media_type=media)
 
 
+@app.post("/api/head-plan")
+def api_head_plan(key: str = Form(""), mode: str = Form(""),
+                  chart_text: str = Form("")) -> dict:
+    """An editable head plan, from a catalogue fixture or a pasted DMX chart."""
+    from .. import chart as chart_mod, plan
+
+    if chart_text.strip():
+        try:
+            fixture = chart_mod.parse_chart(chart_text)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        note = fixture.source_id
+        return {"plan": plan.dump(fixture),
+                "channels": len(fixture.modes[0].channels),
+                "unparsed": note}
+
+    if not key.strip():
+        raise HTTPException(400, "give a catalogue key or paste a DMX chart")
+    try:
+        cat = catalog.Catalog.load()
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    entry = cat.get(key.strip())
+    if entry is None:
+        hits = cat.search_scored(key.strip(), limit=1)
+        if not hits:
+            raise HTTPException(404, f"{key!r} is not in the catalogue")
+        entry = hits[0][1]
+    fixture = entry.to_fixture()
+    m = fixture.mode(mode) if mode.strip() else None
+    if mode.strip() and m is None:
+        names = ", ".join(x.name for x in fixture.modes)
+        raise HTTPException(404, f"no mode {mode!r}. Available: {names}")
+    return {"plan": plan.dump(fixture, m),
+            "channels": len((m or fixture.modes[0]).channels), "unparsed": ""}
+
+
+@app.post("/api/head-build")
+def api_head_build(plan_text: str = Form(...)) -> FileResponse:
+    """Compile an edited plan into a MagicQ .hed."""
+    import re as _re
+
+    from .. import plan
+
+    try:
+        fixture = plan.parse(plan_text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    m = fixture.modes[0]
+    stem = f"{fixture.manufacturer}_{fixture.model}_{m.name}".strip("_")
+    stem = _re.sub(r'[^A-Za-z0-9 ._+-]', "", stem) or "custom_head"
+    out_dir = Path(tempfile.mkdtemp(prefix="lxtool-"))
+    out = chamsys.write(fixture, out_dir / f"{stem}.hed", m)
+    return FileResponse(out, filename=out.name,
+                        media_type="application/octet-stream")
+
+
 async def _load_upload(file: UploadFile):
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _SUPPORTED:
@@ -321,6 +379,24 @@ PAGE = """<!doctype html>
  </select>
  <p><button onclick="convert()">Convert &amp; download</button></p>
  <div id="convout"></div>
+</fieldset>
+
+<fieldset><legend>5. Make your own head (clones &amp; manuals)</legend>
+ <p class="note">For the venue clone: start from the genuine profile, reorder
+    the channels to match what the fixture actually does, rename it, build.
+    Or paste the DMX chart out of a manual - photograph it and use your
+    phone/Mac's select-text-in-image to copy the table.</p>
+ <label>Start from a catalogue fixture</label>
+ <p><input type="text" id="refkey" placeholder="martin/mac-aura" style="width:40%">
+    <input type="text" id="refmode" placeholder="mode (optional)" style="width:20%">
+    <button onclick="headPlan()">Load into editor</button></p>
+ <label for="chartbox">&hellip;or paste a DMX chart from a manual</label>
+ <textarea id="chartbox" rows="4" style="width:100%" placeholder="1  Pan&#10;2  Pan fine&#10;3  Dimmer&#10;0-9  Open"></textarea>
+ <p><button onclick="headChart()">Read chart into editor</button></p>
+ <label for="planbox">The plan - edit names, reorder channel lines, set manufacturer</label>
+ <textarea id="planbox" rows="14" style="width:100%;font-family:monospace"></textarea>
+ <p><button onclick="headBuild()">Build .hed &amp; download</button></p>
+ <div id="headout"></div>
 </fieldset>
 
 <script>
@@ -419,6 +495,39 @@ async function match() {
   try {
     render(await (await post('/api/match', fd)).json(), 'matchout');
   } catch (e) { $('matchout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function headPlan() {
+  const fd = new FormData();
+  fd.append('key', $('refkey').value); fd.append('mode', $('refmode').value);
+  try {
+    const d = await (await post('/api/head-plan', fd)).json();
+    $('planbox').value = d.plan;
+    $('headout').innerHTML = `<p>${d.channels} channel(s) loaded - edit away.</p>`;
+  } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function headChart() {
+  const fd = new FormData(); fd.append('chart_text', $('chartbox').value);
+  try {
+    const d = await (await post('/api/head-plan', fd)).json();
+    $('planbox').value = d.plan;
+    let msg = `<p>${d.channels} channel(s) recognised - <b>check against the manual</b>.</p>`;
+    if (d.unparsed) msg += `<p class="sev5">Could not read: ${esc(d.unparsed)}</p>`;
+    $('headout').innerHTML = msg;
+  } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function headBuild() {
+  const fd = new FormData(); fd.append('plan_text', $('planbox').value);
+  try {
+    const r = await post('/api/head-build', fd);
+    const blob = await r.blob();
+    const name = (r.headers.get('content-disposition')||'').match(/filename="?([^"]+)"?/)?.[1] || 'head.hed';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    $('headout').innerHTML = `<p class="exact">Downloaded ${esc(name)} - copy it into the MagicQ heads folder and restart MagicQ.</p>`;
+  } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
 async function convert() {

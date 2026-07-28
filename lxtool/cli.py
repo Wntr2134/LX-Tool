@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -381,6 +382,55 @@ def cmd_convert(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_head(args: argparse.Namespace) -> int:
+    """Make and tweak custom heads via editable plan files."""
+    from . import chart, plan
+    from .formats import chamsys as _ch
+
+    if args.action == "template":
+        if getattr(args, "ofl", None):
+            fixture = _resolve_target(args)
+        elif args.source:
+            fixture = load_fixture(args.source)
+        else:
+            raise SystemExit("give a source file, or --ofl <key>, for the template")
+        mode = fixture.mode(args.mode) if args.mode else None
+        if args.mode and mode is None:
+            available = ", ".join(m.name for m in fixture.modes) or "none"
+            raise SystemExit(f"no mode called {args.mode!r}. Available: {available}")
+        out = Path(args.out)
+        out.write_text(plan.dump(fixture, mode), encoding="utf-8")
+        print(f"plan written to {out} - edit it, then: lx head build {out}")
+        return 0
+
+    if args.action == "from-text":
+        raw = (sys.stdin.read() if args.chart == "-"
+               else Path(args.chart).read_text(encoding="utf-8", errors="replace"))
+        fixture = chart.parse_chart(raw)
+        out = Path(args.out or "head-plan.txt")
+        out.write_text(plan.dump(fixture), encoding="utf-8")
+        n = len(fixture.modes[0].channels)
+        print(f"recognised {n} channel(s) -> {out}")
+        if fixture.source_id:
+            print(f"  could not read: {fixture.source_id}")
+        print(f"CHECK THE PLAN against the manual, then: lx head build {out}")
+        return 0
+
+    # build
+    fixture = plan.parse(Path(args.plan).read_text(encoding="utf-8"))
+    mode = fixture.modes[0]
+    if args.out:
+        out = Path(args.out)
+    else:
+        stem = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
+        out = Path(re.sub(r"[^A-Za-z0-9 ._+-]", "", stem) + ".hed")
+    _ch.write(fixture, out, mode)
+    print(f"{fixture.key}: wrote {mode.name} ({mode.channel_count} ch) -> {out}")
+    print("copy it into the MagicQ heads folder and restart MagicQ")
+    return 0
+
+
 def cmd_rig(args: argparse.Namespace) -> int:
     """Summarise a whole patch from an MVR, and flag address clashes."""
     rig = mvr.read(args.file)
@@ -522,6 +572,24 @@ def build_parser() -> argparse.ArgumentParser:
     d2.add_argument("--show", type=int, default=4, help="members to print per group")
     d2.add_argument("--cache")
     d2.set_defaults(func=cmd_dupes)
+
+    hd = sub.add_parser("head", help="make or tweak a custom head from an editable plan")
+    hsub = hd.add_subparsers(dest="action", required=True)
+    ht = hsub.add_parser("template", help="write an editable plan from a reference fixture")
+    ht.add_argument("out", help="plan file to write, e.g. plan.txt")
+    ht.add_argument("source", nargs="?", help="GDTF / OFL JSON / MA2 XML / .hed reference")
+    ht.add_argument("--ofl", metavar="KEY", help="use a catalogue fixture as the reference")
+    ht.add_argument("--mode", help="which mode of the reference to start from")
+    ht.add_argument("--cache", help="catalogue cache directory")
+    ht.set_defaults(func=cmd_head)
+    hf = hsub.add_parser("from-text", help="draft a plan from a pasted DMX chart (manual/screenshot text)")
+    hf.add_argument("chart", help="text file with the chart, or - for stdin")
+    hf.add_argument("-o", "--out", help="plan file to write (default head-plan.txt)")
+    hf.set_defaults(func=cmd_head)
+    hb = hsub.add_parser("build", help="compile a plan into a MagicQ .hed")
+    hb.add_argument("plan", help="the edited plan file")
+    hb.add_argument("out", nargs="?", help="output .hed (default from manufacturer/model/mode)")
+    hb.set_defaults(func=cmd_head)
 
     r = sub.add_parser("rig", help="summarise a whole patch from an MVR file")
     r.add_argument("file")
