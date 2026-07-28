@@ -876,3 +876,38 @@ def test_colour_channel_table_lists_the_mix_channels():
         Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
     ])])
     assert "0,\n" in chamsys.build_personality(plain)
+
+
+def test_colour_mix_heads_get_the_colour_types_table():
+    """Fourteenth round - found by diffing against the user's own clean head.
+
+    The stock Martin_Aura_Standard carries ten named colours after its range
+    rows - White through Magenta, each with a swatch id and a (channel,
+    value) recipe over the head's RGBW - and header field 3 is that table's
+    row count (47,662 of 48,054 stock heads agree; heads without the table
+    carry zero). Ours had colour channels and no table: a head whose colour
+    types are literally missing. Recipes harvested at 97-99% agreement.
+    """
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
+        Channel(offset=2, name="Red", attribute="Red"),
+        Channel(offset=3, name="Green", attribute="Green"),
+        Channel(offset=4, name="Blue", attribute="Blue"),
+    ])])
+    text = chamsys.build_personality(fx)
+    header = text.split("\n")[4].split(",")
+    rows = re.findall(r'^"(\w+)",(0003),0020,(06[0-9a-f]{6}),'
+                      r'0001,([0-9a-f]{4}),0002,([0-9a-f]{4}),0003,([0-9a-f]{4}),$',
+                      text, re.M)
+
+    assert int(header[2], 16) == 10 == len(rows)
+    by_name = {r[0]: r for r in rows}
+    assert by_name["Red"][3:] == ("00ff", "0000", "0000")
+    assert by_name["Cyan"][3:] == ("0000", "00ff", "00ff")
+    assert by_name["Pink"][3:] == ("00ff", "0069", "00b4")
+    assert by_name["White"][2] == "06000026"
+
+    # A head with no additive mix gets no table, and the header says zero.
+    plain = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True)])])
+    assert int(chamsys.build_personality(plain).split("\n")[4].split(",")[2], 16) == 0

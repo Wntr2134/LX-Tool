@@ -459,6 +459,28 @@ _PALETTE_ID = {
     0x3c: 0x85, 0x3d: 0x8a, 0x3e: 0x8b, 0x3f: 0x00,
 }
 
+# The head's colour-types table: the ten standard colours every colour-mix
+# head defines, with their swatch ids and channel recipes. Harvested from
+# the stock library at 97-99% agreement per value (526,783 rows; pair count
+# matches the declared count in every single one). This table is what the
+# desk's colour buttons run on, header field 3 is its row count, and a head
+# with colour channels but no table is what the Head Editor flags as
+# "ERRORS Col Types".
+_STD_COLOURS: list[tuple[str, int, dict[int, int]]] = [
+    ("White", 0x26, {0x10: 0xFF, 0x11: 0xFF, 0x12: 0xFF, 0x13: 0xFF,
+                     0x1B: 0xFF, 0x3C: 0xFF}),
+    ("Red", 0x20, {0x10: 0xFF}),
+    ("Amber", 0x01, {0x10: 0xFF, 0x11: 0x7F, 0x1B: 0xFF}),
+    ("Yellow", 0x27, {0x10: 0xFF, 0x11: 0xFF}),
+    ("Green", 0x11, {0x11: 0xFF}),
+    ("Cyan", 0x08, {0x11: 0xFF, 0x12: 0xFF}),
+    ("Blue", 0x02, {0x12: 0xFF}),
+    ("Pink", 0x15, {0x10: 0xFF, 0x11: 0x69, 0x12: 0xB4}),
+    ("UV", 0x0F, {0x10: 0x4B, 0x12: 0x82, 0x3C: 0xFF}),
+    ("Magenta", 0x17, {0x10: 0xFF, 0x12: 0xFF}),
+]
+
+
 # Fallback defaults, from the pairs lines of 65,187 real heads. The stock
 # library is close to unanimous: Dimmer 255 (98%), Pan and Tilt centred at
 # 128 (95-96%) with their fine halves at 0 (82-83%), the additive mix full
@@ -697,6 +719,25 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
                 f"{flags:04x},{extra:08x},"
             )
 
+    # The colour-types table: one row per standard colour, each carrying the
+    # swatch id and a (channel, value) recipe over this head's colour-mix
+    # channels. Only additive heads get one, matching stock practice.
+    colour_rows: list[str] = []
+    mix_channels = [
+        (i, _ATTR_NUMBERS[c.attribute])
+        for i, c in enumerate(channels)
+        if not c.fine and c.attribute in
+        ("Red", "Green", "Blue", "White", "Amber", "UV", "Lime")
+    ]
+    if {a for _, a in mix_channels} >= {0x10, 0x11, 0x12}:
+        for cname, cid, values in _STD_COLOURS:
+            pairs = ",".join(
+                f"{i:04x},{values.get(attr, 0):04x}" for i, attr in mix_channels
+            )
+            colour_rows.append(
+                f'"{cname}",{len(mix_channels):04x},0020,{0x06000000 | cid:08x},{pairs},'
+            )
+
     name = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
     out: list[str] = [
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
@@ -713,10 +754,12 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         # belongs on the next line. 0x0000 is the most common value and what
         # ChamSys's own MAC Aura uses.
         f'P,0000,"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
-        # count, range-row count, ?, macro count (0 - none are emitted),
-        # then fields that vary per head with zero the most common value.
-        # The 0200,00000000 pair is one real heads carry together.
-        f"{count:04x},{len(range_rows):04x},0000,0000,0000,0000,0001,0001,0200,00000000,",
+        # count, range-row count, colour-table row count, macro count (0 -
+        # none are emitted), then fields that vary per head with zero the
+        # most common value. The 0200,00000000 pair is one real heads carry
+        # together.
+        f"{count:04x},{len(range_rows):04x},{len(colour_rows):04x},0000,"
+        "0000,0000,0001,0001,0200,00000000,",
     ]
 
     for ch in channels:
@@ -745,6 +788,7 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     # Named slots - gobo and colour names - so they survive the conversion
     # instead of arriving on the desk as bare numbers.
     out.extend(range_rows)
+    out.extend(colour_rows)
 
     # Trailing sections. This follows the real V,008f skeleton line for line
     # - shapes taken from the smallest stock head of that version and sized
