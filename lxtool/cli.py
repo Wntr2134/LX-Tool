@@ -342,12 +342,20 @@ def cmd_convert(args: argparse.Namespace) -> int:
     out = Path(args.dest)
     suffix = out.suffix.lower()
 
+    chosen = None
+    if getattr(args, "mode", None):
+        wanted = args.mode.strip().lower()
+        chosen = next((m for m in fixture.modes if m.name.strip().lower() == wanted), None)
+        if chosen is None:
+            available = ", ".join(m.name for m in fixture.modes) or "none"
+            raise SystemExit(f"no mode called {args.mode!r}. Available: {available}")
+
     if suffix == ".gdtf":
         gdtf.write(fixture, out)
     elif suffix == ".xml":
         ma2.write(fixture, out)
     elif suffix == ".hed":
-        chamsys.write(fixture, out)
+        chamsys.write(fixture, out, chosen)
         print("note: .hed writing is experimental - check it in the MagicQ Head "
               "Editor before trusting it. GDTF import remains the safe route.",
               file=sys.stderr)
@@ -356,9 +364,20 @@ def cmd_convert(args: argparse.Namespace) -> int:
             f"cannot write {suffix or out.name}. Supported targets: .gdtf, .xml, .hed"
         )
 
-    modes = ", ".join(f"{m.name} ({m.channel_count} ch)" for m in fixture.modes)
-    print(f"{fixture.key}: {len(fixture.modes)} mode(s) -> {out}")
-    print(f"  {modes}")
+    if suffix == ".hed":
+        # A .hed holds one mode. Saying "2 mode(s)" here read as though both
+        # had been written, when only the first ever was.
+        written = chosen or (fixture.modes[0] if fixture.modes else None)
+        label = f"{written.name} ({written.channel_count} ch)" if written else "no channels"
+        print(f"{fixture.key}: wrote {label} -> {out}")
+        others = [m.name for m in fixture.modes if m is not written]
+        if others:
+            print(f"  not written: {', '.join(others)}"
+                  f"  (one .hed per mode; re-run with --mode)")
+    else:
+        modes = ", ".join(f"{m.name} ({m.channel_count} ch)" for m in fixture.modes)
+        print(f"{fixture.key}: {len(fixture.modes)} mode(s) -> {out}")
+        print(f"  {modes}")
     return 0
 
 
@@ -465,6 +484,8 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("convert", help="convert a fixture between formats")
     c.add_argument("source", nargs="?", help="GDTF / OFL JSON / MA2 / MA3 XML / .hed")
     c.add_argument("dest", help="output .gdtf, .xml or .hed")
+    c.add_argument("--mode", metavar="MODE",
+                   help="which mode to write (a .hed holds exactly one)")
     c.add_argument("--ofl", metavar="KEY",
                    help="convert a fixture from the OFL catalogue instead of a file")
     c.add_argument("--cache", help="catalogue cache directory")

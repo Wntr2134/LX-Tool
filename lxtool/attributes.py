@@ -105,6 +105,15 @@ _ALIASES: dict[str, str] = {
     # ChamSys abbreviations, from 21,677 real personalities in heads.all
     "col": "ColorWheel", "col 2": "ColorWheel2", "col wheel": "ColorWheel",
     "col macro": "ColorMacro", "col macros": "ColorMacro",
+    # Spelt out, and the "effect" phrasings OFL and GDTF use. These need to be
+    # exact aliases rather than patterns: they end in a word ("macro",
+    # "effect") that the last-word fallback would otherwise claim for a
+    # generic Macro, dropping the fact that they are colour attributes.
+    "color macro": "ColorMacro", "colour macro": "ColorMacro",
+    "color macros": "ColorMacro", "colour macros": "ColorMacro",
+    "color wheel effect": "ColorMacro", "colour wheel effect": "ColorMacro",
+    "color effect": "ColorMacro", "colour effect": "ColorMacro",
+    "col effect": "ColorMacro",
     "rot gobo": "Gobo1", "static gobo": "Gobo2", "fixed gobo": "Gobo2",
     "p/t speed": "PanTiltSpeed", "pt speed": "PanTiltSpeed",
     "cct": "CTO", "col temp": "CTO",
@@ -199,13 +208,25 @@ def normalise(name: str, *, default: str = "Unknown") -> str:
     # Drop a fine-marker so "Pan Fine" and "Pan" normalise alike.
     without_fine = _WS_RE.sub(" ", _FINE_RE.sub(" ", cleaned)).strip()
 
+    # Order matters, and not in the way it first looks. Running the patterns
+    # ahead of the last-word fallback would fix "color wheel effect" (which
+    # ends in "effect" and so comes back as a bare Macro), but measured over
+    # the 21,833 distinct channel names in a stock library it moved 12,093
+    # rows and made agreement with ChamSys's own attribute numbers slightly
+    # *worse*: the patterns match a leading word anywhere, so "Tilt Speed"
+    # became Tilt and "Pan Speed" became Pan. The fallback stays first; names
+    # whose last word misleads are handled by an explicit alias instead.
     for candidate in (cleaned, without_fine):
         if candidate in _ALIASES_CLEAN:
             return _ALIASES_CLEAN[candidate]
-        # GDTF style: try the segment after a geometry prefix
+        # GDTF style: drop the geometry prefix a word at a time, longest
+        # remainder first. Taking only the last word would read "Beam color
+        # wheel effect" as "effect" and lose the colour entirely.
         parts = candidate.split(" ")
-        if len(parts) > 1 and parts[-1] in _ALIASES_CLEAN:
-            return _ALIASES_CLEAN[parts[-1]]
+        for start in range(1, len(parts)):
+            tail = " ".join(parts[start:])
+            if tail in _ALIASES_CLEAN:
+                return _ALIASES_CLEAN[tail]
 
     for pattern, attr in _PATTERNS:
         if re.search(pattern, without_fine or cleaned):

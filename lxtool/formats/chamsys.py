@@ -207,6 +207,30 @@ _QUOTED = re.compile(r'"((?:[^"]|"")*)"')
 HTP = 1
 LTP = 2
 
+# Bits in the flags word, read off 1,459,430 real channel rows.
+#
+# COARSE/FINE mark the two halves of a 16-bit pair, and they are what makes
+# MagicQ treat them as one 16-bit parameter rather than two faders. Evidence:
+# of 157,795 channels carrying FINE, 154,515 have "fine" in their name and
+# 152,809 sit immediately after a COARSE row on the same attribute; only 779
+# fine-named channels lack it.
+CH_COARSE = 0x04
+CH_FINE = 0x08
+
+# Additive colour mix. Attributes 0x10-0x12 are shared between RGB and CMY,
+# and this bit is what separates them: set on 193,848 Red / 193,716 Green /
+# 191,626 Blue rows, clear on Cyan/Magenta/Yellow, and never set on White -
+# 0 of 94,318.
+CH_ADDITIVE = 0x2000
+
+# One bit is deliberately not modelled: 0x40000000 appears on roughly half of
+# all rows, is mixed within a single head, and correlates with nothing tested
+# (named ranges, 16-bit, attribute, bank). 51,943 heads have it clear
+# throughout, so emitting it clear is well-precedented rather than a guess.
+
+# Additive primaries, which is exactly the set that carries CH_ADDITIVE.
+_ADDITIVE = {"Red", "Green", "Blue"}
+
 # MagicQ attribute numbers seen in real personalities.  The channel *name* is
 # human-readable and normalises well on its own, so this table is used to
 # corroborate and to catch cases where the name is idiosyncratic.
@@ -372,7 +396,14 @@ _ATTR_NUMBERS = {v: k for k, v in MAGICQ_ATTRIBUTES.items() if v != "Unknown"}
 # Subtractive mixing shares the colour-mix slots with RGB, so writing needs
 # these explicitly - without them CMY channels would go out as "Reserved".
 _ATTR_NUMBERS.update({"Cyan": 0x10, "Magenta": 0x11, "Yellow": 0x12,
-                      "Strobe": 0x02, "UV": 0x3C, "Lime": 0x3C, "CTB": 0x18})
+                      "Strobe": 0x02, "UV": 0x3C, "Lime": 0x3C, "CTB": 0x18,
+                      # 0x07 is the general "second colour" slot rather than a
+                      # strict second wheel: of 11,002 rows it is named "col
+                      # macro" 611 times and "col 2" 562, plus hue, tint, gel
+                      # and colour FX. Reading it back as ColorWheel2 is the
+                      # better default, but a colour macro has nowhere else to
+                      # go, and Reserved would be worse.
+                      "ColorMacro": 0x07})
 _RESERVED = 0x3F
 
 _BANK_OF = {
@@ -383,13 +414,41 @@ _BANK_OF = {
     "control": 1,
 }
 
+# MagicQ's encoder banks agree with our attribute groups for 28 of the 29
+# attributes that appear in the library. The exception is the shutter: we
+# group it with intensity, which is right for HTP/LTP reasoning, but MagicQ
+# puts it on the beam encoders - 51,210 rows say bank 1. Overriding here
+# keeps the shared vocabulary honest and the .hed correct.
+_BANK_OVERRIDE = {"Shutter": 1, "Strobe": 1}
 
-def _flags_for(attribute: str, htp: bool) -> int:
-    """MagicQ's flags word: (encoder bank << 4) | HTP/LTP."""
+
+def _flags_for(
+    attribute: str,
+    htp: bool,
+    *,
+    fine: bool = False,
+    has_fine: bool = False,
+) -> int:
+    """MagicQ's flags word for one channel.
+
+    ``(bank << 4) | HTP/LTP``, plus the 16-bit and colour-mix bits. Pass
+    ``fine`` for the fine half of a pair and ``has_fine`` for the coarse half;
+    without them MagicQ shows a 16-bit parameter as two unrelated faders.
+    """
     from .. import attributes as _attrs
 
-    bank = _BANK_OF.get(_attrs.group_of(attribute), 1)
-    return (bank << 4) | (HTP if htp else LTP)
+    bank = _BANK_OVERRIDE.get(attribute, _BANK_OF.get(_attrs.group_of(attribute), 1))
+    flags = (bank << 4) | (HTP if htp else LTP)
+
+    if fine:
+        flags |= CH_FINE
+    elif has_fine:
+        flags |= CH_COARSE
+
+    if attribute in _ADDITIVE:
+        flags |= CH_ADDITIVE
+
+    return flags
 
 
 def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int = 2026) -> str:
@@ -406,6 +465,10 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     channels = sorted(mode.channels, key=lambda c: c.offset)
     count = mode.channel_count or len(channels)
 
+    # Which attributes have a fine channel, so the coarse half can be marked
+    # as the other end of a 16-bit pair.
+    fine_attrs = {c.attribute for c in channels if c.fine}
+
     name = f"{fixture.manufacturer}_{fixture.model}_{mode.name}".strip("_")
     out: list[str] = [
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
@@ -417,7 +480,11 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
 
     for ch in channels:
         attr_num = _ATTR_NUMBERS.get(ch.attribute, _RESERVED)
-        flags = _flags_for(ch.attribute, ch.htp)
+        flags = _flags_for(
+            ch.attribute, ch.htp,
+            fine=ch.fine,
+            has_fine=not ch.fine and ch.attribute in fine_attrs,
+        )
         out.append(f'"{ch.name}",{flags:08x},{attr_num:08x},')
 
     # Named slots - gobo and colour names - so they survive the conversion
@@ -750,12 +817,22 @@ def _run_length(data: bytes, pos: int, phase: int, limit: int = _PROBE) -> int:
 
 
 def decode_container(data: bytes) -> str:
-    """Decode a ``heads.all`` container, resynchronising at section boundaries."""
+    """Decode a ``heads.all`` container.
+
+    The framing works out as: each section opens with a ``PP,"...hed",...``
+    header line on its own phase, and the personality body *after* that line
+    restarts the counter from zero, exactly as a standalone ``.hed`` does.
+    Both halves are pinned rather than inferred - the header by its ciphered
+    marker, the body by the restart - so no guessing is involved for a
+    well-formed container. The printability resync below is kept purely as a
+    fallback for damage.
+    """
     out = bytearray()
     j = 0
     i = 0
     end = len(data)
     at_line_start = True
+    in_header = False
 
     while j < end:
         b = data[j]
@@ -763,17 +840,25 @@ def decode_container(data: bytes) -> str:
             out.append(0x0A)
             j += 1
             at_line_start = True
+            if in_header:
+                # End of the header line: the body starts a fresh keystream.
+                in_header = False
+                i = 0
             continue
 
-        # A section header is identifiable in the ciphertext, so take the
-        # phase from it rather than waiting for printability to fail.
         if at_line_start:
+            # A section header is identifiable in the ciphertext, so read its
+            # phase off the marker rather than waiting for printability to fail.
             phase = _SECTION_MARKERS.get(bytes(data[j:j + _MARK_LEN]))
             if phase is not None:
-                i = phase
+                # Phase 0 is not index 0: index 0 is the one position whose key
+                # is 0 rather than 127, and that rule belongs to a body start,
+                # not to a header resuming mid-keystream.
+                i = phase or _MODULUS
+                in_header = True
             at_line_start = False
 
-        c = (b & 0x7F) ^ _KEYBLOCK[i % _MODULUS]
+        c = (b & 0x7F) ^ _key(i)
         if 32 <= c < 127:
             out.append(c)
             i += 1
@@ -794,7 +879,7 @@ def decode_container(data: bytes) -> str:
             out.append(0x7F)
             j += 1
             continue
-        i = best_phase
+        i = best_phase or _MODULUS      # same phase, but never index 0
 
     return out.decode("latin1")
 
