@@ -755,10 +755,10 @@ def test_colour_slots_get_types_and_swatches():
         chamsys.build_personality(fx), re.M)
 
     assert rows == [
-        ("No Function", "0000", "00000000"),
+        ("No Function", "0000", "0200006b"),
         ("LEE 181 - Congo Blue", "1000", "0600000b"),
         ("White", "1000", "06000026"),
-        ("Rainbow CW>", "2000", "0600001f"),
+        ("Rainbow CW>", "3000", "0200000c"),
     ]
 
 
@@ -809,10 +809,10 @@ def test_every_typed_colour_slot_declares_a_colour():
         chamsys.build_personality(fx), re.M)
 
     assert rows == [
-        ("0000", "00000000"),          # No Function: untyped, no swatch
-        ("1000", "0600001f"),          # effect-ish -> rainbow id
-        ("1000", "0600001f"),
-        ("1000", "06000047"),          # unrecognisable -> generic col id
+        ("0000", "0200006b"),          # No Function, with its icon
+        ("3000", "0200000c"),          # rotation -> colour scroll, like stock
+        ("0000", "02000082"),          # effect -> random colour, like stock
+        ("1000", "06000047"),          # unrecognisable slot -> generic col id
     ]
 
 

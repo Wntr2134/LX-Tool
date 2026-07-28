@@ -560,6 +560,65 @@ def _range_flags(name: str) -> int:
     return 0x0000
 
 
+# Function ids for the extra field, read off ChamSys's MAC Aura where the
+# Head Editor displays each pairing. The extra is not merely an icon: with
+# the same flag value, 0x02000069 displays as "Pulse Open" and 0x03000010 as
+# "None", and a slot flag (0x1000) paired with a colour swatch reads "Fixed"
+# while paired with 0x0200000d it reads "None" - the (flag, extra) pair is
+# the type. A slot flag with an effect swatch is the one combination stock
+# heads never produce.
+_FN_NO_FUNCTION = 0x0200006B
+_FN_OPEN = 0x0200008B
+_FN_CLOSED = 0x0200008A
+_FN_STROBE = 0x01000029
+_FN_PULSE_OPEN = 0x02000069
+_FN_PULSE_CLOSED = 0x02000067
+_FN_RANDOM = 0x03000010
+_FN_SINE = 0x03000012
+_FN_SCROLL_CW = 0x0200000C
+_FN_SCROLL_CCW = 0x0200000B
+_FN_NO_ROTATE = 0x0200000D
+_FN_RND_COLOUR = 0x02000082
+
+
+def _range_meta(name: str, attribute: str) -> tuple[int, int]:
+    """The (flags, extra) pair for one range row."""
+    n = name.lower()
+    if "no function" in n or "nofunction" in n or "reserved" in n:
+        return 0x0000, _FN_NO_FUNCTION
+
+    if attribute in _COLOUR_ATTRS:
+        if re.search(r"\bccw\b", n):
+            return 0x4000, _FN_SCROLL_CCW
+        if (re.search(r"\bcw\b", n) or "scroll" in n or "rotat" in n
+                or "virtual" in n or "rainbow" in n):
+            return 0x3000, _FN_SCROLL_CW
+        if "no rot" in n or "stop" in n:
+            return 0x1000, _FN_NO_ROTATE
+        if "rnd" in n or "random" in n or "effect" in n or "macro" in n:
+            return 0x0000, _FN_RND_COLOUR
+        cid = _colour_id(name)
+        return 0x1000, 0x06000000 | (cid if cid is not None else 0x47)
+
+    flags = _range_flags(name)
+    if attribute in _WHEEL_ATTRS and not flags:
+        # Gobo wheels: fixed slots and ramps, like the colour wheel.
+        flags = 0x2000 if ">" in name else 0x1000
+        return flags, 0
+
+    if "burst" in n or "sine" in n or (("rnd" in n or "random" in n) and "pulse" in n):
+        return flags, _FN_SINE if "sine" in n else _FN_RANDOM
+    if "pulse" in n:
+        return flags, _FN_PULSE_CLOSED if "clos" in n else _FN_PULSE_OPEN
+    if "strobe" in n:
+        return flags, _FN_STROBE
+    if flags == 0x2000:
+        return flags, _FN_CLOSED
+    if flags == 0x1000:
+        return flags, _FN_OPEN
+    return flags, 0
+
+
 def _flags_for(
     attribute: str,
     htp: bool,
@@ -632,29 +691,7 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
             continue
         for r in named:
             label = r.name.replace('"', '""')
-            flags = _range_flags(r.name)
-            extra = 0
-            lname = r.name.lower()
-            functional = "no function" in lname or "nofunction" in lname
-            if ch.attribute in _WHEEL_ATTRS and not flags and not functional:
-                # Untyped wheel slots are a Head Editor error ("Col Types"),
-                # the same complaint the shutter raised. Fixed slots are
-                # 0x1000 and ramps 0x2000, per ChamSys's own current heads.
-                flags = 0x2000 if ">" in r.name else 0x1000
-            if ch.attribute in _COLOUR_ATTRS:
-                cid = _colour_id(r.name)
-                if cid is None and flags:
-                    # A typed colour slot with no colour is exactly what
-                    # "ERRORS Col Types" reads as. Stock heads give effects
-                    # the rainbow id and unrecognisable slots the generic
-                    # "col N" id rather than leaving them colourless.
-                    effecty = any(k in lname for k in
-                                  ("effect", "rainbow", "virtual", "macro",
-                                   "random", "rnd", "scroll"))
-                    cid = 0x1F if effecty else 0x47
-                if cid is not None:
-                    # The swatch MagicQ shows for this slot on the desk.
-                    extra = 0x06000000 | cid
+            flags, extra = _range_meta(r.name, ch.attribute)
             range_rows.append(
                 f'{index:04x},"{label}",{r.dmx_from:04x},{r.dmx_to:04x},'
                 f"{flags:04x},{extra:08x},"
