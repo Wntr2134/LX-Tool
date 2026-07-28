@@ -594,7 +594,7 @@ def test_built_personality_has_the_complete_tail():
     # zeros row: one field per channel
     assert ",".join(["00000000"] * 5) + "," in lines
     # near-final row: count+1 fields after the two 8-hex ones
-    assert "00000000,00000001," + ",".join(["0000"] * 6) + "," in lines
+    assert "00000003,00000001," + ",".join(["0000"] * 6) + "," in lines
     # no truncated palette rows keyed to attribute zero
     assert "00000000,0000,0100,01ff," not in lines
 

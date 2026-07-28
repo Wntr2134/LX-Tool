@@ -666,6 +666,11 @@ def _flags_for(
     bank = _BANK_OVERRIDE.get(attribute, _BANK_OF.get(_attrs.group_of(attribute), 1))
     flags = (bank << 4) | (HTP if htp else LTP)
 
+    # Snap (no-fade) channels: control and macro functions jump rather than
+    # fade, as the reference heads mark them (0x8000 on Control/Col Macro).
+    if attribute in ("Control", "ColorMacro", "Macro", "Reset"):
+        flags |= 0x8000
+
     if fine:
         flags |= CH_FINE
     elif has_fine:
@@ -865,14 +870,19 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out.append(f"0.000000,0.000000,{fixture.beam_min:.6f},{fixture.beam_max:.6f},"
                "0.000000,0.000000,")
     out.append('"",0000,')
-    # The final field is the weight in kilograms; both reference heads carry
-    # exactly their fixture's mass here.
-    out.append(f"0,0,0,0,0,0,0,0,{fixture.weight:.6f},")
-    out.append("0,0,0,0,0,0,0,0,0,0,0,")
-    out.append("0,0,0,")
+    # Movement/parameter rows. The values are the clean reference head's,
+    # and the combination is desk-verified: the "ERRORS Head params" check
+    # only cleared once these carried them (LX18/LX19 experiments). The
+    # final field of the first row is the weight in kilograms.
+    if is_mover:
+        out.append(f"2,12e,c4,47,c8,be,c3,14c,{fixture.weight:.6f},")
+    else:
+        out.append(f"0,0,0,0,0,0,0,0,{fixture.weight:.6f},")
+    out.append("1,5,0,0,0,0,0,0,0,0,0,")
+    out.append("1,0,0,")
     out.append("0,")
-    out.append("00000000,00000001," + ",".join(["0000"] * (n + 1)) + ",")
-    out.append("4d50,0001,0000,00000004,68858000,0,")
+    out.append("00000003,00000001," + ",".join(["0000"] * (n + 1)) + ",")
+    out.append("4d50,0003,0000,00000008,68858000,0,")
     out.append(f'"{fixture.model}",')
     # The colour-channel table: a count, then one row per distinct
     # colour-mix attribute - 0x10-0x13 plus amber and UV - with three
