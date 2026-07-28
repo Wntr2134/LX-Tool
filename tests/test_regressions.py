@@ -842,3 +842,37 @@ def test_shutter_types_match_the_stock_aura_exactly():
     ]
     for name, want in cases:
         assert chamsys._range_flags(name) == want, name
+
+
+def test_colour_channel_table_lists_the_mix_channels():
+    """The tail's colour table must enumerate the colour-mix channels.
+
+    Thirteenth round. With the ranges section matching the stock head pair
+    for pair, "ERRORS Col Types" still stood - and the one remaining table
+    we emitted empty is keyed by colour-mix attribute numbers: the stock
+    Aura carries exactly its RGBW there (0010-0013), we declared zero
+    entries against four colour channels. A literal table of the colour
+    types, empty.
+    """
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Red", attribute="Red"),
+        Channel(offset=2, name="Green", attribute="Green"),
+        Channel(offset=3, name="Green fine", attribute="Green", fine=True),
+        Channel(offset=4, name="Blue", attribute="Blue"),
+        Channel(offset=5, name="White", attribute="White"),
+        Channel(offset=6, name="Pan", attribute="Pan"),
+    ])])
+    lines = chamsys.build_personality(fx).split("\n")
+    i = lines.index("0004,")
+    assert lines[i + 1:i + 5] == [
+        '0010,"",0.000000,0.000000,0.000000,',
+        '0011,"",0.000000,0.000000,0.000000,',
+        '0012,"",0.000000,0.000000,0.000000,',
+        '0013,"",0.000000,0.000000,0.000000,',
+    ]
+
+    # A head with no colour mix keeps the bare zero, like the stock library.
+    plain = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
+    ])])
+    assert "0,\n" in chamsys.build_personality(plain)

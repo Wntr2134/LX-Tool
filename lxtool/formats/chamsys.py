@@ -780,7 +780,17 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out.append("00000000,00000000," + ",".join(["0000"] * (n + 1)) + ",")
     out.append("0000,0000,0000,00000004,68858000,0,")
     out.append(f'"{fixture.model}",')
-    out.append("0,")
+    # The colour-channel table: a count, then one row per distinct
+    # colour-mix attribute - 0x10-0x13 plus amber and UV - with three
+    # floats ChamSys leaves at zero. The stock Aura carries exactly its
+    # RGBW here; we declared zero entries against four colour channels,
+    # which reads as a head whose colour types are missing.
+    mix = sorted({
+        _ATTR_NUMBERS.get(c.attribute, _RESERVED) for c in channels
+    } & {0x10, 0x11, 0x12, 0x13, 0x1B, 0x3C})
+    out.append(f"{len(mix):04x}," if mix else "0,")
+    for a in mix:
+        out.append(f'00{a:02x},"",0.000000,0.000000,0.000000,')
     out.append('"{00000000-0000-0000-0000-000000000000}",')
     out.append("1.000000,0000,0000,")
     out.append("0000,")
