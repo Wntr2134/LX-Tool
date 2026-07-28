@@ -356,8 +356,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
         ma2.write(fixture, out)
     elif suffix == ".hed":
         chamsys.write(fixture, out, chosen)
-        print("note: .hed writing is experimental - check it in the MagicQ Head "
-              "Editor before trusting it. GDTF import remains the safe route.",
+        print("note: .hed output is desk-verified for layout, 16-bit, banks and "
+              "homing; wheel slot-name display is not yet confirmed on a desk.",
               file=sys.stderr)
     else:
         raise SystemExit(

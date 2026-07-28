@@ -82,6 +82,23 @@ The channel `<flags>` word: `(encoder bank << 4) | HTP(1)/LTP(2)`, plus
 `0x2000` marking additive colour mix (set on RGB, clear on CMY and White).
 Banks: 0 intensity, 1 beam (including shutter), 2 colour, 3 position.
 
+### Palette rows
+
+Later in the file, one row per channel in channel order:
+
+```
+00000047,0180,0180,0180,
+00000080,01ff,01ff,01ff,
+```
+
+`palette_id, v1, v2, v3` - the id is attribute-specific (RGBW are
+`0x80-0x83`, Pan `0x47`, Tilt `0x46`; full table in `chamsys._PALETTE_ID`,
+harvested from 64,652 heads) and each value is `0x100 | dmx_value`.
+**This block, not the defaults pairs line, is what drives the desk's idle
+output and Locate** - verified on a desk, and no stock head carries live
+defaults without it. Column 3 tracks the channel default in 97% of stock
+rows; columns 1-2 vary (locate/highlight, presumably).
+
 ### Range rows
 
 After the channel block come the named slots inside each channel - gobo

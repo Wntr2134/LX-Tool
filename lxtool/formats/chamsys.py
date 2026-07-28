@@ -510,12 +510,15 @@ def _flags_for(
 def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int = 2026) -> str:
     """Render a fixture as a MagicQ personality.
 
-    EXPERIMENTAL.  The header and channel block are modelled directly on real
-    personalities and are believed correct, but a ``.hed`` also carries
-    trailing sections (palettes, ranges, per-channel defaults) whose meaning
-    has not been fully decoded.  What is emitted here is the minimum MagicQ
-    needs to describe the DMX layout; test the result in the Head Editor
-    before relying on it, and prefer GDTF import if it misbehaves.
+    Verified against a real MagicQ desk (July 2026, MAC Aura vs the stock
+    head): patches cleanly, correct encoder banks and HTP/LTP, 16-bit
+    pairs recognised, and idle/Locate output driven by the palette block.
+    Every section here earned its shape either from an on-desk failure or
+    from a rule checked across the stock library; see docs/hed-format.md.
+
+    Not yet verified on a desk: how range rows *display* (slot names on
+    wheels) and snap-vs-fade markers, whose flag fields are written as
+    zero. GDTF import remains available if a particular head misbehaves.
     """
     mode = mode or (fixture.modes[0] if fixture.modes else Mode(name="Default"))
     channels = sorted(mode.channels, key=lambda c: c.offset)
