@@ -627,3 +627,30 @@ def test_header_declares_the_range_row_count():
     assert int(header[1], 16) == n_rows
     # macro count: none are emitted, so it must say zero
     assert int(header[3], 16) == 0
+
+
+def test_palette_rows_carry_the_defaults():
+    """Idle output and Locate come from the palette block, not the pairs line.
+
+    Fifth on-desk result: with the header count fixed the head patched clean,
+    but still idled at zero while ChamSys's own Aura sat at Pan/Tilt 128 and
+    RGBW 255. The remaining difference was this block - and no stock head
+    (of 8,000 checked) has live defaults without it. One row per channel:
+    the attribute's palette id, then three 0x100|value fields.
+    """
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(name="M", channels=[
+        Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True),
+        Channel(offset=2, name="Pan", attribute="Pan"),
+        Channel(offset=3, name="Pan fine", attribute="Pan", fine=True),
+        Channel(offset=4, name="Red", attribute="Red"),
+    ])])
+    lines = chamsys.build_personality(fx).split("\n")
+    rows = [l for l in lines
+            if re.fullmatch(r'000000[0-9a-f]{2},[0-9a-f]{4},[0-9a-f]{4},[0-9a-f]{4},', l)]
+
+    assert rows == [
+        "00000007,01ff,01ff,01ff,",   # Dimmer id 0x07, default 255
+        "00000047,0180,0180,0180,",   # Pan id 0x47, centred 128
+        "00000047,0100,0100,0100,",   # Pan fine, same id, 0
+        "00000080,01ff,01ff,01ff,",   # Red id 0x80, full
+    ]
