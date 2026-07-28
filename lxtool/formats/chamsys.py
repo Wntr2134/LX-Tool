@@ -474,7 +474,13 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
         f"# MagicQ personality file.  Copyright Chamsys Ltd {year} www.chamsys.co.uk",
         f"\\ Personality file for {fixture.model or 'fixture'} ",
         'V,008c,"MagicQ 1";',
-        f'P,{count:04x},"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
+        # The field after P is NOT the channel count: across 68,418 real
+        # heads it is a small enum (0x0000 in 25,124, 0x0002 in 23,319, the
+        # rest a tail of single digits) whose meaning is unknown, and it
+        # coincides with the channel count in only 72 of them. The count
+        # belongs on the next line. 0x0000 is the most common value and what
+        # ChamSys's own MAC Aura uses.
+        f'P,0000,"{name}","{fixture.manufacturer}","{mode.name}","{fixture.model}",',
         f"{count:04x},0000,0000,0000,0000,0000,0001,0001,01f5,00000000,",
     ]
 
@@ -509,8 +515,30 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
 
 
 def write(fixture: Fixture, path: Path | str, mode: Mode | None = None) -> Path:
-    """Write a fixture as an obfuscated ``.hed`` MagicQ reads directly."""
+    """Write a fixture as an obfuscated ``.hed`` MagicQ reads directly.
+
+    The personality's internal identity is taken from the *filename* when it
+    follows MagicQ's ``Manufacturer_Model_Mode`` convention. That is not
+    cosmetic: Choose Head lists heads by the fields inside the file, and in
+    67,861 of 68,418 stock heads those match the filename exactly. Writing a
+    file called ``Martin_MACAuraLX_Standard.hed`` whose insides say
+    ``MAC Aura`` puts the head somewhere the user is not looking for it.
+    """
     path = Path(path)
+    head = parse_head_filename(path)
+    if head.manufacturer and head.model:
+        mode = mode or (fixture.modes[0] if fixture.modes else Mode(name="Default"))
+        if head.mode:
+            mode = Mode(name=head.mode, channels=mode.channels,
+                        declared_count=mode.declared_count)
+        fixture = Fixture(
+            manufacturer=head.manufacturer,
+            model=head.model,
+            modes=[mode],
+            source=fixture.source,
+            source_id=fixture.source_id,
+            fixture_type=fixture.fixture_type,
+        )
     path.write_bytes(encode_hed(build_personality(fixture, mode)))
     return path
 

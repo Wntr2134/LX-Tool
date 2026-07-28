@@ -457,3 +457,57 @@ def test_convert_mode_selection(tmp_path, capsys, monkeypatch):
 
     with pytest.raises(SystemExit):
         cli.main(["convert", str(tmp_path / "in.gdtf"), str(out), "--mode", "Nope"])
+
+
+def test_written_hed_takes_its_identity_from_the_filename(tmp_path):
+    """The head must appear in Choose Head under the name on the file.
+
+    Found on the desk: a file called Martin_MACAuraLX_Standard.hed whose
+    internal fields said "MAC Aura" (straight from OFL) was indexed by MagicQ
+    under MAC Aura - filed among the stock Auras, invisible under the name
+    the user gave it. In 67,861 of 68,418 stock heads the internal name
+    matches the filename; the writer now follows the same convention.
+    """
+    fx = Fixture(manufacturer="Martin", model="MAC Aura", modes=[Mode(
+        name="Standard",
+        channels=[Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True)],
+    )])
+    out = chamsys.write(fx, tmp_path / "Martin_MACAuraLX_Standard.hed")
+
+    text = chamsys.decode_hed(out.read_bytes())
+    assert '"Martin_MACAuraLX_Standard","Martin","Standard","MACAuraLX",' in text
+
+    back = chamsys.read(out)
+    assert back.manufacturer == "Martin"
+    assert back.model == "MACAuraLX"
+    assert back.modes[0].name == "Standard"
+
+
+def test_written_hed_keeps_fixture_identity_without_a_conventional_name(tmp_path):
+    """A dest like test.hed has no Manufacturer_Model_Mode to honour."""
+    fx = Fixture(manufacturer="Martin", model="MAC Aura", modes=[Mode(
+        name="Standard",
+        channels=[Channel(offset=1, name="Dimmer", attribute="Dimmer", htp=True)],
+    )])
+    text = chamsys.decode_hed(chamsys.write(fx, tmp_path / "test.hed").read_bytes())
+    assert '"Martin_MAC Aura_Standard","Martin","Standard","MAC Aura",' in text
+
+
+def test_p_line_second_field_is_not_the_channel_count(tmp_path):
+    """P,<here> is a small enum, not the footprint.
+
+    Real heads carry 0x0000 or 0x0002 there almost universally; it equals
+    the channel count in only 72 of 68,418. We wrote the count, which for
+    anything bigger than a par produced a value real files never carry.
+    """
+    fx = Fixture(manufacturer="T", model="X", modes=[Mode(
+        name="M",
+        channels=[Channel(offset=i, name=f"c{i}", attribute="Dimmer")
+                  for i in range(1, 15)],
+    )])
+    text = chamsys.build_personality(fx)
+    pline = next(l for l in text.split("\n") if l.startswith("P,"))
+    assert pline.startswith('P,0000,')
+    # The count still appears where it belongs, on the following line.
+    body = text.split("\n")
+    assert body[body.index(pline) + 1].startswith("000e,")
