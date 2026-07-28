@@ -301,6 +301,39 @@ def api_head_check(plan_text: str = Form(...)) -> dict:
     }
 
 
+@app.post("/api/head-match")
+def api_head_match(plan_text: str = Form(...)) -> dict:
+    """Rank known fixtures against a plan: "what is this clone really?"."""
+    from .. import library as libmod, matching, plan
+
+    try:
+        fixture = plan.parse(plan_text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    try:
+        lib = libmod.load(None, include_ofl=True)
+    except Exception:      # noqa: BLE001 - no libraries is a fine answer
+        return {"hits": []}
+    if not lib.fixtures:
+        return {"hits": []}
+
+    hits = matching.find_candidates(fixture, fixture.modes[0], lib.fixtures,
+                                    limit=5)
+    return {"hits": [
+        {
+            "label": m.label,
+            "score": round(m.score, 3),
+            "exact": m.exact,
+            "source": libmod.label_for(m.fixture.source),
+            # An OFL hit can be loaded straight back into the editor.
+            "key": m.fixture.source_id
+            if m.fixture.source == "ofl" else "",
+        }
+        for m in hits
+    ]}
+
+
 @app.post("/api/head-build")
 def api_head_build(plan_text: str = Form(...)) -> FileResponse:
     """Compile an edited plan into a MagicQ .hed."""
@@ -361,6 +394,14 @@ PAGE = """<!doctype html>
  table{border-collapse:collapse;width:100%;margin-top:.5rem}
  td,th{text-align:left;padding:.3rem .5rem;border-bottom:1px solid #8883;vertical-align:top}
  .note{font-size:13px;opacity:.75}
+ #chanlist{list-style:none;margin:.5rem 0;padding:0}
+ #chanlist li{display:flex;align-items:center;gap:.4rem;padding:.35rem .5rem;
+   margin:.2rem 0;border:1px solid #8884;border-radius:6px;background:#8881;cursor:grab}
+ #chanlist li.drag{opacity:.4} #chanlist li.over{border-color:#2f6feb;border-style:dashed}
+ #chanlist .grip{opacity:.5;cursor:grab} #chanlist .num{opacity:.5;min-width:1.6rem;text-align:right}
+ #chanlist input.cn{flex:2;min-width:6rem} #chanlist input.ca{flex:1;min-width:5rem}
+ #chanlist .rm{background:#8883;color:inherit;padding:.2rem .5rem}
+ #chanlist .rng{opacity:.6;font-size:12px;min-width:3rem}
 </style></head><body>
 <h1>LX-Tool</h1>
 <p class="sub">Match a fixture against your ChamSys library, and convert between GDTF, OFL and grandMA2.</p>
@@ -416,10 +457,18 @@ PAGE = """<!doctype html>
  <label for="chartbox">&hellip;or paste a DMX chart from a manual</label>
  <textarea id="chartbox" rows="4" style="width:100%" placeholder="1  Pan&#10;2  Pan fine&#10;3  Dimmer&#10;0-9  Open"></textarea>
  <p><button onclick="headChart()">Read chart into editor</button></p>
- <label for="planbox">The plan - edit names, reorder channel lines, set manufacturer</label>
- <textarea id="planbox" rows="14" style="width:100%;font-family:monospace"></textarea>
+ <p style="margin-top:1rem"><input type="text" id="pm" placeholder="Manufacturer" style="width:32%">
+    <input type="text" id="pmod" placeholder="Model" style="width:32%">
+    <input type="text" id="pmode" placeholder="Mode" style="width:22%"></p>
+ <label>Channels - drag the grip to reorder, edit names, X to remove</label>
+ <ul id="chanlist"></ul>
+ <p><button onclick="addChan()">+ Add channel</button>
+    <button onclick="headWhat()">What is this? (match)</button></p>
  <p><button onclick="headCheck(false)">Check plan</button>
-    <button onclick="headBuild()">Build .hed &amp; download</button></p>
+    <button onclick="headBuild()">Build .hed &amp; download</button>
+    <button type="button" onclick="toggleRaw()" style="background:#8883;color:inherit">Raw text</button></p>
+ <textarea id="planbox" rows="12" style="width:100%;font-family:monospace;display:none"
+    oninput="rawToRows()"></textarea>
  <div id="headout"></div>
 </fieldset>
 
@@ -521,13 +570,104 @@ async function match() {
   } catch (e) { $('matchout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
+let rows = [];          // [{name, attr, ranges:[[lo,hi,name],...]}]
+let rawMode = false;
+
+function planText() {
+  if (rawMode) return $('planbox').value;
+  let out = 'manufacturer: ' + $('pm').value + '\nmodel: ' + ($('pmod').value || 'MyFixture') +
+            '\nmode: ' + ($('pmode').value || 'Custom') + '\n\n';
+  for (const r of rows) {
+    let line = 'channel: ' + (r.name || 'Channel');
+    if (r.attr) line += ' | attr=' + r.attr;
+    out += line + '\n';
+    for (const rg of (r.ranges||[])) out += `  ${rg[0]}-${rg[1]}  ${rg[2]}\n`;
+  }
+  return out;
+}
+
+function renderRows() {
+  const ul = $('chanlist'); ul.innerHTML = '';
+  rows.forEach((r, i) => {
+    const li = document.createElement('li');
+    li.draggable = true; li.dataset.i = i;
+    li.innerHTML = `<span class="grip">⣿</span><span class="num">${i+1}</span>` +
+      `<input class="cn" value="${escAttr(r.name)}" placeholder="name">` +
+      `<input class="ca" value="${escAttr(r.attr||'')}" placeholder="attribute">` +
+      (r.ranges&&r.ranges.length ? `<span class="rng">${r.ranges.length} rng</span>` : '') +
+      `<button class="rm" title="remove">✕</button>`;
+    li.querySelector('.cn').oninput = e => rows[i].name = e.target.value;
+    li.querySelector('.ca').oninput = e => rows[i].attr = e.target.value;
+    li.querySelector('.rm').onclick = () => { rows.splice(i,1); renderRows(); };
+    li.addEventListener('dragstart', e => { li.classList.add('drag'); e.dataTransfer.setData('text', i); });
+    li.addEventListener('dragend', () => li.classList.remove('drag'));
+    li.addEventListener('dragover', e => { e.preventDefault(); li.classList.add('over'); });
+    li.addEventListener('dragleave', () => li.classList.remove('over'));
+    li.addEventListener('drop', e => {
+      e.preventDefault(); li.classList.remove('over');
+      const from = +e.dataTransfer.getData('text'), to = i;
+      if (from === to) return;
+      const [m] = rows.splice(from, 1); rows.splice(to, 0, m); renderRows();
+    });
+    ul.appendChild(li);
+  });
+  if (rawMode) $('planbox').value = planText();
+}
+const escAttr = s => String(s).replace(/"/g,'&quot;');
+
+function planToRows(text) {
+  const lines = text.split('\n'); rows = []; let cur = null;
+  for (const raw of lines) {
+    const t = raw.trim();
+    if (!t || t.startsWith('#')) continue;
+    if (/^\s/.test(raw) && cur) {
+      const m = t.match(/^(\d{1,3})\s*-\s*(\d{1,3})\s+(.+)$/);
+      if (m) { (cur.ranges = cur.ranges||[]).push([+m[1],+m[2],m[3]]); continue; }
+    }
+    const [k, ...rest] = t.split(':'); const v = rest.join(':').trim();
+    if (k.toLowerCase()==='manufacturer') $('pm').value = v;
+    else if (k.toLowerCase()==='model') $('pmod').value = v;
+    else if (k.toLowerCase()==='mode') $('pmode').value = v;
+    else if (k.toLowerCase()==='channel') {
+      const parts = v.split('|').map(x=>x.trim());
+      cur = {name: parts[0], attr: '', ranges: []};
+      for (const p of parts.slice(1)) if (p.toLowerCase().startsWith('attr=')) cur.attr = p.slice(5).trim();
+      rows.push(cur);
+    }
+  }
+  renderRows();
+}
+function rawToRows() { if (rawMode) planToRows($('planbox').value); }
+function toggleRaw() {
+  rawMode = !rawMode;
+  if (rawMode) $('planbox').value = planText();
+  else planToRows($('planbox').value);
+  $('planbox').style.display = rawMode ? 'block' : 'none';
+  $('chanlist').style.display = rawMode ? 'none' : 'block';
+}
+function addChan() { rows.push({name:'New channel', attr:'', ranges:[]}); renderRows(); }
+
+async function headWhat() {
+  const fd = new FormData(); fd.append('plan_text', planText());
+  try {
+    const d = await (await post('/api/head-match', fd)).json();
+    if (!d.hits.length) { $('headout').innerHTML = '<p class="note">No close matches (or no library loaded).</p>'; return; }
+    $('headout').innerHTML = '<p><b>This layout looks most like:</b></p><table><tr><th>Match</th><th>Fixture</th><th></th></tr>' +
+      d.hits.map(h => `<tr><td>${h.exact?'EXACT':Math.round(h.score*100)+'%'}</td>
+        <td>${esc(h.label)} <span class="note">${esc(h.source)}</span></td>
+        <td>${h.key?`<button onclick="loadKey('${esc(h.key)}')">Start from this</button>`:''}</td></tr>`).join('') +
+      '</table>';
+  } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+async function loadKey(key) { $('refkey').value = key; await headPlan(); }
+
 async function headPlan() {
   const fd = new FormData();
   fd.append('key', $('refkey').value); fd.append('mode', $('refmode').value);
   try {
     const d = await (await post('/api/head-plan', fd)).json();
-    $('planbox').value = d.plan;
-    $('headout').innerHTML = `<p>${d.channels} channel(s) loaded - edit away.</p>`;
+    planToRows(d.plan);
+    $('headout').innerHTML = `<p>${d.channels} channel(s) loaded - drag to reorder, edit names.</p>`;
   } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
@@ -535,15 +675,15 @@ async function headChart() {
   const fd = new FormData(); fd.append('chart_text', $('chartbox').value);
   try {
     const d = await (await post('/api/head-plan', fd)).json();
-    $('planbox').value = d.plan;
-    let msg = `<p>${d.channels} channel(s) recognised - <b>check against the manual</b>.</p>`;
+    planToRows(d.plan);
+    let msg = `<p>${d.channels} channel(s) recognised - <b>check against the manual</b>, drag to reorder.</p>`;
     if (d.unparsed) msg += `<p class="sev5">Could not read: ${esc(d.unparsed)}</p>`;
     $('headout').innerHTML = msg;
   } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
 async function headCheck(quiet) {
-  const fd = new FormData(); fd.append('plan_text', $('planbox').value);
+  const fd = new FormData(); fd.append('plan_text', planText());
   const d = await (await post('/api/head-check', fd)).json();
   let h = `<p><b>${esc(d.label)}</b> - ${d.channels.length} channel(s)</p>`;
   h += '<table><tr><th>#</th><th>Name</th><th>Attribute</th><th>Ranges</th></tr>' +
@@ -556,7 +696,7 @@ async function headCheck(quiet) {
 }
 
 async function headBuild() {
-  const fd = new FormData(); fd.append('plan_text', $('planbox').value);
+  const fd = new FormData(); fd.append('plan_text', planText());
   try {
     try { await headCheck(true); } catch (e) { /* build reports its own error */ }
     const r = await post('/api/head-build', fd);

@@ -383,6 +383,25 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
 
 
+def _match_reference(fixture: Fixture) -> None:
+    """Rank known fixtures against a drafted plan - "what is this really?"."""
+    try:
+        lib = libmod.load(None, include_ofl=True)
+    except Exception as exc:      # noqa: BLE001 - advisory, never fatal
+        print(f"  (could not load libraries to compare: {exc})", file=sys.stderr)
+        return
+    if not lib.fixtures:
+        return
+    mode = fixture.modes[0]
+    hits = matching.find_candidates(fixture, mode, lib.fixtures, limit=5)
+    if not hits:
+        return
+    print("\nClosest known fixtures - consider starting from one of these:")
+    for i, m in enumerate(hits, 1):
+        flag = "EXACT" if m.exact else f"{m.score:.0%}"
+        print(f"  {i}. [{flag:>5}] {m.label}  <{libmod.label_for(m.fixture.source)}>")
+
+
 def cmd_head(args: argparse.Namespace) -> int:
     """Make and tweak custom heads via editable plan files."""
     from . import chart, plan
@@ -419,6 +438,8 @@ def cmd_head(args: argparse.Namespace) -> int:
             print(f"  could not read: {fixture.source_id}")
         for w in plan.warnings(fixture):
             print(f"  warning: {w}")
+        if getattr(args, "match", False):
+            _match_reference(fixture)
         print(f"CHECK THE PLAN against the manual, then: lx head build {out}")
         return 0
 
@@ -593,6 +614,8 @@ def build_parser() -> argparse.ArgumentParser:
     hf = hsub.add_parser("from-text", help="draft a plan from a pasted DMX chart (manual/screenshot text)")
     hf.add_argument("chart", help="text file with the chart, or - for stdin")
     hf.add_argument("-o", "--out", help="plan file to write (default head-plan.txt)")
+    hf.add_argument("--match", action="store_true",
+                    help="also rank known fixtures against the chart ('what is this really?')")
     hf.set_defaults(func=cmd_head)
     hb = hsub.add_parser("build", help="compile a plan into a MagicQ .hed")
     hb.add_argument("plan", help="the edited plan file")

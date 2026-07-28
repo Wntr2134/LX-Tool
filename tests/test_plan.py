@@ -148,3 +148,25 @@ def test_chart_dotted_range_separators():
     fx = chart.parse_chart("1 Strobe\n0..9 Open\n10…255 Strobe fast")
     assert [(r.dmx_from, r.dmx_to) for r in fx.modes[0].channels[0].ranges] == \
         [(0, 9), (10, 255)]
+
+
+def test_chart_match_ranks_the_real_fixture(tmp_path, monkeypatch):
+    """Paste a clone's chart, get told what it really is."""
+    from lxtool import matching
+    from lxtool.model import Channel, Fixture, Mode
+
+    aura = Fixture(manufacturer="Martin", model="Aura", source="chamsys", modes=[Mode(
+        name="Standard",
+        channels=[Channel(offset=i + 1, name=a, attribute=a) for i, a in enumerate(
+            ["Shutter", "Dimmer", "Zoom", "Pan", "Tilt", "Control",
+             "ColorWheel", "Red", "Green", "Blue", "White", "CTO"])],
+    )])
+    par = Fixture(manufacturer="Generic", model="RGB Par", source="chamsys", modes=[Mode(
+        name="3ch", channels=[Channel(offset=i + 1, name=a, attribute=a)
+                              for i, a in enumerate(["Red", "Green", "Blue"])])])
+
+    clone = chart.parse_chart(
+        "1 Shutter\n2 Dimmer\n3 Zoom\n4 Pan\n5 Tilt\n6 Control\n"
+        "7 Colour macro\n8 Red\n9 Green\n10 Blue\n11 White\n12 CTC")
+    hits = matching.find_candidates(clone, clone.modes[0], [aura, par], limit=2)
+    assert hits[0].fixture.model == "Aura"

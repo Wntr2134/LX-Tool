@@ -118,9 +118,32 @@ lx head build head-plan.txt
 ```
 
 It copes with messy manual layouts ("CH1 - Pan", "3. Tilt", "0-9 Open"),
-expands "5-6 Zoom (16 bit)" into a proper 16-bit pair, and attaches range
-rows to the right channel. In the app: paste into the chart box in
-section 5.
+expands "5-6 Zoom (16 bit)" into a proper 16-bit pair, handles phone OCR
+that reads a table column-by-column, and attaches range rows to the right
+channel. In the app: paste into the chart box in section 5.
+
+**"What is this clone, really?"** If you've drafted a plan or pasted a chart
+and want to know which known fixture it's closest to (often the genuine
+profile to start from), the app's **What is this?** button ranks the whole
+library against your layout. On the command line, add `--match`:
+
+```bash
+lx head from-text chart.txt --match
+#   Closest known fixtures - consider starting from one of these:
+#     1. [ 92%] Martin Aura [Standard]  <ChamSys>
+```
+
+**No reference at all?** Start blank and name channels as you probe the
+fixture with a DMX tester:
+
+```bash
+lx head template plan.txt --blank 16
+```
+
+**In the app**, section 5 is a full editor: **drag the grip** on each
+channel to reorder the DMX layout, edit names and attributes inline, add or
+remove channels, then Check and Build. "Raw text" toggles to the plain-text
+plan if you prefer typing.
 
 ## Two other tricks worth trying
 
