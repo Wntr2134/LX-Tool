@@ -818,14 +818,15 @@ def build_personality(fixture: Fixture, mode: Mode | None = None, *, year: int =
     out.extend(range_rows)
     out.extend(colour_rows)
 
-    # Trailing sections. This follows the real V,008f skeleton line for line
-    # - shapes taken from the smallest stock head of that version and sized
-    # by rules checked across 2,245 V,008f heads (the zeros row carries one
-    # field per channel; the near-final row carries count+1). An earlier
-    # version invented a shorter tail and stopped, and MagicQ, hitting EOF
-    # mid-grammar, mis-read the whole head: phantom multi-element channels,
-    # a dropped 16-bit flag, defaults ignored. The sections here are emitted
-    # empty but *complete*, which is what the desk needs.
+    # Trailing sections. Shapes taken from real stock heads and sized by
+    # verified rules: the zeros row carries one field per channel PLUS one
+    # per macro (67,821 of 67,906 stock heads; a mismatch here crashed
+    # MagicQ outright on a hand-patched test file), and the near-final row
+    # carries count+1. No macros are emitted, so the row is channel-sized.
+    # An earlier version invented a shorter tail and stopped, and MagicQ,
+    # hitting EOF mid-grammar, mis-read the whole head: phantom
+    # multi-element channels, a dropped 16-bit flag, defaults ignored. The
+    # sections here are emitted empty but *complete*.
     n = len(channels)
     out.append("00000000,")
     out.append(",".join(["00000000"] * n) + ("," if n else ""))
