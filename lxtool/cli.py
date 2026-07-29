@@ -455,8 +455,45 @@ def cmd_head(args: argparse.Namespace) -> int:
         print(f"warning: {w}", file=sys.stderr)
     _ch.write(fixture, out, mode)
     print(f"{fixture.key}: wrote {mode.name} ({mode.channel_count} ch) -> {out}")
+    if getattr(args, "save", False):
+        from . import mylib
+        saved = mylib.save(fixture, mode, plan_text=Path(args.plan).read_text())
+        print(f"saved to your library: {saved.hed}")
     print("copy it into the MagicQ heads folder and restart MagicQ")
     return 0
+
+
+def cmd_heads(args: argparse.Namespace) -> int:
+    """List, reopen and remove your saved custom heads."""
+    from . import mylib, plan
+
+    if args.action == "list":
+        rows = mylib.entries()
+        if not rows:
+            print(f"no saved heads yet (they live in {mylib.store_dir()})")
+            print("save one with:  lx head build plan.txt --save")
+            return 0
+        print(f"{len(rows)} saved head(s) in {mylib.store_dir()}:\n")
+        for h in rows:
+            print(f"  {h.stem:<40} {h.manufacturer} {h.model} [{h.mode}] {h.channels}ch")
+        return 0
+
+    if args.action == "edit":
+        text = mylib.get_plan(args.name)
+        if text is None:
+            raise SystemExit(f"no saved head called {args.name!r} (see 'lx heads list')")
+        out = Path(args.out or f"{args.name}.plan")
+        out.write_text(text, encoding="utf-8")
+        print(f"plan written to {out} - edit it, then: lx head build {out} --save")
+        return 0
+
+    if args.action == "remove":
+        if mylib.remove(args.name):
+            print(f"removed {args.name}")
+            return 0
+        raise SystemExit(f"no saved head called {args.name!r}")
+
+    return 1
 
 
 def cmd_rig(args: argparse.Namespace) -> int:
@@ -620,7 +657,21 @@ def build_parser() -> argparse.ArgumentParser:
     hb = hsub.add_parser("build", help="compile a plan into a MagicQ .hed")
     hb.add_argument("plan", help="the edited plan file")
     hb.add_argument("out", nargs="?", help="output .hed (default from manufacturer/model/mode)")
+    hb.add_argument("--save", action="store_true",
+                    help="also save into your personal head library for next time")
     hb.set_defaults(func=cmd_head)
+
+    he = sub.add_parser("heads", help="list, reopen and remove your saved custom heads")
+    hesub = he.add_subparsers(dest="action", required=True)
+    hel = hesub.add_parser("list", help="list saved heads")
+    hel.set_defaults(func=cmd_heads)
+    hee = hesub.add_parser("edit", help="write a saved head's plan back out to edit")
+    hee.add_argument("name", help="the saved head's name (from 'lx heads list')")
+    hee.add_argument("-o", "--out", help="plan file to write")
+    hee.set_defaults(func=cmd_heads)
+    her = hesub.add_parser("remove", help="delete a saved head")
+    her.add_argument("name", help="the saved head's name")
+    her.set_defaults(func=cmd_heads)
 
     r = sub.add_parser("rig", help="summarise a whole patch from an MVR file")
     r.add_argument("file")

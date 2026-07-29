@@ -145,6 +145,21 @@ channel to reorder the DMX layout, edit names and attributes inline, add or
 remove channels, then Check and Build. "Raw text" toggles to the plain-text
 plan if you prefer typing.
 
+**Save the ones you crack.** A clone you figure out at one venue should be
+there at the next. Build it with `--save` (or the app's **Save to my heads**
+button) and it joins your personal library:
+
+```bash
+lx head build plan.txt --save
+lx heads list                     # everything you have saved
+lx heads edit China_AuraClone_14ch -o plan.txt   # reopen to tweak
+```
+
+Saved heads live under your user folder (override with `LXTOOL_MYHEADS`) and
+**automatically join every match and "What is this?" from then on** - so the
+second time you meet that clone, the tool recognises it. The app has them in
+section 6, with Edit / Download / Remove.
+
 ## Two other tricks worth trying
 
 **"What's the closest head I already have?"** — point it at a fixture file

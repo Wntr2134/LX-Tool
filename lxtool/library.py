@@ -30,6 +30,7 @@ SOURCE_LABELS = {
     "gdtf": "GDTF",
     "ofl": "Open Fixture Library",
     "mvr": "MVR",
+    "myheads": "My Heads",
 }
 
 
@@ -215,6 +216,7 @@ def load(
     paths: list[Path | str] | None = None,
     *,
     include_ofl: bool = False,
+    include_mine: bool = True,
     cache: Path | str | None = None,
 ) -> Library:
     """Load every requested library, plus auto-detected ones when none given.
@@ -223,6 +225,17 @@ def load(
     so one bad folder cannot take out a search across the others.
     """
     lib = Library()
+
+    # Your own saved heads always come along - a clone you cracked once
+    # should turn up in every match from then on.
+    if include_mine:
+        try:
+            from . import mylib
+            saved = mylib.load_fixtures()
+            if saved:
+                lib.rows.extend(index_mod.build(saved))
+        except Exception as exc:      # noqa: BLE001 - never fatal
+            lib.errors.append(f"My Heads: {exc}")
 
     targets = [Path(p) for p in paths] if paths else detect_sources()
     for path in targets:

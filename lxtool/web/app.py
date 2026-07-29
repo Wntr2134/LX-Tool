@@ -334,6 +334,63 @@ def api_head_match(plan_text: str = Form(...)) -> dict:
     ]}
 
 
+@app.post("/api/head-save")
+def api_head_save(plan_text: str = Form(...)) -> dict:
+    """Build a plan and keep it in the personal head library."""
+    from .. import mylib, plan
+
+    try:
+        fixture = plan.parse(plan_text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    saved = mylib.save(fixture, plan_text=plan_text)
+    return {"stem": saved.stem, "label": f"{saved.manufacturer} {saved.model} [{saved.mode}]",
+            "path": str(saved.hed)}
+
+
+@app.get("/api/my-heads")
+def api_my_heads() -> dict:
+    """List the saved custom heads."""
+    from .. import mylib
+
+    return {"dir": str(mylib.store_dir()), "heads": [
+        {"stem": h.stem, "manufacturer": h.manufacturer, "model": h.model,
+         "mode": h.mode, "channels": h.channels}
+        for h in mylib.entries()
+    ]}
+
+
+@app.get("/api/my-heads/plan")
+def api_my_head_plan(stem: str) -> dict:
+    """Reopen a saved head's plan in the editor."""
+    from .. import mylib
+
+    text = mylib.get_plan(stem)
+    if text is None:
+        raise HTTPException(404, f"no saved head called {stem!r}")
+    return {"plan": text}
+
+
+@app.get("/api/my-heads/download")
+def api_my_head_download(stem: str) -> FileResponse:
+    """Download a saved head's .hed."""
+    from .. import mylib
+
+    hed = mylib.store_dir() / f"{stem}.hed"
+    if not hed.is_file():
+        raise HTTPException(404, f"no saved head called {stem!r}")
+    return FileResponse(hed, filename=hed.name,
+                        media_type="application/octet-stream")
+
+
+@app.post("/api/my-heads/remove")
+def api_my_head_remove(stem: str = Form(...)) -> dict:
+    """Delete a saved head."""
+    from .. import mylib
+
+    return {"removed": mylib.remove(stem)}
+
+
 @app.post("/api/head-build")
 def api_head_build(plan_text: str = Form(...)) -> FileResponse:
     """Compile an edited plan into a MagicQ .hed."""
@@ -466,10 +523,18 @@ PAGE = """<!doctype html>
     <button onclick="headWhat()">What is this? (match)</button></p>
  <p><button onclick="headCheck(false)">Check plan</button>
     <button onclick="headBuild()">Build .hed &amp; download</button>
+    <button onclick="headSave()">Save to my heads</button>
     <button type="button" onclick="toggleRaw()" style="background:#8883;color:inherit">Raw text</button></p>
  <textarea id="planbox" rows="12" style="width:100%;font-family:monospace;display:none"
     oninput="rawToRows()"></textarea>
  <div id="headout"></div>
+</fieldset>
+
+<fieldset><legend>6. My saved heads</legend>
+ <p class="note">Custom heads you have saved - they also turn up in match and
+    "What is this?" from now on. Reopen one to tweak, or download it again.</p>
+ <p><button onclick="loadMyHeads()">Refresh list</button> <span id="mydir" class="note"></span></p>
+ <div id="myheads"></div>
 </fieldset>
 
 <script>
@@ -484,6 +549,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const lib = d.folders[0].has_library ? ' (full library found)' : ' (custom heads only)';
     $('detected').innerHTML = 'Found: <code>' + d.folders[0].path + '</code>' + lib;
   } catch (e) { /* detection is a convenience, not a requirement */ }
+  loadMyHeads();
 });
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
@@ -681,6 +747,46 @@ async function headChart() {
     $('headout').innerHTML = msg;
   } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
+
+async function headSave() {
+  const fd = new FormData(); fd.append('plan_text', planText());
+  try {
+    const d = await (await post('/api/head-save', fd)).json();
+    $('headout').innerHTML = `<p class="exact">Saved ${esc(d.label)} to your heads.</p>`;
+    loadMyHeads();
+  } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function loadMyHeads() {
+  try {
+    const d = await (await fetch('/api/my-heads')).json();
+    $('mydir').textContent = d.dir;
+    if (!d.heads.length) { $('myheads').innerHTML = '<p class="note">Nothing saved yet.</p>'; return; }
+    $('myheads').innerHTML = '<table><tr><th>Fixture</th><th>Mode</th><th>Ch</th><th></th></tr>' +
+      d.heads.map(h => `<tr>
+        <td>${esc(h.manufacturer)} ${esc(h.model)}</td><td>${esc(h.mode)}</td><td>${h.channels}</td>
+        <td><button onclick="openMyHead('${esc(h.stem)}')">Edit</button>
+            <a href="/api/my-heads/download?stem=${encodeURIComponent(h.stem)}"><button type="button">Download</button></a>
+            <button onclick="removeMyHead('${esc(h.stem)}')" style="background:#8883;color:inherit">Remove</button></td>
+      </tr>`).join('') + '</table>';
+  } catch (e) { $('myheads').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function openMyHead(stem) {
+  const d = await (await fetch('/api/my-heads/plan?stem=' + encodeURIComponent(stem))).json();
+  planToRows(d.plan);
+  $('headout').innerHTML = `<p>Loaded ${esc(stem)} into the editor above.</p>`;
+  document.getElementById('planbox').scrollIntoView({behavior:'smooth'});
+}
+
+async function removeMyHead(stem) {
+  if (!confirm('Remove ' + stem + '?')) return;
+  const fd = new FormData(); fd.append('stem', stem);
+  await post('/api/my-heads/remove', fd);
+  loadMyHeads();
+}
+
+async function headSave2Placeholder() {}
 
 async function headCheck(quiet) {
   const fd = new FormData(); fd.append('plan_text', planText());
