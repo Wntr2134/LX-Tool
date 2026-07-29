@@ -9,6 +9,8 @@
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
 
 # uvicorn and fastapi load parts of themselves dynamically, so PyInstaller's
@@ -33,6 +35,14 @@ hidden = [
     "webview.platforms.winforms",
     "webview.platforms.edgechromium",
 ]
+
+# Many lxtool submodules (_build, mylib, plan, chart, net, gdtfshare, ...) are
+# imported lazily inside functions, so PyInstaller's static analysis of the
+# entry script never sees them and leaves them out of the bundle - which makes
+# the frozen app raise ImportError (a 500 on the very first page) the moment
+# one of those code paths runs. Collect the whole package so every submodule
+# ships, regardless of how it is imported.
+hidden += collect_submodules("lxtool")
 
 a = Analysis(
     ["../lxtool/desktop.py"],

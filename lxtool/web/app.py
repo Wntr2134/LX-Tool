@@ -65,10 +65,18 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     )
 
 
+def _build_label() -> str:
+    """Never let a missing build stamp take down the whole page."""
+    try:
+        from .. import _build
+        return _build.label()
+    except Exception:      # noqa: BLE001 - the page must render regardless
+        return "unknown build"
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    from .. import _build
-    return PAGE.replace("__BUILD__", _build.label())
+    return PAGE.replace("__BUILD__", _build_label())
 
 
 @app.post("/api/scan")

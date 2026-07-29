@@ -107,3 +107,43 @@ def test_page_has_the_expected_sections():
     for marker in ("Make your own head", "My saved heads", "chanlist",
                    "planToRows", "headBuild"):
         assert marker in PAGE, f"missing {marker!r}"
+
+
+def test_index_renders_even_if_build_stamp_is_missing(monkeypatch):
+    """The page must never 500, even if the _build module is absent.
+
+    In a frozen build a lazily-imported submodule can be left out of the
+    bundle; that must degrade to an "unknown build" label, not an Internal
+    Server Error on the very first page - which is exactly what shipped.
+    """
+    import lxtool._build as build_mod
+    import lxtool.web.app as web
+
+    # Stand in for the failure modes a frozen bundle can produce (module
+    # absent, or present but broken): make reading the stamp raise.
+    def boom() -> str:
+        raise ImportError("simulated missing/broken _build in a frozen bundle")
+
+    monkeypatch.setattr(build_mod, "label", boom)
+
+    # The safety net must swallow it and still return a usable label.
+    assert web._build_label() == "unknown build"
+
+    html = web.index()
+    assert "unknown build" in html
+    assert "__BUILD__" not in html          # token was still replaced
+    assert "Make your own head" in html     # the rest of the page is intact
+
+
+def test_spec_bundles_lazy_submodules():
+    """The frozen build must include the lazily-imported submodules.
+
+    _build, mylib, plan and chart are all imported inside functions, so
+    PyInstaller only ships them because the spec collects the whole package.
+    """
+    pytest.importorskip("PyInstaller")
+    from PyInstaller.utils.hooks import collect_submodules
+
+    mods = set(collect_submodules("lxtool"))
+    for m in ("lxtool._build", "lxtool.mylib", "lxtool.plan", "lxtool.chart"):
+        assert m in mods, f"{m} would be missing from the frozen build"
