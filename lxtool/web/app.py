@@ -641,13 +641,13 @@ let rawMode = false;
 
 function planText() {
   if (rawMode) return $('planbox').value;
-  let out = 'manufacturer: ' + $('pm').value + '\nmodel: ' + ($('pmod').value || 'MyFixture') +
-            '\nmode: ' + ($('pmode').value || 'Custom') + '\n\n';
+  let out = 'manufacturer: ' + $('pm').value + '\\nmodel: ' + ($('pmod').value || 'MyFixture') +
+            '\\nmode: ' + ($('pmode').value || 'Custom') + '\\n\\n';
   for (const r of rows) {
     let line = 'channel: ' + (r.name || 'Channel');
     if (r.attr) line += ' | attr=' + r.attr;
-    out += line + '\n';
-    for (const rg of (r.ranges||[])) out += `  ${rg[0]}-${rg[1]}  ${rg[2]}\n`;
+    out += line + '\\n';
+    for (const rg of (r.ranges||[])) out += `  ${rg[0]}-${rg[1]}  ${rg[2]}\\n`;
   }
   return out;
 }
@@ -682,7 +682,7 @@ function renderRows() {
 const escAttr = s => String(s).replace(/"/g,'&quot;');
 
 function planToRows(text) {
-  const lines = text.split('\n'); rows = []; let cur = null;
+  const lines = text.split('\\n'); rows = []; let cur = null;
   for (const raw of lines) {
     const t = raw.trim();
     if (!t || t.startsWith('#')) continue;
