@@ -51,6 +51,14 @@ jobs:
           pip install pytest
           pytest -q
 
+      - name: Stamp the build
+        shell: bash
+        run: |
+          printf 'COMMIT = "%s"\nDATE = "%s"\n' \
+            "$(git rev-parse --short HEAD)" "$(date -u +%Y-%m-%d)" \
+            > lxtool/_build.py
+          cat lxtool/_build.py
+
       - name: Build
         run: pyinstaller --noconfirm packaging/lxtool.spec
 

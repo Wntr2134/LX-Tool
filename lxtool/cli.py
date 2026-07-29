@@ -565,6 +565,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="lx", description="Lighting fixture library tools")
+    from . import _build
+    p.add_argument("--version", action="version",
+                   version=f"LX-Tool {_build.label()}")
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("scan", help="index a ChamSys heads folder")

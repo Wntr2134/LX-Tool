@@ -67,7 +67,8 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return PAGE
+    from .. import _build
+    return PAGE.replace("__BUILD__", _build.label())
 
 
 @app.post("/api/scan")
@@ -462,6 +463,7 @@ PAGE = """<!doctype html>
 </style></head><body>
 <h1>LX-Tool</h1>
 <p class="sub">Match a fixture against your ChamSys library, and convert between GDTF, OFL and grandMA2.</p>
+<p class="sub" style="font-size:12px">LX-Tool &middot; __BUILD__ &middot; <a href="https://github.com/Wntr2134/LX-Tool/releases/latest" style="color:inherit">check for a newer build</a></p>
 
 <fieldset><legend>1. Your ChamSys heads folder</legend>
  <label for="folder">Path on this machine</label>
