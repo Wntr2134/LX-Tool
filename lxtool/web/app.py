@@ -688,8 +688,8 @@ function planToRows(text) {
   for (const raw of lines) {
     const t = raw.trim();
     if (!t || t.startsWith('#')) continue;
-    if (/^\s/.test(raw) && cur) {
-      const m = t.match(/^(\d{1,3})\s*-\s*(\d{1,3})\s+(.+)$/);
+    if (/^\\s/.test(raw) && cur) {
+      const m = t.match(/^(\\d{1,3})\\s*-\\s*(\\d{1,3})\\s+(.+)$/);
       if (m) { (cur.ranges = cur.ranges||[]).push([+m[1],+m[2],m[3]]); continue; }
     }
     const [k, ...rest] = t.split(':'); const v = rest.join(':').trim();

@@ -91,11 +91,16 @@ def test_no_quoted_js_string_spans_a_newline():
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node not available")
 def test_embedded_js_parses():
-    """If node is present, the whole script must parse."""
+    """If node is present, the whole script must parse.
+
+    The script is piped to node as explicit UTF-8 bytes: it contains a
+    non-Latin-1 glyph (the drag grip), and letting subprocess encode stdin
+    with the platform default fails on Windows, whose default is cp1252.
+    """
     proc = subprocess.run(
-        ["node", "--check", "-"], input=_script(),
-        capture_output=True, text=True)
-    assert proc.returncode == 0, proc.stderr
+        ["node", "--check", "-"], input=_script().encode("utf-8"),
+        capture_output=True)
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
 
 
 def test_page_has_the_expected_sections():
