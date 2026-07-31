@@ -81,19 +81,20 @@ def test_unknown_kind_and_silly_counts_are_rejected():
 
 
 def test_web_endpoints_serve_the_picker_and_the_draft():
-    from fastapi.testclient import TestClient
+    # The endpoint functions are called directly: fastapi's TestClient needs
+    # an httpx flavour that CI does not install, and these endpoints have no
+    # request-object behaviour worth exercising through a client.
+    from fastapi import HTTPException
 
-    from lxtool.web.app import app
+    from lxtool.web import app as web
 
-    client = TestClient(app)
-    kinds = client.get("/api/head-stock-kinds").json()["kinds"]
+    kinds = web.api_head_stock_kinds()["kinds"]
     assert {"key": "beam", "label": dict(stock.kinds())["beam"]} in kinds
 
-    r = client.post("/api/head-stock", data={"kind": "beam", "channels": 16})
-    assert r.status_code == 200
-    d = r.json()
+    d = web.api_head_stock(kind="beam", channels=16)
     assert d["channels"] == 16
     assert "DRAFT" in d["plan"]
 
-    assert client.post("/api/head-stock",
-                       data={"kind": "nope", "channels": 8}).status_code == 400
+    with pytest.raises(HTTPException) as exc:
+        web.api_head_stock(kind="nope", channels=8)
+    assert exc.value.status_code == 400
