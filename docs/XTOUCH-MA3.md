@@ -113,6 +113,33 @@ supports them — say what you want them to do and they can be added.
 
 ---
 
+## Running from the app instead of the terminal
+
+The desktop app has the bridge as **section 7**: set the MA3 host (leave
+`127.0.0.1` on the same PC), hit **Start bridge**, and the panel shows
+live state — which MIDI port it found, how many messages each side has
+sent. Start/stop it there; no terminal needed.
+
+## If something doesn't line up: the sniffer
+
+```
+lx xtouch sniff
+```
+
+prints **everything both sides say, decoded** — every OSC message MA3
+sends (exact address and value) and every MIDI event from the surface —
+for 30 seconds. If your MA3 version speaks a slightly different OSC
+dialect, one fader wiggle in MA3 shows the exact address it uses, and the
+config can be set to match. Run it while the bridge is *stopped* (they
+share the listen port).
+
+## Reliability
+
+- Start the bridge before the X-Touch is plugged in — it waits and
+  connects when the surface appears.
+- Unplug the X-Touch mid-session — it reconnects automatically.
+- Restart MA3 — nothing to do; OSC is connectionless, it just resumes.
+
 ## Current status — read this
 
 The protocol code is fully tested in software, but this has **not yet had

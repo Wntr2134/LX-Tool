@@ -579,6 +579,9 @@ def cmd_xtouch(args: argparse.Namespace) -> int:
                         config_path=args.config)
     if args.action == "test":
         return xrun.selftest(midi_port=args.midi_port)
+    if args.action == "sniff":
+        return xrun.sniff(recv_port=args.recv_port,
+                          midi_port=args.midi_port, seconds=args.seconds)
     # config
     text = xrun.default_config_json()
     if args.out:
@@ -825,6 +828,13 @@ def build_parser() -> argparse.ArgumentParser:
     xtc = xtsub.add_parser("config", help="write the default mapping to edit")
     xtc.add_argument("-o", "--out", help="file to write (default: print)")
     xtc.set_defaults(func=cmd_xtouch)
+    xts = xtsub.add_parser("sniff", help="print everything MA3 and the "
+                                         "surface say, decoded - the "
+                                         "first-session diagnostic")
+    xts.add_argument("--recv-port", type=int, default=9000)
+    xts.add_argument("--midi-port", default="")
+    xts.add_argument("--seconds", type=float, default=30.0)
+    xts.set_defaults(func=cmd_xtouch)
 
     sh = sub.add_parser("sheet", help="triage a pasted patch sheet: group "
                                       "fixtures, flag address collisions")

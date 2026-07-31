@@ -38,6 +38,13 @@ FADER_BANK_RIGHT = 47
 CHANNEL_LEFT = 48
 CHANNEL_RIGHT = 49
 
+# Transport row.
+REWIND = 91
+FASTFWD = 92
+STOP = 93
+PLAY = 94
+RECORD = 95
+
 _SYSEX_HEAD = bytes((0xF0, 0x00, 0x00, 0x66, 0x14, 0x12))
 LCD_CHARS = 7          # per strip, per line
 LCD_STRIPS = 8

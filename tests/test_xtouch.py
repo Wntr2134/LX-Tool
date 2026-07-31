@@ -214,3 +214,76 @@ def test_port_finder_matches_xtouch_names():
     assert find_xtouch_port(["Foo", "X-Touch INT 0"]) == "X-Touch INT 0"
     assert find_xtouch_port(["XTOUCH 1"]) == "XTOUCH 1"
     assert find_xtouch_port(["LoopBe", "IAC"]) is None
+
+
+# ---- transport row -----------------------------------------------------
+
+
+def test_transport_buttons_fire_commands_on_press_only():
+    b = Bridge()
+    (down,) = b.midi_in(bytes((0x90, mcu.PLAY, 127)))
+    assert osc.decode(down) == osc.Message("/cmd", ("Go+",))
+    assert b.midi_in(bytes((0x90, mcu.PLAY, 0))) == []       # release: nothing
+    (stop,) = b.midi_in(bytes((0x90, mcu.STOP, 127)))
+    assert osc.decode(stop).args == ("Pause",)
+    (rew,) = b.midi_in(bytes((0x90, mcu.REWIND, 127)))
+    assert osc.decode(rew).args == ("Go-",)
+
+
+def test_unmapped_transport_button_stays_silent():
+    b = Bridge()
+    assert b.midi_in(bytes((0x90, mcu.RECORD, 127))) == []
+    b.config.cmd_record = "Off Sequence 1"
+    (d,) = b.midi_in(bytes((0x90, mcu.RECORD, 127)))
+    assert osc.decode(d).args == ("Off Sequence 1",)
+
+
+# ---- runner and diagnostics -------------------------------------------
+
+
+def test_runner_errors_cleanly_when_the_udp_port_is_taken():
+    import socket
+
+    from lxtool.xtouch.run import Runner, midi_available
+
+    if not midi_available():
+        pytest.skip("mido not installed here; the port check needs run()")
+    taken = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    taken.bind(("127.0.0.1", 0))
+    port = taken.getsockname()[1]
+    try:
+        r = Runner(recv_port=port, log=lambda *a: None)
+        assert r.run() == 1
+        assert r.state == "error"
+        assert "already running" in r.detail or "cannot listen" in r.detail
+    finally:
+        taken.close()
+
+
+def test_runner_stop_event_ends_the_wait_for_a_surface():
+    from lxtool.xtouch.run import Runner, midi_available
+
+    if not midi_available():
+        pytest.skip("mido not installed here")
+    r = Runner(recv_port=0, midi_port="", log=lambda *a: None)
+    r.stop()                      # stopped before it starts: run returns fast
+    assert r.run() == 0
+    assert r.state == "stopped"
+
+
+def test_sniffer_formatting_is_readable_and_junk_proof():
+    from lxtool.xtouch.run import format_midi, format_osc
+
+    line = format_osc(osc.encode(osc.Message("/Page1/Fader201", (75,))))
+    assert "/Page1/Fader201" in line and "75" in line
+    assert "undecodable" in format_osc(b"\x01\x02\x03")
+    assert "FaderMoved" in format_midi(mcu.fader_out(0, 1.0))
+    assert "??" in format_midi(b"\xfe")
+
+
+def test_web_status_endpoint_reports_without_midi_installed():
+    from lxtool.web import app as web
+
+    d = web.api_xtouch_status()
+    assert set(d) >= {"available", "running", "state", "detail"}
+    assert d["running"] is False

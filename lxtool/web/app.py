@@ -353,6 +353,58 @@ def api_patch_sheet(sheet_text: str = Form(...)) -> dict:
             "skipped": sheet.skipped}
 
 
+_xtouch_runner = None
+_xtouch_thread = None
+
+
+@app.get("/api/xtouch/status")
+def api_xtouch_status() -> dict:
+    """Where the X-Touch bridge is at, for the panel to poll."""
+    from ..xtouch import run as xrun
+
+    r = _xtouch_runner
+    return {
+        "available": xrun.midi_available(),
+        "running": _xtouch_thread is not None and _xtouch_thread.is_alive(),
+        "state": r.state if r else "stopped",
+        "detail": r.detail if r else "",
+        "midi": r.midi_name if r else "",
+        "counters": r.counters if r else {},
+    }
+
+
+@app.post("/api/xtouch/start")
+def api_xtouch_start(host: str = Form("127.0.0.1"),
+                     send_port: int = Form(8000),
+                     recv_port: int = Form(9000)) -> dict:
+    """Start the bridge in the background."""
+    import threading
+
+    from ..xtouch import run as xrun
+
+    global _xtouch_runner, _xtouch_thread
+    if not xrun.midi_available():
+        raise HTTPException(
+            409, 'MIDI support is not installed - run: '
+                 'pip install "lx-tool[xtouch]" and restart the app')
+    if _xtouch_thread is not None and _xtouch_thread.is_alive():
+        raise HTTPException(409, "the bridge is already running")
+
+    _xtouch_runner = xrun.Runner(ma3_host=host, send_port=send_port,
+                                 recv_port=recv_port,
+                                 log=lambda *a: None)
+    _xtouch_thread = threading.Thread(target=_xtouch_runner.run, daemon=True)
+    _xtouch_thread.start()
+    return {"ok": True}
+
+
+@app.post("/api/xtouch/stop")
+def api_xtouch_stop() -> dict:
+    if _xtouch_runner is not None:
+        _xtouch_runner.stop()
+    return {"ok": True}
+
+
 @app.post("/api/head-plan")
 def api_head_plan(key: str = Form(""), mode: str = Form(""),
                   chart_text: str = Form("")) -> dict:
@@ -690,7 +742,20 @@ PAGE = """<!doctype html>
  <div id="headout"></div>
 </fieldset>
 
-<fieldset><legend>7. My saved heads</legend>
+<fieldset><legend>7. X-Touch &rarr; grandMA3 bridge</legend>
+ <p class="note">Drive MA3 onPC from a full-size Behringer X-Touch: motorised
+    faders follow executors both ways, buttons and encoder rings get feedback.
+    Surface in MC/USB mode; MA3: Menu &rarr; In &amp; Out &rarr; OSC, send port
+    9000, receive port 8000, Send+Receive on. Full guide: docs/XTOUCH-MA3.md.</p>
+ <p><label>MA3 host</label> <input type="text" id="xthost" value="127.0.0.1" style="width:10rem">
+    <label>send</label> <input type="number" id="xtsend" value="8000" style="width:6rem">
+    <label>listen</label> <input type="number" id="xtrecv" value="9000" style="width:6rem"></p>
+ <p><button onclick="xtStart()">Start bridge</button>
+    <button onclick="xtStop()">Stop</button></p>
+ <div id="xtout" class="note"></div>
+</fieldset>
+
+<fieldset><legend>8. My saved heads</legend>
  <p class="note">Custom heads you have saved - they also turn up in match and
     "What is this?" from now on. Reopen one to tweak, or download it again.</p>
  <p><button onclick="loadMyHeads()">Refresh list</button> <span id="mydir" class="note"></span></p>
@@ -1045,6 +1110,38 @@ async function sheetRead() {
     if (d.skipped) html += `<p class="note">${d.skipped} line(s) not recognised as fixtures.</p>`;
     $('sheetout').innerHTML = html;
   } catch (e) { $('sheetout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+let xtTimer = null;
+async function xtRefresh() {
+  try {
+    const d = await (await fetch('/api/xtouch/status')).json();
+    let line;
+    if (d.running)
+      line = `<b>${esc(d.state)}</b> - ${esc(d.detail)} | MIDI in: ${d.counters.midi_in||0}, MA3 in: ${d.counters.osc_in||0}`;
+    else if (d.state === 'error')
+      line = `<span class="sev5">${esc(d.detail)}</span>`;
+    else if (d.available)
+      line = 'stopped';
+    else
+      line = 'MIDI support not installed - pip install "lx-tool[xtouch]"';
+    $('xtout').innerHTML = line;
+    if (!d.running && xtTimer) { clearInterval(xtTimer); xtTimer = null; }
+  } catch (e) { $('xtout').innerHTML = esc(e.message); }
+}
+async function xtStart() {
+  const fd = new FormData();
+  fd.append('host', $('xthost').value);
+  fd.append('send_port', $('xtsend').value); fd.append('recv_port', $('xtrecv').value);
+  try {
+    await post('/api/xtouch/start', fd);
+    if (!xtTimer) xtTimer = setInterval(xtRefresh, 2000);
+    xtRefresh();
+  } catch (e) { $('xtout').innerHTML = `<span class="sev5">${esc(e.message)}</span>`; }
+}
+async function xtStop() {
+  try { await post('/api/xtouch/stop', new FormData()); } catch (e) {}
+  setTimeout(xtRefresh, 500);
 }
 
 async function sheetDraft(kind, channels) {

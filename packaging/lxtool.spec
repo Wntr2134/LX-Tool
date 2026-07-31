@@ -34,6 +34,11 @@ hidden = [
     "webview.platforms.cocoa",
     "webview.platforms.winforms",
     "webview.platforms.edgechromium",
+    # The X-Touch bridge. mido picks its backend at runtime by name, so the
+    # rtmidi backend must be listed or the frozen app has silent no-MIDI.
+    "mido",
+    "mido.backends.rtmidi",
+    "rtmidi",
 ]
 
 # Many lxtool submodules (_build, mylib, plan, chart, net, gdtfshare, ...) are

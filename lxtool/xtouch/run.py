@@ -4,6 +4,10 @@ This is the only module in the package that touches hardware; everything
 above it is pure and tested. MIDI needs the optional `mido` +
 `python-rtmidi` pair (pip install "lx-tool[xtouch]"); OSC is a plain UDP
 socket.
+
+The Runner survives the real world: X-Touch unplugged mid-show, MA3
+restarted, the bridge started before either is ready. It keeps retrying
+rather than dying, and exposes its state so a UI can show what's going on.
 """
 
 from __future__ import annotations
@@ -11,11 +15,15 @@ from __future__ import annotations
 import json
 import socket
 import sys
+import threading
 import time
 from dataclasses import fields
 from pathlib import Path
 
+from . import mcu, osc
 from .bridge import Bridge, Config
+
+_RETRY_SECS = 2.0
 
 
 def load_config(path: str | Path | None) -> Config:
@@ -36,7 +44,7 @@ def load_config(path: str | Path | None) -> Config:
 
 
 def default_config_json() -> str:
-    """A commented-enough starting config to hand to a user."""
+    """A starting config to hand to a user."""
     cfg = Config()
     body = {f.name: (list(v) if isinstance(v := getattr(cfg, f.name), tuple)
                      else v)
@@ -52,66 +60,224 @@ def find_xtouch_port(names: list[str]) -> str | None:
     return None
 
 
-def run(*, ma3_host: str = "127.0.0.1", send_port: int = 8000,
-        recv_port: int = 9000, midi_port: str = "",
-        config_path: str = "") -> int:
-    """Bridge until Ctrl-C. Returns an exit code."""
+def midi_available() -> bool:
     try:
-        import mido
+        import mido  # noqa: F401
+        return True
     except ImportError:
-        print('MIDI support is not installed. Run:  pip install "lx-tool[xtouch]"',
-              file=sys.stderr)
-        return 1
+        return False
 
-    names = mido.get_input_names()
-    port_name = midi_port or find_xtouch_port(names)
-    if not port_name:
-        print("no X-Touch found. MIDI inputs seen:", file=sys.stderr)
-        for n in names or ["(none)"]:
-            print(f"  {n}", file=sys.stderr)
-        print("plug the X-Touch in via USB, set it to MC mode "
-              "(hold SELECT ch1 while powering on), or pass --midi-port",
-              file=sys.stderr)
-        return 1
 
-    bridge = Bridge(config=load_config(config_path or None))
+class Runner:
+    """The bridge against real ports, with reconnect and visible state.
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", recv_port))
-    sock.setblocking(False)
-    ma3 = (ma3_host, send_port)
+    state is one of: "starting", "waiting-for-surface", "running",
+    "stopped", "error". A UI can poll state/detail/counters while the
+    run() loop owns the thread it was started on.
+    """
 
-    with mido.open_input(port_name) as midi_in, \
-            mido.open_output(port_name) as midi_out:
-        print(f"X-Touch:  {port_name}")
-        print(f"MA3:      sending to {ma3_host}:{send_port}, "
-              f"listening on :{recv_port}")
-        print("MA3 setup: Menu > In & Out > OSC - destination this machine, "
-              "Send+Receive on, executor feedback on")
-        for raw in bridge.hello():
-            midi_out.send(mido.Message.from_bytes(raw))
-        print("bridging - Ctrl-C to stop")
+    def __init__(self, *, ma3_host: str = "127.0.0.1", send_port: int = 8000,
+                 recv_port: int = 9000, midi_port: str = "",
+                 config_path: str = "", log=print):
+        self.ma3 = (ma3_host, send_port)
+        self.recv_port = recv_port
+        self.midi_port = midi_port
+        self.bridge = Bridge(config=load_config(config_path or None))
+        self.stop_event = threading.Event()
+        self.state = "starting"
+        self.detail = ""
+        self.midi_name = ""
+        self.counters = {"midi_in": 0, "osc_in": 0}
+        self._log = log
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def run(self) -> int:
+        """Bridge until stopped. Reconnects instead of dying."""
+        try:
+            import mido
+        except ImportError:
+            self.state, self.detail = "error", (
+                'MIDI support is not installed. Run:  '
+                'pip install "lx-tool[xtouch]"')
+            self._log(self.detail)
+            return 1
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind(("0.0.0.0", self.recv_port))
+        except OSError as exc:
+            self.state, self.detail = "error", (
+                f"cannot listen on UDP {self.recv_port}: {exc} "
+                "(is another bridge already running?)")
+            self._log(self.detail)
+            return 1
+        sock.setblocking(False)
 
         try:
-            while True:
+            while not self.stop_event.is_set():
+                try:
+                    names = mido.get_input_names()
+                except Exception as exc:  # noqa: BLE001 - backend won't init
+                    self.state, self.detail = "error", (
+                        f"the MIDI system is unavailable: {exc}")
+                    self._log(self.detail)
+                    return 1
+                port_name = self.midi_port or find_xtouch_port(names)
+                if not port_name:
+                    if self.state != "waiting-for-surface":
+                        self.state = "waiting-for-surface"
+                        self.detail = ("no X-Touch on USB - plug it in "
+                                       "(MC mode, USB) and it will be "
+                                       "picked up automatically")
+                        self._log(self.detail)
+                    if self.stop_event.wait(_RETRY_SECS):
+                        break
+                    continue
+                try:
+                    self._session(mido, port_name, sock)
+                except KeyboardInterrupt:
+                    break
+                except Exception as exc:  # noqa: BLE001 - reconnect, don't die
+                    self.state = "waiting-for-surface"
+                    self.detail = f"lost {port_name}: {exc} - reconnecting"
+                    self._log(self.detail)
+                    if self.stop_event.wait(_RETRY_SECS):
+                        break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            sock.close()
+        self.state, self.detail = "stopped", ""
+        self._log("bridge stopped")
+        return 0
+
+    def _session(self, mido, port_name: str, sock) -> None:
+        """One connected stretch: from port open until stop or error."""
+        with mido.open_input(port_name) as midi_in, \
+                mido.open_output(port_name) as midi_out:
+            self.midi_name = port_name
+            self.state = "running"
+            self.detail = (f"{port_name} <-> MA3 {self.ma3[0]}:{self.ma3[1]}"
+                           f" (feedback on :{self.recv_port})")
+            self._log(f"X-Touch:  {port_name}")
+            self._log(f"MA3:      sending to {self.ma3[0]}:{self.ma3[1]}, "
+                      f"listening on :{self.recv_port}")
+            for raw in self.bridge.hello():
+                midi_out.send(mido.Message.from_bytes(raw))
+
+            while not self.stop_event.is_set():
                 worked = False
                 for msg in midi_in.iter_pending():
                     worked = True
-                    for datagram in bridge.midi_in(bytes(msg.bytes())):
-                        sock.sendto(datagram, ma3)
+                    self.counters["midi_in"] += 1
+                    for datagram in self.bridge.midi_in(bytes(msg.bytes())):
+                        sock.sendto(datagram, self.ma3)
                 while True:
                     try:
                         datagram, _ = sock.recvfrom(4096)
                     except BlockingIOError:
                         break
+                    except OSError:
+                        return
                     worked = True
-                    for raw in bridge.osc_in(datagram):
+                    self.counters["osc_in"] += 1
+                    for raw in self.bridge.osc_in(datagram):
                         midi_out.send(mido.Message.from_bytes(raw))
                 if not worked:
                     time.sleep(0.002)
-        except KeyboardInterrupt:
-            print("\nstopping")
-            return 0
+
+
+def run(*, ma3_host: str = "127.0.0.1", send_port: int = 8000,
+        recv_port: int = 9000, midi_port: str = "",
+        config_path: str = "") -> int:
+    """CLI entry: bridge until Ctrl-C."""
+    runner = Runner(ma3_host=ma3_host, send_port=send_port,
+                    recv_port=recv_port, midi_port=midi_port,
+                    config_path=config_path)
+    print("bridging - Ctrl-C to stop")
+    return runner.run()
+
+
+# ---- diagnostics -------------------------------------------------------
+
+
+def format_osc(datagram: bytes) -> str:
+    """One OSC datagram -> a readable line for the sniffer."""
+    msg = osc.decode(datagram)
+    if msg is None:
+        return f"OSC   ?? undecodable, {len(datagram)} bytes: {datagram[:24].hex()}"
+    args = " ".join(repr(a) for a in msg.args)
+    return f"OSC   {msg.address}  {args}".rstrip()
+
+
+def format_midi(raw: bytes) -> str:
+    """One MIDI message -> a readable line for the sniffer."""
+    ev = mcu.decode(raw)
+    if ev is None:
+        return f"MIDI  ?? {raw.hex(' ')}"
+    return f"MIDI  {ev}"
+
+
+def sniff(*, recv_port: int = 9000, midi_port: str = "",
+          seconds: float = 30.0) -> int:
+    """Print everything both sides say, decoded. The first-session tool:
+
+    if MA3's OSC dialect differs from what the bridge expects, it is
+    visible here in one fader wiggle, and the config can be adjusted to
+    match instead of guessing.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("0.0.0.0", recv_port))
+    except OSError as exc:
+        print(f"cannot listen on UDP {recv_port}: {exc} "
+              "(stop the bridge while sniffing)", file=sys.stderr)
+        return 1
+    sock.setblocking(False)
+
+    midi_in = None
+    if midi_available():
+        import mido
+        name = midi_port or find_xtouch_port(mido.get_input_names())
+        if name:
+            midi_in = mido.open_input(name)
+            print(f"listening: MIDI {name!r} + OSC :{recv_port} "
+                  f"for {seconds:.0f}s")
+        else:
+            print(f"no X-Touch found - OSC only on :{recv_port} "
+                  f"for {seconds:.0f}s")
+    else:
+        print(f"mido not installed - OSC only on :{recv_port} "
+              f"for {seconds:.0f}s")
+    print("wiggle a fader on the surface and one in MA3 now")
+
+    deadline = time.monotonic() + seconds
+    try:
+        while time.monotonic() < deadline:
+            quiet = True
+            while True:
+                try:
+                    datagram, addr = sock.recvfrom(4096)
+                except BlockingIOError:
+                    break
+                quiet = False
+                print(f"{format_osc(datagram)}    (from {addr[0]})")
+            if midi_in is not None:
+                for msg in midi_in.iter_pending():
+                    quiet = False
+                    print(format_midi(bytes(msg.bytes())))
+            if quiet:
+                time.sleep(0.01)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sock.close()
+        if midi_in is not None:
+            midi_in.close()
+    print("done")
+    return 0
 
 
 def selftest(midi_port: str = "") -> int:
@@ -122,7 +288,6 @@ def selftest(midi_port: str = "") -> int:
         print('MIDI support is not installed. Run:  pip install "lx-tool[xtouch]"',
               file=sys.stderr)
         return 1
-    from . import mcu
 
     names = mido.get_output_names()
     port_name = midi_port or find_xtouch_port(names)

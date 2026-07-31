@@ -36,6 +36,13 @@ class Config:
     mute_execs: tuple = tuple(range(291, 299))    # MUTE row (flash/blackout style)
     encoder_execs: tuple = tuple(range(301, 309))
     encoder_step: float = 0.02         # fraction of full scale per tick
+    # Transport row -> MA3 command line. Empty string = unmapped. They act
+    # on the selected sequence, which is the least surprising default.
+    cmd_play: str = "Go+"
+    cmd_stop: str = "Pause"
+    cmd_rewind: str = "Go-"
+    cmd_fastfwd: str = ""
+    cmd_record: str = ""
 
     def addr(self, leaf: str) -> str:
         p = f"/{self.prefix}" if self.prefix else ""
@@ -78,6 +85,11 @@ class Bridge:
              self._touched.discard)(ev.strip)
 
         elif isinstance(ev, mcu.ButtonPressed):
+            command = self._transport_cmd(ev.note)
+            if command is not None:
+                if command and ev.down:
+                    out.append(osc.Message(self._cmd_addr(), (command,)))
+                return [osc.encode(m) for m in out]
             leaf = self._button_leaf(ev.note)
             if leaf == "page+" and ev.down:
                 self.config.page += 1
@@ -174,6 +186,14 @@ class Bridge:
 
     def _cmd_addr(self) -> str:
         return f"/{self.config.prefix}/cmd" if self.config.prefix else "/cmd"
+
+    def _transport_cmd(self, note: int) -> str | None:
+        """The command for a transport button, "" if unmapped, None if not
+        a transport button at all."""
+        cfg = self.config
+        return {mcu.PLAY: cfg.cmd_play, mcu.STOP: cfg.cmd_stop,
+                mcu.REWIND: cfg.cmd_rewind, mcu.FASTFWD: cfg.cmd_fastfwd,
+                mcu.RECORD: cfg.cmd_record}.get(note)
 
     def _button_leaf(self, note: int) -> str | None:
         cfg = self.config

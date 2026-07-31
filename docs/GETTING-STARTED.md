@@ -178,7 +178,7 @@ lx heads edit China_AuraClone_14ch -o plan.txt   # reopen to tweak
 Saved heads live under your user folder (override with `LXTOOL_MYHEADS`) and
 **automatically join every match and "What is this?" from then on** - so the
 second time you meet that clone, the tool recognises it. The app has them in
-section 7, with Edit / Download / Remove.
+section 8, with Edit / Download / Remove.
 
 ## Reading a whole patch sheet
 
