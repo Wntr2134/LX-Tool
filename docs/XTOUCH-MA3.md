@@ -1,94 +1,139 @@
-# Behringer X-Touch → grandMA3 onPC bridge
+# X-Touch → grandMA3 onPC Bridge — Setup Guide & Capabilities
 
-Your full-size X-Touch as a native MA3 surface: motorised faders drive
-executors **and follow them back**, buttons hit executor keys with LED
-feedback, the push-encoders turn rotary executors with ring feedback, and
-the scribble strips label what each strip is patched to. No MIDI-learn, no
-third-party licence — it speaks the X-Touch's Mackie Control protocol on
-one side and MA3's own OSC on the other.
+For the **full-size Behringer X-Touch** and **grandMA3 onPC on Windows**
+(also works on Mac). Part of LX-Tool: `lx xtouch`.
 
-## Install
+---
 
-```bash
+## What you need
+
+- Behringer X-Touch (full size), USB cable
+- grandMA3 onPC running on the same PC (or same network)
+- Python 3.9+ on the PC
+- LX-Tool with the MIDI extra:
+
+```
 pip install "lx-tool[xtouch]"
 ```
 
-(That adds `mido` + `python-rtmidi` for MIDI; everything else is built in.)
+---
 
-## Set up the X-Touch (full size)
+## Step 1 — Put the X-Touch in MC mode
 
-1. Connect via USB.
-2. Put it in **MC mode**: hold the **channel-1 SELECT** button while
-   powering on to enter the config screen, then:
-   - **encoder 1** → operation mode: choose **MC**
-   - **encoder 2** → interface: choose **USB**
-   - press channel-1 **SELECT** again to save, then power-cycle.
-   (The full-size X-Touch also offers HUI and network/Xctl modes - this
-   bridge wants MC over USB.)
-3. Prove it works before involving MA3:
+1. Power the X-Touch **off**.
+2. **Hold the channel-1 SELECT button** and power it **on** — the config
+   screen appears.
+3. **Encoder 1** → set operation mode to **MC**
+4. **Encoder 2** → set interface to **USB**
+5. Press channel-1 **SELECT** again to save, then power-cycle.
 
-```bash
+(The full-size unit also offers HUI and network/Xctl modes — the bridge
+needs **MC over USB**.)
+
+## Step 2 — Prove the surface works (no MA3 needed)
+
+```
 lx xtouch test
 ```
 
-Faders sweep, encoder rings fill, the strips say hello. If nothing moves,
-it's cabling or mode — fix that first.
+All nine faders sweep up and down, the encoder rings fill, the scribble
+strips say "LX-Tool". **If this works, the X-Touch side is 100% good.**
+If nothing moves: wrong mode (redo step 1) or a USB/driver issue.
 
-## Set up grandMA3 onPC
+## Step 3 — Set up grandMA3 onPC
 
-Menu → **In & Out → OSC**, add a line:
+Menu → **In & Out → OSC** → add a line:
 
 | Setting | Value |
 |---|---|
-| Destination IP | the machine running the bridge (`127.0.0.1` if the same PC) |
-| Port (send) | `9000` |
-| Port (receive) | `8000` |
-| Send / Receive | both **on** |
-| Prefix | leave empty (or set one and give the bridge the same) |
-| Feedback | enable executor feedback so the motors follow MA3 |
+| Destination IP | `127.0.0.1` (same PC) or the bridge PC's IP |
+| Port (send) | **9000** |
+| Port (receive) | **8000** |
+| Send | **On** |
+| Receive | **On** |
+| Prefix | leave empty |
+| Feedback filter | enable **executor** feedback |
 
-## Run it
+## Step 4 — Run the bridge
 
-```bash
+```
 lx xtouch run
-# elsewhere on the network:
+```
+
+MA3 on another machine on the network:
+
+```
 lx xtouch run --host 192.168.1.20
 ```
 
-## What's mapped (defaults)
+Leave the window open; Ctrl-C stops it.
 
-| Surface | MA3 |
-|---|---|
-| Faders 1–8 | Executors **201–208** on the current page |
-| Master fader (9th) | Grand master (via command line) |
-| SELECT row | Executor keys **101–108** (press/release, LED follows) |
-| MUTE row | Executor keys **291–298** |
-| Push-encoders 1–8 | Executors **301–308** (relative, ring shows level) |
-| FADER BANK ◀ ▶ | MA3 page down / up |
-| Scribble strips | Executor number + page |
+---
 
-Change any of it:
+## Exact capabilities (default mapping)
 
-```bash
+| X-Touch control | Does what in MA3 | Feedback to the surface |
+|---|---|---|
+| **Faders 1–8** (motorised, touch-sensing) | Executor faders **201–208** on the current page | **Motors physically follow MA3** — cue fades, other operators, anything |
+| **Master fader** (9th) | **Grand master** (command line) | Follows if you map it to an executor in config |
+| **SELECT row** (8 buttons) | Executor keys **101–108** — real press *and* release, so flash/temp buttons behave properly | Button LED lights when the executor is on |
+| **MUTE row** (8 buttons) | Executor keys **291–298** | LED feedback |
+| **Push-encoders 1–8** (turn) | Executor faders **301–308**, relative — 2% per click by default | **LED ring shows the level** |
+| **FADER BANK ◀ / ▶** (also CHANNEL ◀ ▶) | MA3 **page down / up** — all 8 strips retarget to the new page | Strips re-label |
+| **Scribble strips** (8 LCDs) | — | Show executor number + current page |
+| **Fader touch** | — | While your finger is on a fader, MA3 feedback for that strip is **ignored** so the motor never fights your hand; it snaps to MA3's value on release |
+
+### Behaviour guarantees
+
+- Bidirectional: the surface is a *mirror* of MA3, not a one-way remote.
+- Feedback for pages other than the current one is ignored — page changes
+  never scramble the faders.
+- Junk on the OSC port (other software, wrong sender) is dropped, never a
+  crash.
+
+### Every mapping is editable
+
+```
 lx xtouch config -o mymap.json
-# edit the executor numbers / prefix / encoder step
+```
+
+Open `mymap.json` in any editor and change: which executors the faders,
+buttons and encoders hit; the starting page; the encoder sensitivity;
+the OSC prefix (must match MA3's if you set one there). Then:
+
+```
 lx xtouch run --config mymap.json
 ```
 
-## Behaviour worth knowing
+### Not mapped (yet)
 
-- **The motors never fight your hand.** While a fader is touched, MA3
-  feedback for that strip is ignored; it snaps to MA3's value on release.
-- Feedback for pages other than the current one is ignored, so page
-  changes don't scramble the surface.
-- Garbage on the OSC port (other tools, wrong sender) is dropped, never
-  fatal.
+Jog wheel, transport buttons, the REC row, the assignment 7-segment
+display, and the function-key rows are currently unmapped. The plumbing
+supports them — say what you want them to do and they can be added.
 
-## Honest status
+---
 
-The protocol layers (Mackie Control and OSC) are fully unit-tested, but
-this has **not yet been run against a physical X-Touch + MA3 onPC** — that
-first hardware session may surface an MA3 OSC address quirk or an MC-mode
-detail to adjust. Both ends are configurable precisely so those fixes are
-config edits, not rewrites. Run `lx xtouch test` first, then `run`, and
-report what happens — fader moves in both directions are the key thing.
+## Current status — read this
+
+The protocol code is fully tested in software, but this has **not yet had
+its first run against a physical X-Touch and MA3**. MA3's OSC address
+format has changed between versions, so the first session may need a
+small config tweak (that's why everything is configurable). What to
+report from the first try:
+
+1. Did `lx xtouch test` move the faders? (proves the X-Touch side)
+2. Does moving fader 1 change executor 201 in MA3? (proves bridge → MA3)
+3. Does moving executor 201 on-screen move fader 1's motor? (proves
+   MA3 → bridge)
+
+Whichever of those three fails (if any) pinpoints the fix immediately.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `no X-Touch found` | It's not in MC/USB mode (step 1), or another app has grabbed the MIDI port — close your DAW |
+| `MIDI support is not installed` | `pip install "lx-tool[xtouch]"` |
+| Test works, MA3 doesn't react | MA3 OSC line: Receive on, port 8000, destination IP correct, prefix matches (empty ↔ empty) |
+| MA3 reacts, motors don't follow | MA3 OSC line: **Send** on, port 9000, executor feedback enabled in the filter |
+| Faders move the wrong executors | Different width/user profile — edit `fader_execs` in the config to your actual executor numbers |
