@@ -30,7 +30,7 @@ from . import mcu, osc, targets
 class Config:
     """What the surface drives. Everything is overridable from JSON."""
 
-    target: str = "ma3"                # "ma3" | "x32"
+    target: str = "ma3"     # ma3 | x32 | magicq | resolume | companion
     prefix: str = ""                   # MA3 OSC prefix, e.g. "gMA3"
     page: int = 1
     fader_execs: tuple = tuple(range(201, 209))   # strips 1-8 (MA3)
@@ -46,6 +46,7 @@ class Config:
     cmd_rewind: str = "Go-"
     cmd_fastfwd: str = ""
     cmd_record: str = ""
+    magicq_master_pb: int = 9          # MagicQ: playback for the master fader
 
 
 _BUTTON_ROWS = (("select", mcu.SELECT), ("mute", mcu.MUTE))
@@ -89,11 +90,18 @@ class Bridge:
             out += self._button(ev)
 
         elif isinstance(ev, mcu.EncoderTurned):
-            level = self._enc_levels.get(ev.encoder, 0.0)
-            level = max(0.0, min(1.0,
-                                 level + ev.ticks * self.config.encoder_step))
-            self._enc_levels[ev.encoder] = level
-            out += self.target.encoder(ev.encoder, level)
+            # A target that wants raw ticks (Companion's rotate-left/right)
+            # declares encoder_ticks; otherwise the bridge accumulates an
+            # absolute level for it.
+            ticks_fn = getattr(self.target, "encoder_ticks", None)
+            if ticks_fn is not None:
+                out += ticks_fn(ev.encoder, ev.ticks)
+            else:
+                level = self._enc_levels.get(ev.encoder, 0.0)
+                level = max(0.0, min(1.0, level
+                                     + ev.ticks * self.config.encoder_step))
+                self._enc_levels[ev.encoder] = level
+                out += self.target.encoder(ev.encoder, level)
 
         return [osc.encode(m) for m in out]
 

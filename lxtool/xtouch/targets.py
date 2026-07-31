@@ -301,14 +301,274 @@ class X32Target:
         return []
 
 
+class MagicQTarget:
+    """ChamSys MagicQ over OSC.
+
+    MagicQ's built-in addresses reach the first 10 playbacks (per its
+    manual): /pb/<n> float 0-1 sets a fader, /pb/<n>/go, /pb/<n>/flash
+    (with a real 0 on release), /pb/<n>/pause, /pb/<n>/release. Sending
+    /feedback/pb+exec once makes MagicQ dump current state and stream
+    changes - which is what drives the motors. Enable OSC in MagicQ:
+    Setup > View Settings > Network (receive 8000 / transmit 9000, the
+    manual's own suggested defaults, which match this bridge's).
+    """
+
+    name = "magicq"
+    default_send_port = 8000
+    pages = 1                          # built-in OSC reaches pb 1-10 only
+
+    def __init__(self, config):
+        self.config = config
+
+    def fader(self, strip: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(f"/pb/{strip + 1}", (float(unit),))]
+
+    def master(self, unit: float) -> list[osc.Message]:
+        pb = getattr(self.config, "magicq_master_pb", 9)
+        if not pb:
+            return []
+        return [osc.Message(f"/pb/{pb}", (float(unit),))]
+
+    def button(self, row: str, idx: int, down: bool) -> list[osc.Message]:
+        pb = idx + 1
+        if row == "select":
+            return [osc.Message(f"/pb/{pb}/go", (1,))] if down else []
+        if row == "mute":               # FLASH: real press and release
+            return [osc.Message(f"/pb/{pb}/flash", (1 if down else 0,))]
+        return []
+
+    def encoder(self, idx: int, unit: float) -> list[osc.Message]:
+        # Execute grid 1, items 1-8.
+        return [osc.Message(f"/exec/1/{idx + 1}", (float(unit),))]
+
+    def transport(self, key: str, down: bool) -> list[osc.Message]:
+        if key == "stop" and down:      # the one universally safe transport
+            return [osc.Message("/dbo", (1,))]
+        if key == "play" and down:
+            return [osc.Message("/dbo", (0,))]
+        return []
+
+    def set_page(self, page: int) -> list[osc.Message]:
+        return []
+
+    def hello(self) -> list[osc.Message]:
+        return [osc.Message("/feedback/pb+exec")]
+
+    def tick(self, now: float) -> list[osc.Message]:
+        return []
+
+    def strip_labels(self, page: int) -> list[tuple[int, int, str]]:
+        return [(s, ln, txt) for s in range(8)
+                for ln, txt in ((0, f"PB {s + 1}"), (1, "MagicQ"))]
+
+    def feedback(self, msg: osc.Message):
+        parts = msg.address.strip("/").split("/")
+        if not parts:
+            return []
+        if parts[0] == "pb" and len(parts) >= 2:
+            try:
+                pb = int(parts[1])
+            except ValueError:
+                return []
+            if len(parts) == 2 and msg.args:
+                unit = _unit_float(msg.args[0])
+                if unit is None:
+                    return []
+                if 1 <= pb <= 8:
+                    return [FaderFB(pb - 1, unit)]
+                if pb == getattr(self.config, "magicq_master_pb", 9):
+                    return [FaderFB(8, unit)]
+            elif len(parts) == 3 and parts[2] == "flash" and msg.args:
+                if 1 <= pb <= 8:
+                    return [ButtonFB("mute", pb - 1, bool(_int_of(msg.args[0])))]
+        elif parts[0] == "exec" and len(parts) == 3 and msg.args:
+            try:
+                page, item = int(parts[1]), int(parts[2])
+            except ValueError:
+                return []
+            unit = _unit_float(msg.args[0])
+            if page == 1 and 1 <= item <= 8 and unit is not None:
+                return [RingFB(item - 1, unit)]
+        return []
+
+
+class ResolumeTarget:
+    """Resolume Arena/Avenue over OSC (input port 7000 by default).
+
+    Faders are layer opacity (/composition/layers/<n>/video/opacity),
+    MUTE bypasses the layer, SELECT connects the matching column, the
+    encoders ride the layer masters, and the master fader is the
+    composition master. Banks page layers 8 at a time. For motor
+    feedback, enable OSC *output* in Resolume's preferences and aim it at
+    this bridge's listen port.
+    """
+
+    name = "resolume"
+    default_send_port = 7000
+    pages = 4
+
+    def __init__(self, config):
+        self.config = config
+        self._bypassed: dict[int, bool] = {}
+
+    def _layer(self, strip: int) -> int:
+        return (self.config.page - 1) * 8 + strip + 1
+
+    def fader(self, strip: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(
+            f"/composition/layers/{self._layer(strip)}/video/opacity",
+            (float(unit),))]
+
+    def master(self, unit: float) -> list[osc.Message]:
+        return [osc.Message("/composition/master", (float(unit),))]
+
+    def button(self, row: str, idx: int, down: bool) -> list[osc.Message]:
+        if row == "select" and down:
+            col = (self.config.page - 1) * 8 + idx + 1
+            return [osc.Message(f"/composition/columns/{col}/connect", (1,))]
+        if row == "mute" and down:
+            layer = self._layer(idx)
+            bypassed = self._bypassed.get(layer, False)
+            self._bypassed[layer] = not bypassed
+            return [osc.Message(f"/composition/layers/{layer}/bypassed",
+                                (0 if bypassed else 1,))]
+        return []
+
+    def encoder(self, idx: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(f"/composition/layers/{self._layer(idx)}/master",
+                            (float(unit),))]
+
+    def transport(self, key: str, down: bool) -> list[osc.Message]:
+        return []
+
+    def set_page(self, page: int) -> list[osc.Message]:
+        return []
+
+    def hello(self) -> list[osc.Message]:
+        return []
+
+    def tick(self, now: float) -> list[osc.Message]:
+        return []
+
+    def strip_labels(self, page: int) -> list[tuple[int, int, str]]:
+        return [(s, ln, txt) for s in range(8)
+                for ln, txt in ((0, f"Lay {(page - 1) * 8 + s + 1}"),
+                                (1, "Resolme"))]
+
+    def feedback(self, msg: osc.Message):
+        if not msg.args:
+            return []
+        if msg.address == "/composition/master":
+            unit = _unit_float(msg.args[0])
+            return [FaderFB(8, unit)] if unit is not None else []
+        parts = msg.address.strip("/").split("/")
+        if len(parts) < 4 or parts[0] != "composition" or parts[1] != "layers":
+            return []
+        try:
+            layer = int(parts[2])
+        except ValueError:
+            return []
+        strip = layer - 1 - (self.config.page - 1) * 8
+        leaf = "/".join(parts[3:])
+        if leaf == "bypassed":
+            self._bypassed[layer] = bool(_int_of(msg.args[0]))
+            if 0 <= strip < 8:
+                return [ButtonFB("mute", strip, self._bypassed[layer])]
+            return []
+        if not 0 <= strip < 8:
+            return []
+        if leaf == "video/opacity":
+            unit = _unit_float(msg.args[0])
+            return [FaderFB(strip, unit)] if unit is not None else []
+        if leaf == "master":
+            unit = _unit_float(msg.args[0])
+            return [RingFB(strip, unit)] if unit is not None else []
+        return []
+
+
+class CompanionTarget:
+    """Bitfocus Companion over OSC (listen port 12321).
+
+    The X-Touch becomes a Companion surface: SELECT row presses buttons on
+    row 0 of the current Companion page, MUTE row presses row 1, the
+    transport keys press row 2 columns 0-4, all with true down/up so
+    latch and momentary actions both behave. Faders write custom
+    variables fader1-fader8 (and master) as 0-100, ready to use in any
+    Companion action; encoders send rotate-left/right on row 3.
+    Companion doesn't stream OSC feedback, so this target is one-way.
+    """
+
+    name = "companion"
+    default_send_port = 12321
+    pages = 99
+
+    def __init__(self, config):
+        self.config = config
+
+    def _loc(self, row: int, col: int, verb: str) -> str:
+        return f"/location/{self.config.page}/{row}/{col}/{verb}"
+
+    def fader(self, strip: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(f"/custom-variable/fader{strip + 1}/value",
+                            (round(unit * 100),))]
+
+    def master(self, unit: float) -> list[osc.Message]:
+        return [osc.Message("/custom-variable/master/value",
+                            (round(unit * 100),))]
+
+    def button(self, row: str, idx: int, down: bool) -> list[osc.Message]:
+        r = 0 if row == "select" else 1
+        return [osc.Message(self._loc(r, idx, "down" if down else "up"))]
+
+    def encoder(self, idx: int, unit: float) -> list[osc.Message]:
+        return []      # handled as raw ticks via encoder_ticks below
+
+    def encoder_ticks(self, idx: int, ticks: int) -> list[osc.Message]:
+        verb = "rotate-right" if ticks > 0 else "rotate-left"
+        return [osc.Message(self._loc(3, idx, verb))
+                for _ in range(min(8, abs(ticks)))]
+
+    def transport(self, key: str, down: bool) -> list[osc.Message]:
+        col = {"rewind": 0, "fastfwd": 1, "stop": 2, "play": 3,
+               "record": 4}.get(key)
+        if col is None:
+            return []
+        return [osc.Message(self._loc(2, col, "down" if down else "up"))]
+
+    def set_page(self, page: int) -> list[osc.Message]:
+        return []
+
+    def hello(self) -> list[osc.Message]:
+        return []
+
+    def tick(self, now: float) -> list[osc.Message]:
+        return []
+
+    def strip_labels(self, page: int) -> list[tuple[int, int, str]]:
+        return [(s, ln, txt) for s in range(8)
+                for ln, txt in ((0, f"Col {s}"), (1, f"Cmp p{page}"))]
+
+    def feedback(self, msg: osc.Message):
+        return []      # Companion does not push OSC state
+
+
+TARGETS = {
+    "ma3": MA3Target,
+    "x32": X32Target,
+    "magicq": MagicQTarget,
+    "resolume": ResolumeTarget,
+    "companion": CompanionTarget,
+}
+
+
 def make_target(config):
     """The Target for config.target, defaulting to MA3."""
     kind = getattr(config, "target", "ma3") or "ma3"
-    if kind == "x32":
-        return X32Target(config)
-    if kind == "ma3":
-        return MA3Target(config)
-    raise ValueError(f"unknown target {kind!r} (have: ma3, x32)")
+    cls = TARGETS.get(kind)
+    if cls is None:
+        raise ValueError(
+            f"unknown target {kind!r} (have: {', '.join(sorted(TARGETS))})")
+    return cls(config)
 
 
 def _unit_percent(arg) -> float | None:

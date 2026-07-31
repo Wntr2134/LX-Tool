@@ -392,7 +392,145 @@ def test_unknown_target_is_rejected():
     from lxtool.xtouch import targets
 
     with pytest.raises(ValueError):
-        targets.make_target(Config(target="qlab"))
+        targets.make_target(Config(target="hog4"))
+
+
+# ---- MagicQ ------------------------------------------------------------
+
+
+def _magicq() -> Bridge:
+    return Bridge(config=Config(target="magicq"))
+
+
+def test_magicq_faders_ride_playbacks():
+    (d,) = _magicq().midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/pb/1"
+    assert msg.args[0] == pytest.approx(0.5, abs=0.001)
+    (m,) = _magicq().midi_in(mcu.fader_out(8, 1.0))
+    assert osc.decode(m).address == "/pb/9"        # master -> playback 9
+
+
+def test_magicq_go_and_true_flash():
+    b = _magicq()
+    (go,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    assert osc.decode(go) == osc.Message("/pb/1/go", (1,))
+    (fl_dn,) = b.midi_in(bytes((0x90, mcu.MUTE[3], 127)))
+    (fl_up,) = b.midi_in(bytes((0x90, mcu.MUTE[3], 0)))
+    assert osc.decode(fl_dn) == osc.Message("/pb/4/flash", (1,))
+    assert osc.decode(fl_up) == osc.Message("/pb/4/flash", (0,))
+
+
+def test_magicq_stop_is_blackout_play_restores():
+    b = _magicq()
+    (dbo,) = b.midi_in(bytes((0x90, mcu.STOP, 127)))
+    assert osc.decode(dbo) == osc.Message("/dbo", (1,))
+    (un,) = b.midi_in(bytes((0x90, mcu.PLAY, 127)))
+    assert osc.decode(un) == osc.Message("/dbo", (0,))
+
+
+def test_magicq_hello_subscribes_feedback_and_pb_feedback_moves_motors():
+    b = _magicq()
+    assert [osc.decode(d).address for d in b.osc_hello()] == ["/feedback/pb+exec"]
+    (motor,) = b.osc_in(osc.encode(osc.Message("/pb/2", (0.6,))))
+    ev = mcu.decode(motor)
+    assert ev.strip == 1 and ev.unit == pytest.approx(0.6, abs=0.01)
+    (ring,) = b.osc_in(osc.encode(osc.Message("/exec/1/3", (0.5,))))
+    assert ring[1] == 48 + 2                       # ring CC for encoder 3
+
+
+def test_magicq_has_no_paging():
+    b = _magicq()
+    b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
+    assert b.config.page == 1
+
+
+# ---- Resolume ----------------------------------------------------------
+
+
+def _resolume() -> Bridge:
+    return Bridge(config=Config(target="resolume"))
+
+
+def test_resolume_faders_are_layer_opacity_banked():
+    b = _resolume()
+    (d,) = b.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).address == "/composition/layers/1/video/opacity"
+    b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
+    (d,) = b.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).address == "/composition/layers/9/video/opacity"
+    (m,) = b.midi_in(mcu.fader_out(8, 0.5))
+    assert osc.decode(m).address == "/composition/master"
+
+
+def test_resolume_column_connect_and_layer_bypass_toggle():
+    b = _resolume()
+    (col,) = b.midi_in(bytes((0x90, mcu.SELECT[1], 127)))
+    assert osc.decode(col) == osc.Message("/composition/columns/2/connect", (1,))
+    (byp,) = b.midi_in(bytes((0x90, mcu.MUTE[0], 127)))
+    assert osc.decode(byp) == osc.Message("/composition/layers/1/bypassed", (1,))
+    (unbyp,) = b.midi_in(bytes((0x90, mcu.MUTE[0], 127)))
+    assert osc.decode(unbyp).args == (0,)
+
+
+def test_resolume_feedback_drives_motors_and_leds():
+    b = _resolume()
+    (motor,) = b.osc_in(osc.encode(
+        osc.Message("/composition/layers/2/video/opacity", (0.3,))))
+    assert mcu.decode(motor).strip == 1
+    (led,) = b.osc_in(osc.encode(
+        osc.Message("/composition/layers/1/bypassed", (1,))))
+    assert led == mcu.button_led(mcu.MUTE[0], True)
+
+
+# ---- Companion ---------------------------------------------------------
+
+
+def _companion() -> Bridge:
+    return Bridge(config=Config(target="companion"))
+
+
+def test_companion_buttons_are_locations_with_true_down_up():
+    b = _companion()
+    (dn,) = b.midi_in(bytes((0x90, mcu.SELECT[2], 127)))
+    (up,) = b.midi_in(bytes((0x90, mcu.SELECT[2], 0)))
+    assert osc.decode(dn).address == "/location/1/0/2/down"
+    assert osc.decode(up).address == "/location/1/0/2/up"
+    (mt,) = b.midi_in(bytes((0x90, mcu.MUTE[5], 127)))
+    assert osc.decode(mt).address == "/location/1/1/5/down"
+
+
+def test_companion_transport_hits_row_two():
+    b = _companion()
+    (play,) = b.midi_in(bytes((0x90, mcu.PLAY, 127)))
+    assert osc.decode(play).address == "/location/1/2/3/down"
+    (rew,) = b.midi_in(bytes((0x90, mcu.REWIND, 127)))
+    assert osc.decode(rew).address == "/location/1/2/0/down"
+
+
+def test_companion_faders_write_custom_variables():
+    (d,) = _companion().midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/custom-variable/fader1/value"
+    assert msg.args == (50,)
+    (m,) = _companion().midi_in(mcu.fader_out(8, 1.0))
+    assert osc.decode(m).address == "/custom-variable/master/value"
+
+
+def test_companion_encoders_send_rotate_events():
+    b = _companion()
+    dgrams = b.midi_in(bytes((0xB0, 16, 3)))       # 3 clockwise ticks
+    addrs = [osc.decode(d).address for d in dgrams]
+    assert addrs == ["/location/1/3/0/rotate-right"] * 3
+    (left,) = b.midi_in(bytes((0xB0, 17, 65)))
+    assert osc.decode(left).address == "/location/1/3/1/rotate-left"
+
+
+def test_companion_bank_changes_the_companion_page():
+    b = _companion()
+    b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
+    (dn,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    assert osc.decode(dn).address == "/location/2/0/0/down"
 
 
 # ---- the stored mapping (what the editor UI reads and writes) ---------

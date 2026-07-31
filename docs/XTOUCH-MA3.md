@@ -9,15 +9,23 @@ For the **full-size Behringer X-Touch**, driving either **grandMA3 onPC**
 | Target | What the surface becomes |
 |---|---|
 | `ma3` (default) | Executor wing for grandMA3 onPC — see the mapping below |
+| `magicq` | Playback wing for ChamSys MagicQ: faders ride playbacks 1–8 with motor feedback (MagicQ's own `/feedback/pb+exec` stream), SELECT = **Go**, MUTE = a true **Flash** (in on press, out on release), encoders drive execute grid 1, master fader rides playback 9, STOP = blackout on / PLAY = blackout off. Enable OSC in MagicQ: Setup → View Settings → Network, receive 8000 / transmit 9000 |
 | `x32` | Fader wing for an X32/M32: faders are channel levels (motors follow the desk), MUTE is the real mute with LED state, SELECT selects the channel, encoders are pan with ring feedback, master fader is the main stereo bus, FADER BANK pages through ch 1–8 / 9–16 / 17–24 / 25–32, and the scribble strips show the console's **own channel names** |
+| `resolume` | Media wing for Resolume Arena/Avenue: faders are **layer opacity** (banked 8 layers at a time), MUTE bypasses the layer, SELECT connects the matching column, encoders ride the layer masters, master fader is the composition master. For motor feedback enable OSC *output* in Resolume's preferences at this machine's listen port |
+| `companion` | A surface for **Bitfocus Companion** — and through it, the hundreds of things Companion controls. SELECT row presses buttons on row 0 of the current Companion page, MUTE row presses row 1, transport keys press row 2 (REW FF STOP PLAY REC = columns 0–4), all with true down/up so latch and momentary both behave. Faders write custom variables `fader1`–`fader8` and `master` as 0–100 for use in any Companion action; encoders send real rotate-left/right events on row 3; FADER BANK changes the Companion page. One-way (Companion doesn't stream OSC feedback) |
 
 ```
-lx xtouch run                  # grandMA3 onPC on this PC
-lx xtouch run --target x32 --host 192.168.1.30   # X32 on the network
+lx xtouch run                                     # grandMA3 onPC, this PC
+lx xtouch run --target magicq                     # MagicQ, this PC
+lx xtouch run --target x32 --host 192.168.1.30    # X32 on the network
+lx xtouch run --target resolume
+lx xtouch run --target companion                  # Companion, port 12321
 ```
 
-The X32 needs **no setup at all** — it answers OSC on port 10023 out of
-the box; the bridge subscribes itself and keeps the subscription alive.
+Send ports default per target (MA3 8000, MagicQ 8000, X32 10023,
+Resolume 7000, Companion 12321). The X32 needs **no setup at all** — it
+answers OSC out of the box; the bridge subscribes itself and keeps the
+subscription alive.
 
 ## Remapping (the nice way)
 

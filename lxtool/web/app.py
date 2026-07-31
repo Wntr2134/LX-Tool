@@ -788,7 +788,10 @@ PAGE = """<!doctype html>
  <p><label>Target</label>
     <select id="xttarget" onchange="xtRenderMap()">
       <option value="ma3">grandMA3 onPC (lighting)</option>
+      <option value="magicq">ChamSys MagicQ (lighting)</option>
       <option value="x32">Behringer X32 / M32 (audio)</option>
+      <option value="resolume">Resolume Arena/Avenue (media)</option>
+      <option value="companion">Bitfocus Companion (everything else)</option>
     </select>
     <label>host</label> <input type="text" id="xthost" value="127.0.0.1" style="width:10rem">
     <label>send</label> <input type="number" id="xtsend" placeholder="auto" style="width:6rem">
@@ -1226,7 +1229,7 @@ function xtRenderMap() {
       <label>FF</label> <input type="text" id="xm_ff" value="${esc(xtCfg.cmd_fastfwd)}" style="width:9rem">
       <label>REC</label> <input type="text" id="xm_rec" value="${esc(xtCfg.cmd_record)}" style="width:9rem">
       <span class="note">MA3 command line; empty = unmapped</span></p>`;
-  } else {
+  } else if (t === 'x32') {
     html += `<p class="note">X32/M32: the strips are input channels, banked
       8 at a time - FADER BANK &#9664;&#9654; moves between ch 1-8, 9-16,
       17-24, 25-32. Faders are channel levels, MUTE is the real mute,
@@ -1234,6 +1237,30 @@ function xtRenderMap() {
       fader is the main stereo bus, and the strips show the console's own
       channel names. Nothing to remap beyond the starting bank.</p>
       <p><label>start bank (1-4)</label> ${xtNum('xm_page', xtCfg.page)}</p>`;
+  } else if (t === 'magicq') {
+    html += `<p class="note">MagicQ: faders ride playbacks 1-8, SELECT is Go,
+      MUTE is a true Flash (lights on press, out on release), encoders drive
+      execute grid 1 items 1-8, STOP is blackout on / PLAY blackout off.
+      Enable OSC in MagicQ: Setup &rarr; View Settings &rarr; Network -
+      receive port 8000, transmit port 9000. Motors follow via MagicQ's
+      own feedback.</p>
+      <p><label>master fader &rarr; playback (0 = off)</label> ${xtNum('xm_mqpb', xtCfg.magicq_master_pb)}</p>`;
+  } else if (t === 'resolume') {
+    html += `<p class="note">Resolume: faders are layer opacity (banked 8
+      layers at a time), MUTE bypasses the layer, SELECT connects the
+      matching column, encoders ride the layer masters, master fader is the
+      composition master. For motor feedback enable OSC <i>output</i> in
+      Resolume's preferences, aimed at this machine port 9000.</p>
+      <p><label>start bank (1-4)</label> ${xtNum('xm_page', xtCfg.page)}</p>`;
+  } else {
+    html += `<p class="note">Companion: SELECT row presses buttons on row 0
+      of the Companion page, MUTE row presses row 1, transport keys press
+      row 2 (REW FF STOP PLAY REC = columns 0-4) - all true down/up.
+      Faders write custom variables <code>fader1</code>-<code>fader8</code>
+      and <code>master</code> as 0-100; encoders send rotate events on
+      row 3. FADER BANK &#9664;&#9654; changes the Companion page. One-way:
+      Companion doesn't stream OSC feedback.</p>
+      <p><label>start page</label> ${xtNum('xm_page', xtCfg.page)}</p>`;
   }
   html += '<p><button onclick="xtSaveMap()">Save mapping</button> <span id="xtmapout" class="note"></span></p>';
   $('xtmap').innerHTML = html;
@@ -1248,7 +1275,11 @@ function xtCollect(key, n) {
 }
 async function xtSaveMap() {
   const t = $('xttarget').value;
-  const body = {target: t, page: parseInt($('xm_page').value, 10) || 1};
+  const body = {target: t};
+  const pageEl = $('xm_page');
+  if (pageEl) body.page = parseInt(pageEl.value, 10) || 1;
+  const mqEl = $('xm_mqpb');
+  if (mqEl) body.magicq_master_pb = parseInt(mqEl.value, 10) || 0;
   if (t === 'ma3') {
     body.fader_execs = xtCollect('fader_execs', 8);
     body.select_execs = xtCollect('select_execs', 8);
