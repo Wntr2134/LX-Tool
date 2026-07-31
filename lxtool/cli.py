@@ -576,7 +576,7 @@ def cmd_xtouch(args: argparse.Namespace) -> int:
     if args.action == "run":
         return xrun.run(ma3_host=args.host, send_port=args.send_port,
                         recv_port=args.recv_port, midi_port=args.midi_port,
-                        config_path=args.config)
+                        config_path=args.config, target=args.target)
     if args.action == "test":
         return xrun.selftest(midi_port=args.midi_port)
     if args.action == "sniff":
@@ -811,10 +811,14 @@ def build_parser() -> argparse.ArgumentParser:
                                        "grandMA3 onPC surface")
     xtsub = xt.add_subparsers(dest="action", required=True)
     xtr = xtsub.add_parser("run", help="start the bridge")
+    xtr.add_argument("--target", default="", choices=("", "ma3", "x32"),
+                     help="what to drive: ma3 (grandMA3 onPC, default) or "
+                          "x32 (Behringer X32/M32 audio console)")
     xtr.add_argument("--host", default="127.0.0.1",
-                     help="machine running MA3 onPC (default: this one)")
-    xtr.add_argument("--send-port", type=int, default=8000,
-                     help="MA3's OSC receive port (default 8000)")
+                     help="machine running the console (default: this one)")
+    xtr.add_argument("--send-port", type=int, default=0,
+                     help="console's OSC port (default: 8000 for MA3, "
+                          "10023 for X32)")
     xtr.add_argument("--recv-port", type=int, default=9000,
                      help="port MA3 sends feedback to (default 9000)")
     xtr.add_argument("--midi-port", default="",

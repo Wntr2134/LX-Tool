@@ -15,7 +15,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .. import catalog, matching
@@ -375,9 +375,10 @@ def api_xtouch_status() -> dict:
 
 @app.post("/api/xtouch/start")
 def api_xtouch_start(host: str = Form("127.0.0.1"),
-                     send_port: int = Form(8000),
-                     recv_port: int = Form(9000)) -> dict:
-    """Start the bridge in the background."""
+                     send_port: int = Form(0),
+                     recv_port: int = Form(9000),
+                     target: str = Form("")) -> dict:
+    """Start the bridge in the background, using the stored mapping."""
     import threading
 
     from ..xtouch import run as xrun
@@ -390,12 +391,47 @@ def api_xtouch_start(host: str = Form("127.0.0.1"),
     if _xtouch_thread is not None and _xtouch_thread.is_alive():
         raise HTTPException(409, "the bridge is already running")
 
-    _xtouch_runner = xrun.Runner(ma3_host=host, send_port=send_port,
-                                 recv_port=recv_port,
-                                 log=lambda *a: None)
+    store = xrun.config_store_path()
+    _xtouch_runner = xrun.Runner(
+        ma3_host=host, send_port=send_port, recv_port=recv_port,
+        config_path=str(store) if store.is_file() else "",
+        target=target, log=lambda *a: None)
     _xtouch_thread = threading.Thread(target=_xtouch_runner.run, daemon=True)
     _xtouch_thread.start()
     return {"ok": True}
+
+
+@app.get("/api/xtouch/config")
+def api_xtouch_config() -> dict:
+    """The stored surface mapping, field by field, for the editor."""
+    from dataclasses import fields as dc_fields
+
+    from ..xtouch import run as xrun
+
+    cfg = xrun.load_stored_config()
+    body = {}
+    for f in dc_fields(cfg):
+        v = getattr(cfg, f.name)
+        body[f.name] = list(v) if isinstance(v, tuple) else v
+    return {"config": body, "path": str(xrun.config_store_path())}
+
+
+@app.post("/api/xtouch/config")
+async def api_xtouch_config_save(request: Request) -> dict:
+    """Save the mapping. Takes the editor's JSON body; unknown keys dropped."""
+    from ..xtouch import run as xrun
+
+    try:
+        data = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(400, "expected a JSON object of config fields")
+    try:
+        xrun.store_config(data)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "path": str(xrun.config_store_path())}
 
 
 @app.post("/api/xtouch/stop")
@@ -742,16 +778,25 @@ PAGE = """<!doctype html>
  <div id="headout"></div>
 </fieldset>
 
-<fieldset><legend>7. X-Touch &rarr; grandMA3 bridge</legend>
- <p class="note">Drive MA3 onPC from a full-size Behringer X-Touch: motorised
-    faders follow executors both ways, buttons and encoder rings get feedback.
-    Surface in MC/USB mode; MA3: Menu &rarr; In &amp; Out &rarr; OSC, send port
-    9000, receive port 8000, Send+Receive on. Full guide: docs/XTOUCH-MA3.md.</p>
- <p><label>MA3 host</label> <input type="text" id="xthost" value="127.0.0.1" style="width:10rem">
-    <label>send</label> <input type="number" id="xtsend" value="8000" style="width:6rem">
+<fieldset><legend>7. X-Touch control surface bridge</legend>
+ <p class="note">Drive a console from a full-size Behringer X-Touch (MC/USB
+    mode): motorised faders follow the console both ways, buttons, encoder
+    rings and scribble strips get feedback. Targets: <b>grandMA3 onPC</b>
+    (MA3: Menu &rarr; In &amp; Out &rarr; OSC, send port 9000, receive port
+    8000, Send+Receive on) and <b>Behringer X32/M32</b> audio consoles (no
+    setup - just the console's IP). Full guide: docs/XTOUCH-MA3.md.</p>
+ <p><label>Target</label>
+    <select id="xttarget" onchange="xtRenderMap()">
+      <option value="ma3">grandMA3 onPC (lighting)</option>
+      <option value="x32">Behringer X32 / M32 (audio)</option>
+    </select>
+    <label>host</label> <input type="text" id="xthost" value="127.0.0.1" style="width:10rem">
+    <label>send</label> <input type="number" id="xtsend" placeholder="auto" style="width:6rem">
     <label>listen</label> <input type="number" id="xtrecv" value="9000" style="width:6rem"></p>
  <p><button onclick="xtStart()">Start bridge</button>
-    <button onclick="xtStop()">Stop</button></p>
+    <button onclick="xtStop()">Stop</button>
+    <button type="button" onclick="xtToggleMap()" style="background:#8883;color:inherit">Remap buttons &amp; faders</button></p>
+ <div id="xtmap" style="display:none"></div>
  <div id="xtout" class="note"></div>
 </fieldset>
 
@@ -1132,12 +1177,97 @@ async function xtRefresh() {
 async function xtStart() {
   const fd = new FormData();
   fd.append('host', $('xthost').value);
-  fd.append('send_port', $('xtsend').value); fd.append('recv_port', $('xtrecv').value);
+  fd.append('send_port', $('xtsend').value || '0'); fd.append('recv_port', $('xtrecv').value);
+  fd.append('target', $('xttarget').value);
   try {
     await post('/api/xtouch/start', fd);
     if (!xtTimer) xtTimer = setInterval(xtRefresh, 2000);
     xtRefresh();
   } catch (e) { $('xtout').innerHTML = `<span class="sev5">${esc(e.message)}</span>`; }
+}
+
+// ---- the mapping editor: every remappable control, in one grid ----
+let xtCfg = null;
+async function xtToggleMap() {
+  const box = $('xtmap');
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  if (!xtCfg) {
+    try { xtCfg = (await (await fetch('/api/xtouch/config')).json()).config; }
+    catch (e) { $('xtout').innerHTML = esc(e.message); return; }
+  }
+  box.style.display = '';
+  xtRenderMap();
+}
+function xtNum(id, val, w) {
+  return `<input type="number" id="${id}" value="${val}" style="width:${w||'4.5rem'}">`;
+}
+function xtRenderMap() {
+  if (!xtCfg || $('xtmap').style.display === 'none') return;
+  const t = $('xttarget').value;
+  let html = '';
+  if (t === 'ma3') {
+    html += '<table><tr><th>Strip</th>' +
+      [1,2,3,4,5,6,7,8].map(i => `<th>${i}</th>`).join('') + '</tr>';
+    const row = (label, key) => '<tr><td>' + label + '</td>' +
+      [0,1,2,3,4,5,6,7].map(i =>
+        `<td>${xtNum('xm_' + key + i, xtCfg[key][i] ?? '')}</td>`).join('') + '</tr>';
+    html += row('Fader &rarr; exec', 'fader_execs');
+    html += row('SELECT &rarr; key', 'select_execs');
+    html += row('MUTE &rarr; key', 'mute_execs');
+    html += row('Encoder &rarr; exec', 'encoder_execs');
+    html += '</table>';
+    html += `<p><label>Master fader &rarr; exec (0 = grand master)</label> ${xtNum('xm_master', xtCfg.master_exec)}
+      <label>start page</label> ${xtNum('xm_page', xtCfg.page)}
+      <label>OSC prefix</label> <input type="text" id="xm_prefix" value="${esc(xtCfg.prefix)}" style="width:7rem">
+      <label>encoder step</label> ${xtNum('xm_step', xtCfg.encoder_step, '5rem')}</p>`;
+    html += `<p><label>PLAY</label> <input type="text" id="xm_play" value="${esc(xtCfg.cmd_play)}" style="width:9rem">
+      <label>STOP</label> <input type="text" id="xm_stop" value="${esc(xtCfg.cmd_stop)}" style="width:9rem">
+      <label>REW</label> <input type="text" id="xm_rew" value="${esc(xtCfg.cmd_rewind)}" style="width:9rem">
+      <label>FF</label> <input type="text" id="xm_ff" value="${esc(xtCfg.cmd_fastfwd)}" style="width:9rem">
+      <label>REC</label> <input type="text" id="xm_rec" value="${esc(xtCfg.cmd_record)}" style="width:9rem">
+      <span class="note">MA3 command line; empty = unmapped</span></p>`;
+  } else {
+    html += `<p class="note">X32/M32: the strips are input channels, banked
+      8 at a time - FADER BANK &#9664;&#9654; moves between ch 1-8, 9-16,
+      17-24, 25-32. Faders are channel levels, MUTE is the real mute,
+      SELECT selects the channel on the desk, encoders are pan, the master
+      fader is the main stereo bus, and the strips show the console's own
+      channel names. Nothing to remap beyond the starting bank.</p>
+      <p><label>start bank (1-4)</label> ${xtNum('xm_page', xtCfg.page)}</p>`;
+  }
+  html += '<p><button onclick="xtSaveMap()">Save mapping</button> <span id="xtmapout" class="note"></span></p>';
+  $('xtmap').innerHTML = html;
+}
+function xtCollect(key, n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const el = $('xm_' + key + i);
+    if (el && el.value !== '') out.push(parseInt(el.value, 10));
+  }
+  return out;
+}
+async function xtSaveMap() {
+  const t = $('xttarget').value;
+  const body = {target: t, page: parseInt($('xm_page').value, 10) || 1};
+  if (t === 'ma3') {
+    body.fader_execs = xtCollect('fader_execs', 8);
+    body.select_execs = xtCollect('select_execs', 8);
+    body.mute_execs = xtCollect('mute_execs', 8);
+    body.encoder_execs = xtCollect('encoder_execs', 8);
+    body.master_exec = parseInt($('xm_master').value, 10) || 0;
+    body.prefix = $('xm_prefix').value;
+    body.encoder_step = parseFloat($('xm_step').value) || 0.02;
+    body.cmd_play = $('xm_play').value; body.cmd_stop = $('xm_stop').value;
+    body.cmd_rewind = $('xm_rew').value; body.cmd_fastfwd = $('xm_ff').value;
+    body.cmd_record = $('xm_rec').value;
+  }
+  try {
+    const r = await fetch('/api/xtouch/config', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail);
+    xtCfg = Object.assign(xtCfg || {}, body);
+    $('xtmapout').textContent = 'saved - takes effect on the next bridge start';
+  } catch (e) { $('xtmapout').innerHTML = `<span class="sev5">${esc(e.message)}</span>`; }
 }
 async function xtStop() {
   try { await post('/api/xtouch/stop', new FormData()); } catch (e) {}

@@ -300,3 +300,132 @@ def test_web_status_endpoint_reports_without_midi_installed():
     d = web.api_xtouch_status()
     assert set(d) >= {"available", "running", "state", "detail"}
     assert d["running"] is False
+
+
+# ---- the X32 audio target ---------------------------------------------
+
+
+def _x32() -> Bridge:
+    return Bridge(config=Config(target="x32"))
+
+
+def test_x32_fader_is_a_channel_level():
+    (d,) = _x32().midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/ch/01/mix/fader"
+    assert msg.args[0] == pytest.approx(0.5, abs=0.001)
+
+
+def test_x32_banks_are_pages_of_eight_channels():
+    b = _x32()
+    b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))     # bank 2
+    (d,) = b.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).address == "/ch/09/mix/fader"
+    for _ in range(10):                                     # clamps at bank 4
+        b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
+    assert b.config.page == 4
+    (d,) = b.midi_in(mcu.fader_out(7, 1.0))
+    assert osc.decode(d).address == "/ch/32/mix/fader"
+
+
+def test_x32_mute_is_a_toggle_that_tracks_console_state():
+    b = _x32()
+    (d,) = b.midi_in(bytes((0x90, mcu.MUTE[0], 127)))        # press: mute
+    assert osc.decode(d) == osc.Message("/ch/01/mix/on", (0,))
+    assert b.midi_in(bytes((0x90, mcu.MUTE[0], 0))) == []    # release: nothing
+    (d,) = b.midi_in(bytes((0x90, mcu.MUTE[0], 127)))        # press: unmute
+    assert osc.decode(d) == osc.Message("/ch/01/mix/on", (1,))
+    # Console reports someone else muted ch1: next press must unmute.
+    b.osc_in(osc.encode(osc.Message("/ch/01/mix/on", (0,))))
+    (d,) = b.midi_in(bytes((0x90, mcu.MUTE[0], 127)))
+    assert osc.decode(d) == osc.Message("/ch/01/mix/on", (1,))
+
+
+def test_x32_select_and_encoder_and_master():
+    b = _x32()
+    (sel,) = b.midi_in(bytes((0x90, mcu.SELECT[2], 127)))
+    assert osc.decode(sel) == osc.Message("/-stat/selidx", (2,))
+    (pan,) = b.midi_in(bytes((0xB0, 16, 1)))
+    assert osc.decode(pan).address == "/ch/01/mix/pan"
+    (mn,) = b.midi_in(mcu.fader_out(8, 1.0))
+    assert osc.decode(mn).address == "/main/st/mix/fader"
+
+
+def test_x32_hello_subscribes_and_queries_names():
+    dgrams = [osc.decode(d) for d in _x32().osc_hello()]
+    addrs = [m.address for m in dgrams]
+    assert "/xremote" in addrs
+    assert "/ch/01/config/name" in addrs
+    assert "/main/st/mix/fader" in addrs
+    # queries carry no arguments - that's what makes them queries
+    assert all(not m.args for m in dgrams)
+
+
+def test_x32_tick_renews_the_subscription_but_not_constantly():
+    b = _x32()
+    first = b.tick(100.0)
+    assert [osc.decode(d).address for d in first] == ["/xremote"]
+    assert b.tick(101.0) == []                 # too soon
+    assert b.tick(109.0) != []                 # 8s later: renew
+
+
+def test_x32_feedback_names_reach_the_scribble_strips():
+    b = _x32()
+    (raw,) = b.osc_in(osc.encode(osc.Message("/ch/01/config/name", ("Kick",))))
+    assert raw == mcu.lcd_text(0, 0, "Kick")
+    # a name outside the visible bank is remembered, not displayed
+    assert b.osc_in(osc.encode(
+        osc.Message("/ch/12/config/name", ("Vox",)))) == []
+
+
+def test_x32_feedback_fader_and_mute_reach_the_surface():
+    b = _x32()
+    (motor,) = b.osc_in(osc.encode(osc.Message("/ch/03/mix/fader", (0.75,))))
+    ev = mcu.decode(motor)
+    assert ev.strip == 2 and ev.unit == pytest.approx(0.75, abs=0.01)
+    led, label = b.osc_in(osc.encode(osc.Message("/ch/01/mix/on", (0,))))
+    assert led == mcu.button_led(mcu.MUTE[0], True)
+    assert label == mcu.lcd_text(0, 1, "MUTED")
+
+
+def test_unknown_target_is_rejected():
+    from lxtool.xtouch import targets
+
+    with pytest.raises(ValueError):
+        targets.make_target(Config(target="qlab"))
+
+
+# ---- the stored mapping (what the editor UI reads and writes) ---------
+
+
+def test_stored_mapping_roundtrip(tmp_path, monkeypatch):
+    from lxtool.xtouch.run import load_stored_config, store_config
+
+    monkeypatch.setenv("LXTOOL_XTOUCH", str(tmp_path / "xtouch.json"))
+    assert load_stored_config() == Config()          # nothing stored yet
+    store_config({"target": "x32", "page": 3, "fader_execs": [401, 402],
+                  "wat": "dropped"})
+    cfg = load_stored_config()
+    assert cfg.target == "x32"
+    assert cfg.page == 3
+    assert cfg.fader_execs == (401, 402)
+
+
+def test_web_config_endpoints_roundtrip(tmp_path, monkeypatch):
+    import asyncio
+    import json as jsonlib
+
+    from lxtool.web import app as web
+
+    monkeypatch.setenv("LXTOOL_XTOUCH", str(tmp_path / "xtouch.json"))
+    d = web.api_xtouch_config()
+    assert d["config"]["target"] == "ma3"
+    assert d["config"]["fader_execs"] == list(range(201, 209))
+
+    class FakeRequest:
+        async def json(self):
+            return {"target": "x32", "page": 2}
+
+    asyncio.run(web.api_xtouch_config_save(FakeRequest()))
+    assert web.api_xtouch_config()["config"]["target"] == "x32"
+    assert jsonlib.loads((tmp_path / "xtouch.json").read_text())["page"] == 2

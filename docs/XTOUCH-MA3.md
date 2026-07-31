@@ -1,7 +1,31 @@
-# X-Touch → grandMA3 onPC Bridge — Setup Guide & Capabilities
+# X-Touch Bridge — Setup Guide & Capabilities
 
-For the **full-size Behringer X-Touch** and **grandMA3 onPC on Windows**
-(also works on Mac). Part of LX-Tool: `lx xtouch`.
+For the **full-size Behringer X-Touch**, driving either **grandMA3 onPC**
+(lighting) or a **Behringer X32 / Midas M32** (audio). Part of LX-Tool:
+`lx xtouch`, or section 7 of the desktop app.
+
+## Targets
+
+| Target | What the surface becomes |
+|---|---|
+| `ma3` (default) | Executor wing for grandMA3 onPC — see the mapping below |
+| `x32` | Fader wing for an X32/M32: faders are channel levels (motors follow the desk), MUTE is the real mute with LED state, SELECT selects the channel, encoders are pan with ring feedback, master fader is the main stereo bus, FADER BANK pages through ch 1–8 / 9–16 / 17–24 / 25–32, and the scribble strips show the console's **own channel names** |
+
+```
+lx xtouch run                  # grandMA3 onPC on this PC
+lx xtouch run --target x32 --host 192.168.1.30   # X32 on the network
+```
+
+The X32 needs **no setup at all** — it answers OSC on port 10023 out of
+the box; the bridge subscribes itself and keeps the subscription alive.
+
+## Remapping (the nice way)
+
+In the desktop app, section 7 → **Remap buttons & faders**: a grid of
+every strip — fader/SELECT/MUTE/encoder per strip, master, page, prefix,
+encoder sensitivity, and the transport-key commands — edit any of it and
+**Save mapping**. The saved mapping is used on every bridge start (app and
+CLI both). `lx xtouch config -o mymap.json` is the same thing as a file.
 
 ---
 

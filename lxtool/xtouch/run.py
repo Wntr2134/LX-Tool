@@ -76,13 +76,19 @@ class Runner:
     run() loop owns the thread it was started on.
     """
 
-    def __init__(self, *, ma3_host: str = "127.0.0.1", send_port: int = 8000,
+    def __init__(self, *, ma3_host: str = "127.0.0.1", send_port: int = 0,
                  recv_port: int = 9000, midi_port: str = "",
-                 config_path: str = "", log=print):
+                 config_path: str = "", target: str = "", log=print):
+        cfg = load_config(config_path or None)
+        if target:
+            cfg.target = target
+        self.bridge = Bridge(config=cfg)
+        # port 0 = "the target's usual port": 8000 for MA3, 10023 for X32.
+        if not send_port:
+            send_port = getattr(self.bridge.target, "default_send_port", 8000)
         self.ma3 = (ma3_host, send_port)
         self.recv_port = recv_port
         self.midi_port = midi_port
-        self.bridge = Bridge(config=load_config(config_path or None))
         self.stop_event = threading.Event()
         self.state = "starting"
         self.detail = ""
@@ -166,7 +172,10 @@ class Runner:
                       f"listening on :{self.recv_port}")
             for raw in self.bridge.hello():
                 midi_out.send(mido.Message.from_bytes(raw))
+            for datagram in self.bridge.osc_hello():
+                sock.sendto(datagram, self.ma3)
 
+            page = self.bridge.config.page
             while not self.stop_event.is_set():
                 worked = False
                 for msg in midi_in.iter_pending():
@@ -174,6 +183,10 @@ class Runner:
                     self.counters["midi_in"] += 1
                     for datagram in self.bridge.midi_in(bytes(msg.bytes())):
                         sock.sendto(datagram, self.ma3)
+                if self.bridge.config.page != page:
+                    page = self.bridge.config.page
+                    for raw in self.bridge.page_labels():
+                        midi_out.send(mido.Message.from_bytes(raw))
                 while True:
                     try:
                         datagram, _ = sock.recvfrom(4096)
@@ -185,19 +198,54 @@ class Runner:
                     self.counters["osc_in"] += 1
                     for raw in self.bridge.osc_in(datagram):
                         midi_out.send(mido.Message.from_bytes(raw))
+                for datagram in self.bridge.tick(time.monotonic()):
+                    sock.sendto(datagram, self.ma3)
                 if not worked:
                     time.sleep(0.002)
 
 
-def run(*, ma3_host: str = "127.0.0.1", send_port: int = 8000,
+def run(*, ma3_host: str = "127.0.0.1", send_port: int = 0,
         recv_port: int = 9000, midi_port: str = "",
-        config_path: str = "") -> int:
+        config_path: str = "", target: str = "") -> int:
     """CLI entry: bridge until Ctrl-C."""
     runner = Runner(ma3_host=ma3_host, send_port=send_port,
                     recv_port=recv_port, midi_port=midi_port,
-                    config_path=config_path)
+                    config_path=config_path, target=target)
     print("bridging - Ctrl-C to stop")
     return runner.run()
+
+
+def config_store_path() -> Path:
+    """Where the app keeps the surface mapping between runs."""
+    import os
+
+    env = os.environ.get("LXTOOL_XTOUCH")
+    if env:
+        return Path(env)
+    return Path.home() / ".local" / "share" / "lxtool" / "xtouch.json"
+
+
+def load_stored_config() -> Config:
+    p = config_store_path()
+    return load_config(p) if p.is_file() else Config()
+
+
+def store_config(data: dict) -> Config:
+    """Validate by round-tripping through Config, then persist."""
+    cfg = Config()
+    known = {f.name for f in fields(Config)}
+    clean = {}
+    for k, v in data.items():
+        if k not in known:
+            continue
+        if isinstance(getattr(cfg, k), tuple) and isinstance(v, list):
+            v = tuple(v)
+        setattr(cfg, k, v)
+        clean[k] = list(v) if isinstance(v, tuple) else v
+    p = config_store_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(clean, indent=2) + "\n", encoding="utf-8")
+    return cfg
 
 
 # ---- diagnostics -------------------------------------------------------
