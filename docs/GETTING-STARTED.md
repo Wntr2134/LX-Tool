@@ -209,6 +209,18 @@ Every readable fixture file in the folder is converted; unreadable ones are
 skipped and named, never silently dropped. Drag the resulting `.gdtf` files
 onto the MA3, or copy them to a USB stick's `gma3_library` folder.
 
+## X-Touch as a grandMA3 surface
+
+A Behringer X-Touch (full size) can drive MA3 onPC natively — motorised
+faders following executors, button LEDs, encoder rings, scribble strips.
+See **docs/XTOUCH-MA3.md**; short version:
+
+```bash
+pip install "lx-tool[xtouch]"
+lx xtouch test        # prove the surface responds
+lx xtouch run         # bridge to MA3 onPC (OSC on ports 8000/9000)
+```
+
 ## Two other tricks worth trying
 
 **"What's the closest head I already have?"** — point it at a fixture file
