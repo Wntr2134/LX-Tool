@@ -15,11 +15,16 @@ pip install "lx-tool[xtouch]"
 
 (That adds `mido` + `python-rtmidi` for MIDI; everything else is built in.)
 
-## Set up the X-Touch
+## Set up the X-Touch (full size)
 
 1. Connect via USB.
-2. Put it in **MC mode**: hold the channel-1 **SELECT** while powering on,
-   choose `MC`, and `USB` as the interface.
+2. Put it in **MC mode**: hold the **channel-1 SELECT** button while
+   powering on to enter the config screen, then:
+   - **encoder 1** → operation mode: choose **MC**
+   - **encoder 2** → interface: choose **USB**
+   - press channel-1 **SELECT** again to save, then power-cycle.
+   (The full-size X-Touch also offers HUI and network/Xctl modes - this
+   bridge wants MC over USB.)
 3. Prove it works before involving MA3:
 
 ```bash
