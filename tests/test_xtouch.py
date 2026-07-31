@@ -242,20 +242,33 @@ def test_unmapped_transport_button_stays_silent():
 
 
 def test_runner_errors_cleanly_when_the_udp_port_is_taken():
+    """The conflict socket must bind the wildcard address: on Windows a
+    0.0.0.0 bind SUCCEEDS alongside an existing 127.0.0.1 bind, so a
+    loopback decoy doesn't conflict there - which turned this test into an
+    infinite wait-for-surface loop on the Windows CI runner."""
     import socket
+    import threading
 
     from lxtool.xtouch.run import Runner, midi_available
 
     if not midi_available():
         pytest.skip("mido not installed here; the port check needs run()")
     taken = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    taken.bind(("127.0.0.1", 0))
+    taken.bind(("0.0.0.0", 0))
     port = taken.getsockname()[1]
     try:
         r = Runner(recv_port=port, log=lambda *a: None)
-        assert r.run() == 1
+        result: list[int] = []
+        t = threading.Thread(target=lambda: result.append(r.run()))
+        t.start()
+        t.join(timeout=10)
+        if t.is_alive():          # belt and braces: never hang the suite
+            r.stop()
+            t.join(timeout=5)
+            pytest.fail("Runner.run() did not return on a taken port")
+        assert result == [1]
         assert r.state == "error"
-        assert "already running" in r.detail or "cannot listen" in r.detail
+        assert "cannot listen" in r.detail
     finally:
         taken.close()
 
