@@ -85,6 +85,8 @@ Menu → **In & Out → OSC** → add a line:
 | Receive | **On** |
 | Prefix | leave empty |
 | Feedback filter | enable **executor** feedback |
+| Page / Fader / Key address words | leave at their defaults ("Page", "Fader", "Key") — the bridge speaks `/Page1/Fader201`, int 0–100, exactly per the MA3 manual |
+| FaderRange | leave at the default **100** (255 would scale every level down) |
 
 ## Step 4 — Run the bridge
 
