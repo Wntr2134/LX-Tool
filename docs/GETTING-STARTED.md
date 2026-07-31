@@ -133,6 +133,26 @@ lx head from-text chart.txt --match
 #     1. [ 92%] Martin Aura [Standard]  <ChamSys>
 ```
 
+**Nothing but a patch sheet?** The touring worst case: the sheet says
+"22C Moving Head, 22 Ch", the brand is an OEM nobody has heard of, and no
+manual exists anywhere. Draft the typical clone layout for that fixture
+type — cheap fixtures are deeply conventional, so the draft lands roughly
+right — and verify it at load-in:
+
+```bash
+lx head template draft.plan --stock beam --channels 16
+# kinds: beam, spot, wash, par, strobe, spark
+lx head build draft.plan
+```
+
+In the app: the "Draft a typical clone layout" row in section 5. Every
+draft opens with the **ten-minute fader test**: patch one unit, dimmer to
+full, sweep each channel 0–255 and note what actually happens, rename or
+reorder the rows to match, rebuild. Even faster on the day: every one of
+these fixtures shows its channel list in its own menu display — photograph
+that and use the chart box instead. The draft is a starting point, not a
+promise; the fader test is what makes it true.
+
 **No reference at all?** Start blank and name channels as you probe the
 fixture with a DMX tester:
 

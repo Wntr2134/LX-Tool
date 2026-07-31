@@ -408,6 +408,22 @@ def cmd_head(args: argparse.Namespace) -> int:
     from .formats import chamsys as _ch
 
     if args.action == "template":
+        if getattr(args, "stock", None):
+            from . import stock
+            if not getattr(args, "channels", None):
+                raise SystemExit("--stock needs --channels N (from the patch "
+                                 "sheet or the fixture's display)")
+            try:
+                text = stock.plan_text(args.stock, args.channels)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+            out = Path(args.out)
+            out.write_text(text, encoding="utf-8")
+            print(f"DRAFT plan written to {out} - it is a typical clone "
+                  f"layout, not this fixture's manual.")
+            print(f"Verify it at load-in (instructions are in the file), "
+                  f"then: lx head build {out}")
+            return 0
         if getattr(args, "blank", None):
             fixture = plan.blank(args.blank)
         elif getattr(args, "ofl", None):
@@ -651,6 +667,11 @@ def build_parser() -> argparse.ArgumentParser:
     ht.add_argument("source", nargs="?", help="GDTF / OFL JSON / MA2 XML / .hed reference")
     ht.add_argument("--ofl", metavar="KEY", help="use a catalogue fixture as the reference")
     ht.add_argument("--blank", type=int, metavar="N", help="start from N empty channels")
+    ht.add_argument("--stock", metavar="KIND",
+                    help="start from a typical clone layout (beam, spot, wash, "
+                         "par, strobe, spark) - needs --channels")
+    ht.add_argument("--channels", type=int, metavar="N",
+                    help="channel count for --stock")
     ht.add_argument("--mode", help="which mode of the reference to start from")
     ht.add_argument("--cache", help="catalogue cache directory")
     ht.set_defaults(func=cmd_head)

@@ -289,6 +289,35 @@ def api_head_plan(key: str = Form(""), mode: str = Form(""),
             "warnings": []}
 
 
+@app.get("/api/head-stock-kinds")
+def api_head_stock_kinds() -> dict:
+    """The available typical-clone layouts for the picker."""
+    from .. import stock
+
+    return {"kinds": [{"key": k, "label": v} for k, v in stock.kinds()]}
+
+
+@app.post("/api/head-stock")
+def api_head_stock(kind: str = Form(...), channels: int = Form(...)) -> dict:
+    """A draft plan from a typical clone layout: the no-info-at-all case.
+
+    For the fixture that exists only as a name and a channel count on a
+    patch sheet. The draft is the conventional OEM layout for its type,
+    with fader-test instructions embedded so it can be verified and fixed
+    on site without outside help.
+    """
+    from .. import plan, stock
+
+    try:
+        text = stock.plan_text(kind, channels)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    fixture = plan.parse(text)
+    return {"plan": text,
+            "channels": len(fixture.modes[0].channels),
+            "warnings": plan.warnings(fixture)}
+
+
 @app.post("/api/head-check")
 def api_head_check(plan_text: str = Form(...)) -> dict:
     """Parse a plan and lint it, without building anything."""
@@ -521,6 +550,12 @@ PAGE = """<!doctype html>
  <p><input type="text" id="refkey" placeholder="martin/mac-aura" style="width:40%">
     <input type="text" id="refmode" placeholder="mode (optional)" style="width:20%">
     <button onclick="headPlan()">Load into editor</button></p>
+ <label>&hellip;or no info at all? Draft a typical clone layout</label>
+ <p><select id="stockkind"></select>
+    <input type="number" id="stockch" min="1" max="512" placeholder="channels" style="width:8rem">
+    <button onclick="headStock()">Draft into editor</button>
+    <span class="note">for when the patch sheet is all you have - verify at
+    load-in with the fader test (instructions land in the plan)</span></p>
  <label for="chartbox">&hellip;or paste a DMX chart from a manual</label>
  <textarea id="chartbox" rows="4" style="width:100%" placeholder="1  Pan&#10;2  Pan fine&#10;3  Dimmer&#10;0-9  Open"></textarea>
  <p><button onclick="headChart()">Read chart into editor</button></p>
@@ -554,11 +589,17 @@ const $ = id => document.getElementById(id);
 window.addEventListener('DOMContentLoaded', async () => {
   try {
     const d = await (await fetch('/api/heads-folders')).json();
-    if (!d.folders.length) return;
-    $('folder').value = d.folders[0].path;
-    const lib = d.folders[0].has_library ? ' (full library found)' : ' (custom heads only)';
-    $('detected').innerHTML = 'Found: <code>' + d.folders[0].path + '</code>' + lib;
+    if (d.folders.length) {
+      $('folder').value = d.folders[0].path;
+      const lib = d.folders[0].has_library ? ' (full library found)' : ' (custom heads only)';
+      $('detected').innerHTML = 'Found: <code>' + d.folders[0].path + '</code>' + lib;
+    }
   } catch (e) { /* detection is a convenience, not a requirement */ }
+  try {
+    const d = await (await fetch('/api/head-stock-kinds')).json();
+    $('stockkind').innerHTML = d.kinds.map(k =>
+      `<option value="${esc(k.key)}">${esc(k.label)}</option>`).join('');
+  } catch (e) { /* the picker just stays empty */ }
   loadMyHeads();
 });
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
@@ -755,6 +796,29 @@ async function headChart() {
     let msg = `<p>${d.channels} channel(s) recognised - <b>check against the manual</b>, drag to reorder.</p>`;
     if (d.unparsed) msg += `<p class="sev5">Could not read: ${esc(d.unparsed)}</p>`;
     $('headout').innerHTML = msg;
+  } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function headStock() {
+  const fd = new FormData();
+  fd.append('kind', $('stockkind').value); fd.append('channels', $('stockch').value || '0');
+  try {
+    const d = await (await post('/api/head-stock', fd)).json();
+    planToRows(d.plan);
+    $('headout').innerHTML = `<p><b>DRAFT:</b> ${d.channels} channels from the typical
+      layout - a convention, not this fixture's manual. Verify at load-in with the
+      ten-minute fader test:</p>
+      <ol>
+      <li>Address one unit to 001 and patch this head at 001.</li>
+      <li>Dimmer to full, Shutter open. No light? Step through raw channels
+          until it lights - that is the real intensity channel.</li>
+      <li>Sweep every other channel 0&ndash;255 one at a time and note what
+          the fixture actually does.</li>
+      <li>Rename / drag the rows here to match, rebuild, re-copy the .hed.</li>
+      <li>Check pan and tilt move smoothly (coarse then fine pairs).</li>
+      </ol>
+      <p>Faster: photograph the fixture's own DMX menu and paste it into the
+      chart box above instead.</p>`;
   } catch (e) { $('headout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
