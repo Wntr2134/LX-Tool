@@ -24,7 +24,7 @@ from ..formats import chamsys, gdtf, ma2
 
 app = FastAPI(title="LX-Tool", description="Fixture library matching and conversion")
 
-_SUPPORTED = {".gdtf", ".json", ".xml"}
+_SUPPORTED = {".gdtf", ".json", ".xml", ".hed"}
 
 
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
@@ -250,6 +250,109 @@ async def api_convert(target: str = Form(...), file: UploadFile = File(...)) -> 
     return FileResponse(out, filename=out.name, media_type=media)
 
 
+@app.post("/api/convert-bulk")
+async def api_convert_bulk(target: str = Form(...),
+                           files: list[UploadFile] = File(...)) -> FileResponse:
+    """Convert a whole batch (e.g. a ChamSys show's heads to GDTF for MA3).
+
+    Returns a zip of the converted files. Files that cannot be read do not
+    sink the batch - they are listed in an errors.txt inside the zip.
+    """
+    import zipfile
+
+    if target not in {"gdtf", "ma2"}:
+        raise HTTPException(400, "target must be 'gdtf' or 'ma2'")
+
+    out_dir = Path(tempfile.mkdtemp(prefix="lxtool-bulk-"))
+    written: list[Path] = []
+    errors: list[str] = []
+    used: set[str] = set()
+
+    for f in files:
+        try:
+            fixture, _ = await _load_upload(f)
+        except HTTPException as exc:
+            errors.append(f"{f.filename}: {exc.detail}")
+            continue
+        stem = (f"{fixture.manufacturer} {fixture.model}".strip()
+                or Path(f.filename or "fixture").stem).replace("/", "-")
+        n, unique = 1, stem
+        while unique.lower() in used:
+            n += 1
+            unique = f"{stem} ({n})"
+        used.add(unique.lower())
+        try:
+            if target == "gdtf":
+                written.append(gdtf.write(fixture, out_dir / f"{unique}.gdtf"))
+            else:
+                written.append(ma2.write(fixture, out_dir / f"{unique}.xml"))
+        except Exception as exc:  # noqa: BLE001 - one bad fixture, not the batch
+            errors.append(f"{f.filename}: {exc}")
+
+    if not written:
+        raise HTTPException(400, "nothing could be converted: "
+                            + "; ".join(errors[:5]))
+
+    bundle = out_dir / f"converted-{target}.zip"
+    with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in written:
+            z.write(p, p.name)
+        if errors:
+            z.writestr("errors.txt", "\n".join(errors))
+    return FileResponse(bundle, filename=bundle.name,
+                        media_type="application/zip")
+
+
+@app.post("/api/patch-sheet")
+def api_patch_sheet(sheet_text: str = Form(...)) -> dict:
+    """Triage a pasted patch sheet: group, match, flag collisions.
+
+    Every group comes back with a library verdict (a saved head, a catalogue
+    hit, or nothing) and a stock-layout suggestion, so the whole sheet turns
+    into a to-do list the head builder can finish.
+    """
+    from .. import mylib, patchsheet
+
+    sheet = patchsheet.parse(sheet_text)
+    if not sheet.groups:
+        raise HTTPException(400, "no fixture rows recognised - paste the "
+                            "table part of the sheet, one fixture per line")
+
+    try:
+        cat = catalog.Catalog.load()
+    except FileNotFoundError:
+        cat = None
+    mine = mylib.entries()
+
+    groups = []
+    for g in sorted(sheet.groups, key=lambda g: -g.qty):
+        match = None
+        low = g.name.lower()
+        for e in mine:
+            if (low in e.model.lower() or e.model.lower() in low) and \
+                    (not g.channels or e.channels == g.channels):
+                match = {"label": f"{e.manufacturer} {e.model} [{e.mode}]",
+                         "source": "My Heads"}
+                break
+        if match is None and cat is not None:
+            hits = cat.search_scored(g.name, limit=1,
+                                     channels=g.channels or None)
+            if hits:
+                score, entry = hits[0]
+                if score > 0:
+                    match = {"label": entry.label,
+                             "source": "catalogue",
+                             "count_ok": any(c == g.channels
+                                             for _, c in entry.modes)}
+        groups.append({
+            "name": g.name, "channels": g.channels, "qty": g.qty,
+            "universes": g.universes, "kind": g.kind_guess, "match": match,
+        })
+
+    return {"groups": groups, "warnings": sheet.warnings,
+            "skipped": sheet.skipped}
+
+
 @app.post("/api/head-plan")
 def api_head_plan(key: str = Form(""), mode: str = Form(""),
                   chart_text: str = Form("")) -> dict:
@@ -456,8 +559,7 @@ async def _load_upload(file: UploadFile):
         raise HTTPException(
             400,
             f"unsupported file type {suffix or '(none)'}. "
-            f"Supported: {', '.join(sorted(_SUPPORTED))}. "
-            "ChamSys .hed bodies are obfuscated and cannot be read.",
+            f"Supported: {', '.join(sorted(_SUPPORTED))}.",
         )
     tmp_dir = Path(tempfile.mkdtemp(prefix="lxtool-in-"))
     path = tmp_dir / (file.filename or f"upload{suffix}")
@@ -531,17 +633,30 @@ PAGE = """<!doctype html>
 
 <fieldset><legend>4. Convert</legend>
  <label for="cfile">Source file</label>
- <input type="file" id="cfile" accept=".gdtf,.json,.xml">
+ <input type="file" id="cfile" accept=".gdtf,.json,.xml,.hed" multiple>
  <label for="target">Convert to</label>
  <select id="target">
    <option value="gdtf">GDTF (imports into MagicQ and MA3)</option>
    <option value="ma2">grandMA2 XML</option>
  </select>
- <p><button onclick="convert()">Convert &amp; download</button></p>
+ <p><button onclick="convert()">Convert &amp; download</button>
+    <span class="note">select several files (e.g. a show's .hed heads) for a
+    bulk conversion - you get one zip back, ready for MA3</span></p>
  <div id="convout"></div>
 </fieldset>
 
-<fieldset><legend>5. Make your own head (clones &amp; manuals)</legend>
+<fieldset><legend>5. Read a whole patch sheet</legend>
+ <p class="note">Paste the patch sheet - a spreadsheet export, or the text your
+    phone lifts off a screenshot. It groups the rows into fixture types, checks
+    each against your saved heads and the catalogue, flags DMX address
+    collisions, and hands every unknown straight to the head builder with its
+    channel count filled in.</p>
+ <textarea id="sheetbox" rows="6" style="width:100%" placeholder="1 | IP380B / BSW 380 Spot | Back Truss | 16 Ch | 1 | 1.001 | 1.016"></textarea>
+ <p><button onclick="sheetRead()">Read patch sheet</button></p>
+ <div id="sheetout"></div>
+</fieldset>
+
+<fieldset><legend>6. Make your own head (clones &amp; manuals)</legend>
  <p class="note">For the venue clone: start from the genuine profile, reorder
     the channels to match what the fixture actually does, rename it, build.
     Or paste the DMX chart out of a manual - photograph it and use your
@@ -575,7 +690,7 @@ PAGE = """<!doctype html>
  <div id="headout"></div>
 </fieldset>
 
-<fieldset><legend>6. My saved heads</legend>
+<fieldset><legend>7. My saved heads</legend>
  <p class="note">Custom heads you have saved - they also turn up in match and
     "What is this?" from now on. Reopen one to tweak, or download it again.</p>
  <p><button onclick="loadMyHeads()">Refresh list</button> <span id="mydir" class="note"></span></p>
@@ -889,17 +1004,53 @@ async function headBuild() {
 }
 
 async function convert() {
-  const f = $('cfile').files[0];
-  if (!f) { $('convout').innerHTML = '<p class="sev5">Choose a file first.</p>'; return; }
-  const fd = new FormData(); fd.append('target', $('target').value); fd.append('file', f);
+  const files = $('cfile').files;
+  if (!files.length) { $('convout').innerHTML = '<p class="sev5">Choose a file first.</p>'; return; }
+  const fd = new FormData(); fd.append('target', $('target').value);
+  const bulk = files.length > 1;
+  if (bulk) { for (const f of files) fd.append('files', f); }
+  else fd.append('file', files[0]);
   try {
-    const r = await post('/api/convert', fd);
+    const r = await post(bulk ? '/api/convert-bulk' : '/api/convert', fd);
     const blob = await r.blob();
     const name = (r.headers.get('content-disposition')||'').match(/filename="?([^"]+)"?/)?.[1] || 'converted';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name; a.click();
-    $('convout').innerHTML = `<p class="exact">Downloaded ${esc(name)}</p>`;
+    $('convout').innerHTML = bulk
+      ? `<p class="exact">Converted ${files.length} file(s) &rarr; ${esc(name)}. Any that failed are listed in errors.txt inside the zip.</p>`
+      : `<p class="exact">Downloaded ${esc(name)}</p>`;
   } catch (e) { $('convout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function sheetRead() {
+  const fd = new FormData(); fd.append('sheet_text', $('sheetbox').value);
+  try {
+    const d = await (await post('/api/patch-sheet', fd)).json();
+    let html = '';
+    if (d.warnings.length)
+      html += '<p class="sev5"><b>Address collisions:</b></p><ul>' +
+        d.warnings.map(w => `<li class="sev5">${esc(w)}</li>`).join('') + '</ul>';
+    html += '<table><tr><th>Fixture</th><th>Qty</th><th>Ch</th><th>Universes</th><th>Library</th><th></th></tr>' +
+      d.groups.map(g => {
+        const lib = g.match
+          ? `<span class="exact">${esc(g.match.source)}: ${esc(g.match.label)}</span>` +
+            (g.match.count_ok === false ? ' <span class="sev5">(no mode at this count)</span>' : '')
+          : '<span class="sev5">nothing known</span>';
+        const draft = (g.kind && g.channels)
+          ? `<button onclick="sheetDraft('${esc(g.kind)}', ${g.channels})">Draft ${esc(g.kind)} head</button>`
+          : '';
+        return `<tr><td>${esc(g.name)}</td><td>${g.qty}</td><td>${g.channels || '?'}</td>
+          <td>${g.universes.join(', ') || '?'}</td><td>${lib}</td><td>${draft}</td></tr>`;
+      }).join('') + '</table>';
+    if (d.skipped) html += `<p class="note">${d.skipped} line(s) not recognised as fixtures.</p>`;
+    $('sheetout').innerHTML = html;
+  } catch (e) { $('sheetout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function sheetDraft(kind, channels) {
+  $('stockkind').value = kind; $('stockch').value = channels;
+  await headStock();
+  $('chanlist').scrollIntoView({behavior: 'smooth'});
 }
 </script>
 </body></html>

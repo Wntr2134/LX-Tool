@@ -334,10 +334,72 @@ def cmd_dupes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _convert_folder(args: argparse.Namespace) -> int:
+    """Bulk-convert every fixture file in a folder (ChamSys show -> MA3)."""
+    src, dest = Path(args.source), Path(args.dest)
+    target = args.to
+    if not target:
+        raise SystemExit("bulk conversion needs --to gdtf or --to ma2 "
+                         "(gdtf is the route into MA3)")
+    if dest.suffix:
+        raise SystemExit(f"{dest} looks like a file; give a folder to fill "
+                         "when converting a folder")
+    dest.mkdir(parents=True, exist_ok=True)
+
+    readable = {".hed", ".gdtf", ".json", ".xml"}
+    files = sorted(p for p in src.iterdir()
+                   if p.is_file() and p.suffix.lower() in readable)
+    if not files:
+        raise SystemExit(f"no fixture files in {src} "
+                         f"(looked for {', '.join(sorted(readable))})")
+
+    written, failed = 0, 0
+    used: set[str] = set()
+    for f in files:
+        try:
+            fixture = load_fixture(f)
+        except (SystemExit, Exception) as exc:  # noqa: BLE001 - keep the batch going
+            print(f"  skip {f.name}: {exc}", file=sys.stderr)
+            failed += 1
+            continue
+        # A tolerant reader can "read" garbage into an empty fixture; an
+        # empty GDTF in the output is worse than an honest skip.
+        if not any(m.channels for m in fixture.modes):
+            print(f"  skip {f.name}: no DMX channels found", file=sys.stderr)
+            failed += 1
+            continue
+        stem = (f"{fixture.manufacturer} {fixture.model}".strip()
+                or f.stem).replace("/", "-")
+        n, unique = 1, stem
+        while unique.lower() in used:
+            n += 1
+            unique = f"{stem} ({n})"
+        used.add(unique.lower())
+        try:
+            if target == "gdtf":
+                gdtf.write(fixture, dest / f"{unique}.gdtf")
+            else:
+                ma2.write(fixture, dest / f"{unique}.xml")
+            written += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  skip {f.name}: {exc}", file=sys.stderr)
+            failed += 1
+
+    print(f"{written} fixture(s) -> {dest} as {target}"
+          + (f", {failed} skipped" if failed else ""))
+    if target == "gdtf" and written:
+        print("import into MA3: drag the .gdtf files onto the console, or "
+              "copy to a USB stick's gma3_library folder")
+    return 0 if written else 1
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
     if not args.source and not args.ofl:
         print("give a source file, or --ofl <key-or-search>", file=sys.stderr)
         return 1
+
+    if args.source and Path(args.source).is_dir():
+        return _convert_folder(args)
 
     fixture = _resolve_target(args) if args.ofl else load_fixture(args.source)
     out = Path(args.dest)
@@ -476,6 +538,34 @@ def cmd_head(args: argparse.Namespace) -> int:
         saved = mylib.save(fixture, mode, plan_text=Path(args.plan).read_text())
         print(f"saved to your library: {saved.hed}")
     print("copy it into the MagicQ heads folder and restart MagicQ")
+    return 0
+
+
+def cmd_sheet(args: argparse.Namespace) -> int:
+    """Triage a pasted patch sheet: group fixtures, flag collisions."""
+    from . import patchsheet
+
+    raw = (sys.stdin.read() if args.sheet == "-"
+           else Path(args.sheet).read_text(encoding="utf-8", errors="replace"))
+    sheet = patchsheet.parse(raw)
+    if not sheet.groups:
+        raise SystemExit("no fixture rows recognised - paste the table part "
+                         "of the sheet, one fixture per line")
+
+    for w in sheet.warnings:
+        print(f"COLLISION: {w}")
+    if sheet.warnings:
+        print()
+
+    for g in sorted(sheet.groups, key=lambda g: -g.qty):
+        unis = ", ".join(str(u) for u in g.universes) or "?"
+        ch = g.channels or "?"
+        print(f"{g.qty:>3}x {g.name}  ({ch} ch, universe {unis})")
+        if g.kind_guess and g.channels:
+            print(f"     no profile? draft one:  lx head template draft.plan "
+                  f"--stock {g.kind_guess} --channels {g.channels}")
+    if sheet.skipped:
+        print(f"\n{sheet.skipped} line(s) not recognised as fixtures")
     return 0
 
 
@@ -619,8 +709,14 @@ def build_parser() -> argparse.ArgumentParser:
     se.set_defaults(func=cmd_search)
 
     c = sub.add_parser("convert", help="convert a fixture between formats")
-    c.add_argument("source", nargs="?", help="GDTF / OFL JSON / MA2 / MA3 XML / .hed")
-    c.add_argument("dest", help="output .gdtf, .xml or .hed")
+    c.add_argument("source", nargs="?",
+                   help="GDTF / OFL JSON / MA2 / MA3 XML / .hed - or a folder "
+                        "of them for a bulk conversion")
+    c.add_argument("dest", help="output .gdtf, .xml or .hed - or a folder "
+                                "when converting a folder")
+    c.add_argument("--to", choices=("gdtf", "ma2"),
+                   help="target format for a bulk (folder) conversion; gdtf "
+                        "is the route into MA3")
     c.add_argument("--mode", metavar="MODE",
                    help="which mode to write (a .hed holds exactly one)")
     c.add_argument("--ofl", metavar="KEY",
@@ -687,6 +783,11 @@ def build_parser() -> argparse.ArgumentParser:
     hb.add_argument("--save", action="store_true",
                     help="also save into your personal head library for next time")
     hb.set_defaults(func=cmd_head)
+
+    sh = sub.add_parser("sheet", help="triage a pasted patch sheet: group "
+                                      "fixtures, flag address collisions")
+    sh.add_argument("sheet", help="text file with the pasted sheet, or - for stdin")
+    sh.set_defaults(func=cmd_sheet)
 
     he = sub.add_parser("heads", help="list, reopen and remove your saved custom heads")
     hesub = he.add_subparsers(dest="action", required=True)

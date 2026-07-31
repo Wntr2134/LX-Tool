@@ -104,7 +104,7 @@ lx head build plan.txt
 
 The plan is one line per DMX channel — moving a line moves the channel, and
 the gobo/colour ranges under it move too. The desktop app has the same
-thing in section 5, with the editor built in.
+thing in section 6, with the editor built in.
 
 **The manual-only fixture.** No profile anywhere, just a DMX chart in the
 manual. Photograph the chart, then use your phone or Mac's select-text-in-
@@ -120,7 +120,7 @@ lx head build head-plan.txt
 It copes with messy manual layouts ("CH1 - Pan", "3. Tilt", "0-9 Open"),
 expands "5-6 Zoom (16 bit)" into a proper 16-bit pair, handles phone OCR
 that reads a table column-by-column, and attaches range rows to the right
-channel. In the app: paste into the chart box in section 5.
+channel. In the app: paste into the chart box in section 6.
 
 **"What is this clone, really?"** If you've drafted a plan or pasted a chart
 and want to know which known fixture it's closest to (often the genuine
@@ -145,7 +145,7 @@ lx head template draft.plan --stock beam --channels 16
 lx head build draft.plan
 ```
 
-In the app: the "Draft a typical clone layout" row in section 5. Every
+In the app: the "Draft a typical clone layout" row in section 6. Every
 draft opens with the **ten-minute fader test**: patch one unit, dimmer to
 full, sweep each channel 0–255 and note what actually happens, rename or
 reorder the rows to match, rebuild. Even faster on the day: every one of
@@ -160,7 +160,7 @@ fixture with a DMX tester:
 lx head template plan.txt --blank 16
 ```
 
-**In the app**, section 5 is a full editor: **drag the grip** on each
+**In the app**, section 6 is a full editor: **drag the grip** on each
 channel to reorder the DMX layout, edit names and attributes inline, add or
 remove channels, then Check and Build. "Raw text" toggles to the plain-text
 plan if you prefer typing.
@@ -178,7 +178,36 @@ lx heads edit China_AuraClone_14ch -o plan.txt   # reopen to tweak
 Saved heads live under your user folder (override with `LXTOOL_MYHEADS`) and
 **automatically join every match and "What is this?" from then on** - so the
 second time you meet that clone, the tool recognises it. The app has them in
-section 6, with Edit / Download / Remove.
+section 7, with Edit / Download / Remove.
+
+## Reading a whole patch sheet
+
+Paste the patch sheet you were sent — a spreadsheet export, or the text your
+phone lifts off a screenshot (select-text-in-image) — into **section 5**, or:
+
+```bash
+lx sheet sheet.txt        # or:  pbpaste | lx sheet -
+```
+
+It groups the rows into fixture types (how many, which universes, what
+channel count), checks each against your saved heads and the catalogue,
+**flags DMX address collisions** on the sheet itself, and gives every
+unknown fixture a one-click "Draft head" that opens the head builder with
+the right layout and channel count already filled in.
+
+## Bulk conversion (ChamSys → MA3 and more)
+
+MA3 imports GDTF natively, so a whole ChamSys show's heads can move across
+in one go. In the app: select several files in section 4 (it takes `.hed`
+too) and you get one zip back. Command line:
+
+```bash
+lx convert heads/ ma3-out/ --to gdtf
+```
+
+Every readable fixture file in the folder is converted; unreadable ones are
+skipped and named, never silently dropped. Drag the resulting `.gdtf` files
+onto the MA3, or copy them to a USB stick's `gma3_library` folder.
 
 ## Two other tricks worth trying
 
