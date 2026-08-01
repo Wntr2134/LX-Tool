@@ -42,6 +42,8 @@ hidden = [
     "winsdk.windows.media.ocr",
     "winsdk.windows.graphics.imaging",
     "winsdk.windows.storage",
+    # PDF patch reading, imported lazily.
+    "pypdf",
 ]
 
 # Many lxtool submodules (_build, mylib, plan, chart, net, gdtfshare, ...) are

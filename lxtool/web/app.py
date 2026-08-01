@@ -353,6 +353,74 @@ def api_patch_sheet(sheet_text: str = Form(...)) -> dict:
             "skipped": sheet.skipped}
 
 
+@app.post("/api/patch-read")
+async def api_patch_read(file: UploadFile = File(...)) -> dict:
+    """A console patch export (CSV or PDF) -> what we made of it."""
+    from pathlib import PurePath
+
+    from .. import patchlist, pdftext
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    name = PurePath(file.filename or "patch.csv")
+    if name.suffix.lower() == ".pdf":
+        try:
+            text = pdftext.read_text(data)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    else:
+        text = data.decode("utf-8", errors="replace")
+
+    report = patchlist.parse(text, name=name.stem)
+    if not report.rows:
+        raise HTTPException(422, "no patch rows found - is this the fixture "
+                            "patch export?")
+    _PATCH_CACHE["report"] = report
+    return {
+        "name": name.stem,
+        "count": len(report.rows),
+        "from_mode": sum(1 for r in report.rows if r.channels_from == "mode"),
+        "from_catalogue": report.resolved,
+        "guessed": report.guessed,
+        "warnings": report.warnings,
+        "rows": [
+            {"head": r.head_no, "universe": r.universe, "address": r.address,
+             "channels": r.channels, "source": r.channels_from,
+             "maker": r.manufacturer, "model": r.model, "mode": r.mode}
+            for r in report.rows
+        ],
+        "targets": [{"key": k, "help": v}
+                    for k, v in _patch_targets().items()],
+    }
+
+
+_PATCH_CACHE: dict = {}
+
+
+def _patch_targets() -> dict:
+    from ..formats import patchout
+    return {k: patchout.TARGET_HELP[k] for k in patchout.TARGETS}
+
+
+@app.get("/api/patch-convert")
+def api_patch_convert(target: str) -> FileResponse:
+    """Download the last-read patch in another desk's format."""
+    from ..formats import patchout
+
+    report = _PATCH_CACHE.get("report")
+    if report is None:
+        raise HTTPException(409, "read a patch export first")
+    if target not in patchout.TARGETS:
+        raise HTTPException(400, f"unknown target {target!r}")
+    out_dir = Path(tempfile.mkdtemp(prefix="lxtool-patch-"))
+    stem = report.rig.name or "patch"
+    out = patchout.write(report.rig, target,
+                         out_dir / patchout.default_name(target, stem))
+    media = "application/zip" if target == "mvr" else "text/csv"
+    return FileResponse(out, filename=out.name, media_type=media)
+
+
 @app.get("/api/ocr-available")
 def api_ocr_available() -> dict:
     from .. import textimage
@@ -689,7 +757,17 @@ PAGE = """<!doctype html>
  <div id="sheetout"></div>
 </fieldset>
 
-<fieldset><legend>6. Make your own head (clones &amp; manuals)</legend>
+<fieldset><legend>6. Convert a patch to another desk</legend>
+ <p class="note">Drop a console's patch export - MagicQ's Fixture Patch CSV,
+    or the PDF of the same table - and take it out as an import file for
+    another desk. Footprints come from the Mode column where it states one,
+    then the catalogue, then the spacing the patcher left; every row says
+    which, so you can check before you patch.</p>
+ <p><input type="file" id="patchfile" accept=".csv,.pdf,.txt" onchange="patchRead()"></p>
+ <div id="patchout"></div>
+</fieldset>
+
+<fieldset><legend>7. Make your own head (clones &amp; manuals)</legend>
  <p class="note">For the venue clone: start from the genuine profile, reorder
     the channels to match what the fixture actually does, rename it, build.
     Or paste the DMX chart out of a manual - photograph it and use your
@@ -725,7 +803,7 @@ PAGE = """<!doctype html>
  <div id="headout"></div>
 </fieldset>
 
-<fieldset><legend>7. My saved heads</legend>
+<fieldset><legend>8. My saved heads</legend>
  <p class="note">Custom heads you have saved - they also turn up in match and
     "What is this?" from now on. Reopen one to tweak, or download it again.</p>
  <p><button onclick="loadMyHeads()">Refresh list</button> <span id="mydir" class="note"></span></p>
@@ -1080,6 +1158,37 @@ async function sheetRead() {
     if (d.skipped) html += `<p class="note">${d.skipped} line(s) not recognised as fixtures.</p>`;
     $('sheetout').innerHTML = html;
   } catch (e) { $('sheetout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
+}
+
+async function patchRead() {
+  const f = $('patchfile').files[0];
+  if (!f) return;
+  $('patchout').innerHTML = '<p class="note">reading&hellip;</p>';
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const d = await (await post('/api/patch-read', fd)).json();
+    let html = `<p><b>${d.count}</b> fixture(s) read.
+      Footprints: ${d.from_mode} from the mode column,
+      ${d.from_catalogue} from the catalogue,
+      <b>${d.guessed}</b> inferred from address spacing.</p>`;
+    if (d.warnings.length)
+      html += '<p class="sev5"><b>Address overlaps:</b></p><ul>' +
+        d.warnings.map(w => `<li class="sev5">${esc(w)}</li>`).join('') + '</ul>';
+    html += '<p>Download for: ' + d.targets.map(t =>
+      `<a href="/api/patch-convert?target=${encodeURIComponent(t.key)}"
+         title="${esc(t.help)}"><button type="button">${esc(t.key)}</button></a>`
+      ).join(' ') + '</p>';
+    html += '<table><tr><th>Head</th><th>Address</th><th>Ch</th>' +
+      '<th>From</th><th>Fixture</th><th>Mode</th></tr>' +
+      d.rows.map(r => {
+        const cls = (r.source === 'gap' || r.source === 'default') ? ' class="sev5"' : '';
+        const name = `${r.maker} ${r.model}`.trim() || '(unnamed)';
+        return `<tr><td>${r.head}</td><td>${r.universe}.${r.address}</td>
+          <td>${r.channels}</td><td${cls}>${esc(r.source)}</td>
+          <td>${esc(name)}</td><td>${esc(r.mode)}</td></tr>`;
+      }).join('') + '</table>';
+    $('patchout').innerHTML = html;
+  } catch (e) { $('patchout').innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 
 async function ocrInto(inputId, boxId, outId) {

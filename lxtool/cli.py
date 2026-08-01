@@ -541,6 +541,53 @@ def cmd_head(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_patch(args: argparse.Namespace) -> int:
+    """Convert a console patch export into another desk's import format."""
+    from . import patchlist, pdftext
+    from .formats import patchout
+
+    src = Path(args.source)
+    raw = src.read_bytes()
+    if src.suffix.lower() == ".pdf":
+        try:
+            text = pdftext.read_text(raw)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+    else:
+        text = raw.decode("utf-8", errors="replace")
+
+    report = patchlist.parse(text, cache=getattr(args, "cache", None),
+                             name=src.stem)
+    rows = report.rows
+    if not rows:
+        for w in report.warnings:
+            print(w, file=sys.stderr)
+        raise SystemExit("no patch rows found in that file")
+
+    print(f"{len(rows)} fixture(s) read from {src.name}")
+    print(f"  footprints: {report.resolved} from the catalogue, "
+          f"{sum(1 for r in rows if r.channels_from == 'mode')} from the mode "
+          f"column, {report.guessed} inferred")
+    for w in report.warnings:
+        print(f"  COLLISION: {w}", file=sys.stderr)
+
+    if args.list:
+        for r in rows:
+            label = f"{r.manufacturer} {r.model}".strip() or "(unnamed)"
+            print(f"  {r.head_no:>4}  {r.universe}.{r.address:<4} "
+                  f"{r.channels:>3}ch [{r.channels_from:<9}] {label} {r.mode}")
+        return 0
+
+    out = Path(args.out) if args.out else Path(
+        patchout.default_name(args.to, src.stem))
+    patchout.write(report.rig, args.to, out)
+    print(f"wrote {out}  ({patchout.TARGET_HELP[args.to]})")
+    if report.guessed:
+        print(f"  check the {report.guessed} inferred footprint(s) before "
+              f"patching - 'lx patch {src.name} --list' shows every one")
+    return 0
+
+
 def cmd_sheet(args: argparse.Namespace) -> int:
     """Triage a pasted patch sheet: group fixtures, flag collisions."""
     from . import patchsheet
@@ -669,6 +716,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def patchout_targets() -> tuple:
+    from .formats import patchout
+    return patchout.TARGETS
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="lx", description="Lighting fixture library tools")
     try:
@@ -783,6 +835,18 @@ def build_parser() -> argparse.ArgumentParser:
     hb.add_argument("--save", action="store_true",
                     help="also save into your personal head library for next time")
     hb.set_defaults(func=cmd_head)
+
+    pa = sub.add_parser("patch", help="convert a console patch export "
+                                      "(MagicQ CSV/PDF) for another desk")
+    pa.add_argument("source", help="the patch export: .csv or .pdf")
+    pa.add_argument("--to", default="mvr", choices=patchout_targets(),
+                    help="what to write (default mvr, which MA3 imports)")
+    pa.add_argument("-o", "--out", help="output file (default: alongside)")
+    pa.add_argument("--list", action="store_true",
+                    help="just show what was read, and where each footprint "
+                         "came from")
+    pa.add_argument("--cache", help="catalogue cache directory")
+    pa.set_defaults(func=cmd_patch)
 
     sh = sub.add_parser("sheet", help="triage a pasted patch sheet: group "
                                       "fixtures, flag address collisions")

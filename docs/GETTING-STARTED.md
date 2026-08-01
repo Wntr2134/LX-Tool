@@ -180,6 +180,42 @@ Saved heads live under your user folder (override with `LXTOOL_MYHEADS`) and
 second time you meet that clone, the tool recognises it. The app has them in
 section 7, with Edit / Download / Remove.
 
+## Moving a patch between consoles
+
+Export the patch from the desk you have, import it into the desk you're
+going to. In the app: **section 6**, drop the file in. Command line:
+
+```bash
+lx patch POCKETS_NEW_2026.csv --list          # what did it read, and how sure is it
+lx patch POCKETS_NEW_2026.csv --to mvr        # grandMA3 (and Capture, Vectorworks, Depence)
+lx patch POCKETS_NEW_2026.csv --to eos        # ETC Eos CSV patch import
+lx patch POCKETS_NEW_2026.csv --to ma2        # grandMA2 CSV patch plugin
+lx patch POCKETS_NEW_2026.csv --to magicq     # back to MagicQ
+lx patch POCKETS_NEW_2026.csv --to csv        # full sheet for paperwork
+```
+
+**In:** a MagicQ *Fixture Patch* export — the CSV, or the **PDF** of the
+same table (text is lifted out of it automatically). Blank manufacturer
+and model cells are normal and fine.
+
+**The bit to check:** an export states addresses but not **footprints**,
+so each fixture's channel count comes from, in order of trust: the Mode
+column when it says one ("9ch"), then the fixture catalogue, then the
+gap to the next address — which is what the patcher actually left room
+for. Every row shows which of the three answered, and anything inferred
+is flagged in red in the app and listed by `--list`. Address overlaps
+are called out too.
+
+**Out:**
+
+| `--to` | Goes into |
+|---|---|
+| `mvr` | grandMA3, Capture, Vectorworks, Depence, WYSIWYG (MA2 reads it too, with placeholder types) |
+| `eos` | ETC Eos — CSV patch import, map the columns on the way in |
+| `ma2` | grandMA2's CSV patch plugin (`fixtureID;universe.address`) |
+| `magicq` | MagicQ Fixture Patch CSV — the round trip home |
+| `csv` | Everything we know, one row per fixture |
+
 ## Reading a whole patch sheet
 
 Paste the patch sheet you were sent — a spreadsheet export, or the text your

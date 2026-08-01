@@ -16,7 +16,8 @@ dependencies = []
 
 [project.optional-dependencies]
 web = [
-    "certifi",          # macOS Python ships no CA bundle of its own
+    "certifi",           # macOS Python ships no CA bundle of its own
+    "pypdf>=4",          # reading a patch straight out of a printed PDF
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",
@@ -26,6 +27,7 @@ web = [
 # and dock icon instead of opening a browser tab.
 desktop = [
     "certifi",
+    "pypdf>=4",
     "pywebview>=5.0",
     "pyobjc-core>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
