@@ -39,7 +39,15 @@ subscription alive.
 | **Akai MPK Mini** | The 8 **knobs** ride the target's encoder slots as absolute levels; the 8 **pads** press the SELECT row (Go / column-connect / channel-select per target) with pad-LED feedback. Defaults match the mk3 factory profile (knobs CC 70–77, pads notes 36–43) — both remappable in the config for any knobby MIDI box |
 | **Stream Deck** | Via **Bitfocus Companion**, which owns Stream Decks natively: add a *Generic OSC* connection in Companion aimed at the bridge's listen port (default 9000), and give buttons actions like `/xbridge/key/select/1` (value 1 on down, 0 on up), `/xbridge/fader/3` (0–100), `/xbridge/page` (bank number). Every deck key becomes a bridge control, and the same addresses work from TouchOSC or anything else that speaks OSC |
 
-Pick the surface in the app panel or `--surface mpk` / config. The OSC
+Pick the surface in the app panel or `--surface mpk` / config —
+**or run several at once**: choose *X-Touch + MPK Mini* (config value
+`"xtouch,mpk"`) and both are live simultaneously, each auto-detected by
+port name, joining live if plugged in mid-session. Key state lights both
+the X-Touch button and the matching MPK pad; motors stay X-Touch-only
+(the MPK has none). The Stream Deck's OSC control port is always active
+alongside whatever MIDI surfaces are connected — deck keys, faders and
+pads all drive the same console at the same time. (The MA2 web-remote
+session currently drives the primary surface only.) The OSC
 control port speaks: `/xbridge/fader/<n>`, `/xbridge/master`,
 `/xbridge/enc/<n>`, `/xbridge/key/select|mute/<n>`, `/xbridge/page`.
 

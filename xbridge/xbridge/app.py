@@ -192,6 +192,7 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <select id="surface">
     <option value="xtouch">X-Touch (full size)</option>
     <option value="mpk">Akai MPK Mini (knobs + pads)</option>
+    <option value="xtouch,mpk">X-Touch + MPK Mini (both at once)</option>
   </select>
   <label>host</label><input type="text" id="host" value="127.0.0.1" style="width:9rem">
   <label>send</label><input type="number" id="send" placeholder="auto">

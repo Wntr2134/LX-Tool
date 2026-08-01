@@ -77,12 +77,15 @@ class Bridge:
     _touched: set = field(default_factory=set)
 
     surface: object = None
+    surfaces: list = None
 
     def __post_init__(self):
         if self.target is None:
             self.target = targets.make_target(self.config)
+        if self.surfaces is None:
+            self.surfaces = surfaces.make_surfaces(self.config)
         if self.surface is None:
-            self.surface = surfaces.make_surface(self.config)
+            self.surface = self.surfaces[0]
 
     @property
     def max_page(self) -> int:
@@ -90,10 +93,14 @@ class Bridge:
 
     # ---- surface -> console ---------------------------------------------
 
-    def midi_in(self, data: bytes) -> list[bytes]:
-        """One MIDI message from the X-Touch -> OSC datagrams out."""
+    def midi_in(self, data: bytes, surface=None) -> list[bytes]:
+        """One MIDI message from a surface -> console output.
+
+        `surface` says which surface the bytes came from (multi-surface
+        rigs); default is the primary one.
+        """
         out: list[osc.Message] = []
-        for ev in self.surface.decode(data):
+        for ev in (surface or self.surface).decode(data):
             out += self._event(ev)
         return _wire(out)
 
@@ -161,7 +168,17 @@ class Bridge:
         return self.apply_feedback(self.target.feedback(msg))
 
     def apply_feedback(self, intents) -> list[bytes]:
-        """Surface intents (from any transport) -> MIDI, touch-aware."""
+        """Surface intents -> MIDI for the primary surface, touch-aware."""
+        return self.render_for(self.surface, intents)
+
+    def render_for(self, surface, intents) -> list[bytes]:
+        """The same intents, rendered for one specific surface.
+
+        Multi-surface rigs call this once per connected surface, so a
+        fader move from the console lands as a motor move on the X-Touch
+        AND (nothing) on the MPK, while a key state lights both the
+        X-Touch button and the MPK pad.
+        """
         out: list[bytes] = []
         for fb in intents:
             if isinstance(fb, targets.FaderFB):
@@ -170,7 +187,7 @@ class Bridge:
                     continue
             elif isinstance(fb, targets.RingFB):
                 self._enc_levels[fb.idx] = fb.unit
-            out += self.surface.render(fb, targets)
+            out += surface.render(fb, targets)
         return out
 
     # ---- lifecycle -------------------------------------------------------

@@ -146,8 +146,10 @@ class Runner:
                         f"the MIDI system is unavailable: {exc}")
                     self._log(self.detail)
                     return 1
-                port_name = self.midi_port or find_surface_port(
-                    names, self.bridge.config.surface)
+                port_name = self.midi_port or next(
+                    (find_surface_port(names, s.name)
+                     for s in self.bridge.surfaces
+                     if find_surface_port(names, s.name)), None)
                 if not port_name:
                     if self.state != "waiting-for-surface":
                         self.state = "waiting-for-surface"
@@ -176,34 +178,63 @@ class Runner:
         self._log("bridge stopped")
         return 0
 
+    def _open_surfaces(self, mido, names) -> list:
+        """(surface, midi_in, midi_out) for every configured surface whose
+        port is present. Multi-surface rigs get every match; a surface
+        that isn't plugged in yet is simply skipped and attached later."""
+        conns = []
+        for surface in self.bridge.surfaces:
+            port = (self.midi_port if len(self.bridge.surfaces) == 1
+                    and self.midi_port else
+                    find_surface_port(names, surface.name))
+            if port and all(port != c[3] for c in conns):
+                try:
+                    conns.append((surface, mido.open_input(port),
+                                  mido.open_output(port), port))
+                except Exception:  # noqa: BLE001 - half-plugged: try later
+                    continue
+        return conns
+
     def _session(self, mido, port_name: str, sock) -> None:
-        """One connected stretch: from port open until stop or error."""
-        with mido.open_input(port_name) as midi_in, \
-                mido.open_output(port_name) as midi_out:
-            self.midi_name = port_name
+        """One connected stretch: from first port open until stop/error."""
+        conns = self._open_surfaces(mido, mido.get_input_names())
+        if not conns:
+            raise OSError("surface disappeared before the session opened")
+        try:
+            self.midi_name = ", ".join(c[3] for c in conns)
             self.state = "running"
-            self.detail = (f"{port_name} <-> MA3 {self.ma3[0]}:{self.ma3[1]}"
+            self.detail = (f"{self.midi_name} <-> {self.ma3[0]}:{self.ma3[1]}"
                            f" (feedback on :{self.recv_port})")
-            self._log(f"X-Touch:  {port_name}")
-            self._log(f"MA3:      sending to {self.ma3[0]}:{self.ma3[1]}, "
+            self._log(f"Surfaces: {self.midi_name}")
+            self._log(f"Console:  sending to {self.ma3[0]}:{self.ma3[1]}, "
                       f"listening on :{self.recv_port}")
-            for raw in self.bridge.hello():
-                midi_out.send(mido.Message.from_bytes(raw))
+            for surface, _mi, mout, _p in conns:
+                for raw in surface.hello(
+                        self.bridge.target.strip_labels(
+                            self.bridge.config.page)):
+                    mout.send(mido.Message.from_bytes(raw))
             for datagram in self.bridge.osc_hello():
                 sock.sendto(datagram, self.ma3)
 
             page = self.bridge.config.page
+            last_rescan = time.monotonic()
             while not self.stop_event.is_set():
                 worked = False
-                for msg in midi_in.iter_pending():
-                    worked = True
-                    self.counters["midi_in"] += 1
-                    for datagram in self.bridge.midi_in(bytes(msg.bytes())):
-                        sock.sendto(datagram, self.ma3)
+                for surface, mi, _mo, _p in conns:
+                    for msg in mi.iter_pending():
+                        worked = True
+                        self.counters["midi_in"] += 1
+                        for datagram in self.bridge.midi_in(
+                                bytes(msg.bytes()), surface=surface):
+                            sock.sendto(datagram, self.ma3)
                 if self.bridge.config.page != page:
                     page = self.bridge.config.page
-                    for raw in self.bridge.page_labels():
-                        midi_out.send(mido.Message.from_bytes(raw))
+                    for surface, _mi, mout, _p in conns:
+                        for s, ln, text in self.bridge.target.strip_labels(page):
+                            from . import targets as _t
+                            for raw in surface.render(
+                                    _t.LabelFB(s, ln, text), _t):
+                                mout.send(mido.Message.from_bytes(raw))
                 while True:
                     try:
                         datagram, _ = sock.recvfrom(4096)
@@ -219,12 +250,37 @@ class Runner:
                             if isinstance(out_d, bytes):
                                 sock.sendto(out_d, self.ma3)
                         continue
-                    for raw in self.bridge.osc_in(datagram):
-                        midi_out.send(mido.Message.from_bytes(raw))
+                    msg = osc.decode(datagram)
+                    intents = (self.bridge.target.feedback(msg)
+                               if msg is not None else [])
+                    for surface, _mi, mout, _p in conns:
+                        for raw in self.bridge.render_for(surface, intents):
+                            mout.send(mido.Message.from_bytes(raw))
                 for datagram in self.bridge.tick(time.monotonic()):
                     sock.sendto(datagram, self.ma3)
+                # A configured surface plugged in mid-session joins live.
+                if (len(conns) < len(self.bridge.surfaces)
+                        and time.monotonic() - last_rescan > 3.0):
+                    last_rescan = time.monotonic()
+                    have = {c[3] for c in conns}
+                    for c in self._open_surfaces(mido, mido.get_input_names()):
+                        if c[3] not in have:
+                            conns.append(c)
+                            self.midi_name = ", ".join(x[3] for x in conns)
+                            self.detail = (f"{self.midi_name} <-> "
+                                           f"{self.ma3[0]}:{self.ma3[1]}")
+                            for raw in c[0].hello(
+                                    self.bridge.target.strip_labels(page)):
+                                c[2].send(mido.Message.from_bytes(raw))
                 if not worked:
                     time.sleep(0.002)
+        finally:
+            for _s, mi, mout, _p in conns:
+                try:
+                    mi.close()
+                    mout.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
     # ---- grandMA2 web remote (websocket, not OSC) ------------------------

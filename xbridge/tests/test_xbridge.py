@@ -848,3 +848,49 @@ def test_control_port_rejects_junk_quietly():
     for addr in ("/xbridge/fader/99", "/xbridge/fader/x", "/xbridge/nope",
                  "/xbridge/key/rec/1", "/other/fader/1"):
         assert b.control_in(osc.Message(addr, (1,))) == []
+
+
+# ---- multiple surfaces at once ----------------------------------------
+
+
+def test_surface_list_parses_and_rejects():
+    from xbridge import surfaces
+
+    both = surfaces.make_surfaces(Config(surface="xtouch,mpk"))
+    assert [s.name for s in both] == ["xtouch", "mpk"]
+    plus = surfaces.make_surfaces(Config(surface="xtouch + mpk"))
+    assert [s.name for s in plus] == ["xtouch", "mpk"]
+    with pytest.raises(ValueError):
+        surfaces.make_surfaces(Config(surface="xtouch,decks"))
+
+
+def test_events_route_by_originating_surface():
+    b = Bridge(config=Config(surface="xtouch,mpk"))
+    xt, mpk = b.surfaces
+    # CC 70 is a knob on the MPK but nothing on the X-Touch
+    assert b.midi_in(bytes((0xB0, 70, 127)), surface=xt) == []
+    (d,) = b.midi_in(bytes((0xB0, 70, 127)), surface=mpk)
+    assert osc.decode(d).address == "/Page1/Fader301"
+    # note 36 is REC row on MCU (unmapped) but pad 1 on the MPK
+    assert b.midi_in(bytes((0x90, 36, 127)), surface=xt) == []
+    (d,) = b.midi_in(bytes((0x90, 36, 127)), surface=mpk)
+    assert osc.decode(d) == osc.Message("/Page1/Key101", (1,))
+
+
+def test_feedback_renders_per_surface():
+    b = Bridge(config=Config(surface="xtouch,mpk"))
+    xt, mpk = b.surfaces
+    intents = b.target.feedback(osc.Message("/Page1/Key101", (1,)))
+    assert b.render_for(xt, intents) == [mcu.button_led(mcu.SELECT[0], True)]
+    assert b.render_for(mpk, intents) == [bytes((0x90, 36, 127))]
+    fader = b.target.feedback(osc.Message("/Page1/Fader201", (50,)))
+    assert b.render_for(mpk, fader) == []          # no motors on an MPK
+    assert len(b.render_for(xt, fader)) == 1
+
+
+def test_touch_suppression_holds_across_surfaces():
+    b = Bridge(config=Config(surface="xtouch,mpk"))
+    xt, _mpk = b.surfaces
+    b.midi_in(bytes((0x90, 104, 127)), surface=xt)   # finger on fader 1
+    fader = b.target.feedback(osc.Message("/Page1/Fader201", (99,)))
+    assert b.render_for(xt, fader) == []

@@ -98,10 +98,26 @@ class MPKSurface:
         return [bytes((0x90, n, 0)) for n in self.pads]
 
 
+_SURFACES = {"xtouch": XTouchSurface, "mpk": MPKSurface}
+
+
 def make_surface(config):
-    kind = getattr(config, "surface", "xtouch") or "xtouch"
-    if kind == "mpk":
-        return MPKSurface(config)
-    if kind == "xtouch":
-        return XTouchSurface(config)
-    raise ValueError(f"unknown surface {kind!r} (have: xtouch, mpk)")
+    return make_surfaces(config)[0]
+
+
+def make_surfaces(config) -> list:
+    """Every surface named in config.surface ("xtouch", "xtouch,mpk", ...).
+
+    Running several at once is the point: faders on the X-Touch, knobs
+    and pads on an MPK, deck keys over the OSC control port - one bridge,
+    one target, many hands.
+    """
+    spec = getattr(config, "surface", "xtouch") or "xtouch"
+    out = []
+    for kind in [s.strip() for s in spec.replace("+", ",").split(",") if s.strip()]:
+        cls = _SURFACES.get(kind)
+        if cls is None:
+            raise ValueError(
+                f"unknown surface {kind!r} (have: {', '.join(sorted(_SURFACES))})")
+        out.append(cls(config))
+    return out or [XTouchSurface(config)]
