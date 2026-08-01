@@ -177,6 +177,7 @@ Motors follow the console both ways. Surface in MC/USB mode.</p>
   <label>Target</label>
   <select id="target" onchange="renderMap()">
     <option value="ma3">grandMA3 onPC</option>
+    <option value="ma2">grandMA2 onPC (web remote)</option>
     <option value="magicq">ChamSys MagicQ</option>
     <option value="eos">ETC Eos family</option>
     <option value="x32">Behringer X32 / M32</option>
@@ -287,6 +288,20 @@ function renderMap() {
         <option value="float01" ${g('gen_scale','float01')==='float01'?'selected':''}>float 0-1</option>
         <option value="int100" ${g('gen_scale','float01')==='int100'?'selected':''}>int 0-100</option>
       </select></div>`;
+  } else if (t === 'ma2') {
+    h += `<p class="note">grandMA2 via its <b>Web Remote websocket</b> (MA2 has
+      no OSC - this is how ShowCockpit does it too). Faders ride
+      <code>Executor page.1-8</code>, SELECT = Go, MUTE = Off, encoders ride
+      executors 9-16, master = SpecialMaster 2.1; executor titles and levels
+      come back from the web remote to drive the strips and motors
+      (experimental - the feedback format is reverse-engineered). MA2 setup:
+      enable Remotes (Setup &rarr; Console &rarr; Global Settings) and check
+      the web remote works in a browser first. Port: 80.</p>
+      <div class="row"><label>user</label><input type="text" id="m_2u" value="${esc(cfg.ma2_user)}" style="width:7rem">
+      <label>password</label><input type="text" id="m_2p" value="${esc(cfg.ma2_password)}" style="width:7rem">
+      <label>exec page</label>${num('m_page', cfg.page)}</div>
+      <div class="row"><label>master command</label>
+      <input type="text" id="m_2m" value="${esc(cfg.ma2_master_cmd)}" style="width:16rem"></div>`;
   } else if (t === 'magicq') {
     h += `<p class="note">Playbacks 1-8 with motor feedback; SELECT = Go, MUTE = true Flash,
       encoders = execute grid 1, STOP/PLAY = blackout on/off. MagicQ: Setup &rarr; View
@@ -330,6 +345,9 @@ async function saveMap() {
   const body = {target: t};
   const pg = $('m_page'); if (pg) body.page = parseInt(pg.value, 10) || 1;
   const mq = $('m_mqpb'); if (mq) body.magicq_master_pb = parseInt(mq.value, 10) || 0;
+  const u2 = $('m_2u');
+  if (u2) { body.ma2_user = u2.value; body.ma2_password = $('m_2p').value;
+            body.ma2_master_cmd = $('m_2m').value; }
   if (t === 'ma3') {
     body.fader_execs = collect('fader_execs', 8);
     body.select_execs = collect('select_execs', 8);

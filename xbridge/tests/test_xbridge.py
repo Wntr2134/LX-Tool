@@ -686,3 +686,88 @@ def test_web_config_endpoints_roundtrip(tmp_path, monkeypatch):
     asyncio.run(web.api_config_save(FakeRequest()))
     assert web.api_config()["config"]["target"] == "x32"
     assert jsonlib.loads((tmp_path / "xtouch.json").read_text())["page"] == 2
+
+
+# ---- grandMA2 (web remote) --------------------------------------------
+
+
+def _ma2() -> Bridge:
+    return Bridge(config=Config(target="ma2"))
+
+
+def test_ma2_faders_are_executor_commands():
+    b = _ma2()
+    (cmd,) = b.midi_in(mcu.fader_out(0, 0.5))
+    assert isinstance(cmd, str)
+    assert cmd == "Executor 1.1 At 50.0"
+    b.config.page = 3
+    (cmd,) = b.midi_in(mcu.fader_out(7, 1.0))
+    assert cmd == "Executor 3.8 At 100.0"
+
+
+def test_ma2_master_and_buttons_and_encoders():
+    b = _ma2()
+    (m,) = b.midi_in(mcu.fader_out(8, 0.8))
+    assert m == "SpecialMaster 2.1 At 80.0"
+    (go,) = b.midi_in(bytes((0x90, mcu.SELECT[1], 127)))
+    assert go == "Go Executor 1.2"
+    assert b.midi_in(bytes((0x90, mcu.SELECT[1], 0))) == []
+    (off,) = b.midi_in(bytes((0x90, mcu.MUTE[0], 127)))
+    assert off == "Off Executor 1.1"
+    (enc,) = b.midi_in(bytes((0xB0, 16, 1)))
+    assert enc.startswith("Executor 1.9 At ")
+
+
+def test_ma2_master_command_is_a_template():
+    b = Bridge(config=Config(target="ma2", ma2_master_cmd="Master 2.2 At {pct}"))
+    (m,) = b.midi_in(mcu.fader_out(8, 0.5))
+    assert m == "Master 2.2 At 50.0"
+    b2 = Bridge(config=Config(target="ma2", ma2_master_cmd=""))
+    assert b2.midi_in(mcu.fader_out(8, 0.5)) == []
+
+
+def test_ma2_playbacks_request_names_the_session():
+    t = _ma2().target
+    req = t.playbacks_request(42)
+    assert req["requestType"] == "playbacks"
+    assert req["session"] == 42
+
+
+def test_ma2_ws_feedback_drives_motors_and_labels():
+    b = _ma2()
+    msg = {
+        "responseType": "playbacks",
+        "itemGroups": [{"items": [[
+            {"iExec": 0, "i": {"t": "Front Wash"},
+             "executorBlocks": [{"fader": {"v": 0.5}}]},
+            {"iExec": 1, "i": {"t": ""},
+             "executorBlocks": [{"fader": {"v": 1.0}}]},
+        ]]}],
+    }
+    out = b.apply_feedback(b.target.ws_feedback(msg))
+    assert mcu.lcd_text(0, 0, "Front Wash") in out
+    motors = [mcu.decode(r) for r in out if mcu.decode(r) is not None
+              and isinstance(mcu.decode(r), mcu.FaderMoved)]
+    assert any(m.strip == 0 and abs(m.unit - 0.5) < 0.01 for m in motors)
+    assert any(m.strip == 1 and m.unit > 0.99 for m in motors)
+    # a repeat poll must not spam the label again (levels may repeat)
+    from xbridge import targets
+    again = b.target.ws_feedback(msg)
+    assert not any(isinstance(fb, targets.LabelFB) for fb in again)
+
+
+def test_ma2_ws_feedback_is_garbage_proof():
+    t = _ma2().target
+    assert t.ws_feedback({}) == []
+    assert t.ws_feedback({"responseType": "playbacks", "itemGroups": "?"}) == []
+    assert t.ws_feedback({"responseType": "playbacks",
+                          "itemGroups": [{"items": [[{"iExec": 99}]]}]}) == []
+
+
+def test_ma2_touch_suppression_applies_to_ws_feedback_too():
+    b = _ma2()
+    b.midi_in(bytes((0x90, 104, 127)))     # finger on strip 1
+    msg = {"responseType": "playbacks", "itemGroups": [{"items": [[
+        {"iExec": 0, "executorBlocks": [{"fader": {"v": 0.9}}]}]]}]}
+    out = b.apply_feedback(b.target.ws_feedback(msg))
+    assert all(not isinstance(mcu.decode(r), mcu.FaderMoved) for r in out)

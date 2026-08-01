@@ -54,6 +54,10 @@ class Config:
     gen_mute: str = ""
     gen_encoder: str = ""
     gen_scale: str = "float01"         # "float01" | "int100"
+    # grandMA2 web remote (no OSC on MA2): console login + master command.
+    ma2_user: str = "remote"
+    ma2_password: str = "remote"
+    ma2_master_cmd: str = "SpecialMaster 2.1 At {pct}"
 
 
 _BUTTON_ROWS = (("select", mcu.SELECT), ("mute", mcu.MUTE))
@@ -110,7 +114,7 @@ class Bridge:
                 self._enc_levels[ev.encoder] = level
                 out += self.target.encoder(ev.encoder, level)
 
-        return [osc.encode(m) for m in out]
+        return _wire(out)
 
     def _button(self, ev: mcu.ButtonPressed) -> list[osc.Message]:
         if ev.note in _TRANSPORT:
@@ -137,8 +141,12 @@ class Bridge:
         msg = osc.decode(datagram)
         if msg is None:
             return []
+        return self.apply_feedback(self.target.feedback(msg))
+
+    def apply_feedback(self, intents) -> list[bytes]:
+        """Surface intents (from any transport) -> MIDI, touch-aware."""
         out: list[bytes] = []
-        for fb in self.target.feedback(msg):
+        for fb in intents:
             if isinstance(fb, targets.FaderFB):
                 # Never fight the human hand on the fader.
                 if fb.strip not in self._touched:
@@ -161,12 +169,18 @@ class Bridge:
 
     def osc_hello(self) -> list[bytes]:
         """Datagrams to introduce ourselves to the console (subscribe/query)."""
-        return [osc.encode(m) for m in self.target.hello()]
+        return _wire(self.target.hello())
 
     def tick(self, now: float) -> list[bytes]:
         """Periodic datagrams (e.g. the X32's /xremote renewal)."""
-        return [osc.encode(m) for m in self.target.tick(now)]
+        return _wire(self.target.tick(now))
 
     def page_labels(self) -> list[bytes]:
         return [mcu.lcd_text(s, ln, text)
                 for s, ln, text in self.target.strip_labels(self.config.page)]
+
+
+def _wire(out):
+    """Encode a target's mixed output: OSC messages to datagrams, command
+    strings (the MA2 web-remote transport) passed through untouched."""
+    return [osc.encode(m) if isinstance(m, osc.Message) else m for m in out]

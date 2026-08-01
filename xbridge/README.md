@@ -9,6 +9,7 @@ For the **full-size Behringer X-Touch**, driving either **grandMA3 onPC**
 | Target | What the surface becomes |
 |---|---|
 | `ma3` (default) | Executor wing for grandMA3 onPC — see the mapping below |
+| `ma2` | **grandMA2** via its **Web Remote websocket** (MA2 has no OSC — this is the same route ShowCockpit uses). Faders ride `Executor <page>.1–8` through the console command line, SELECT = Go, MUTE = Off, encoders ride executors 9–16, master = SpecialMaster 2.1 (template, editable), PLAY/STOP/REW = Go/Pause/GoBack on the first executor. Executor **titles and levels stream back** from the web remote to label the strips and drive the motors — *experimental: the feedback format is reverse-engineered, not documented by MA*. Setup: enable Remotes on the console (Setup → Console → Global Settings → "Login enabled"), confirm the browser web remote works, then give the bridge the same user/password (default `remote`/`remote`) in the mapping editor. Port 80 |
 | `magicq` | Playback wing for ChamSys MagicQ: faders ride playbacks 1–8 with motor feedback (MagicQ's own `/feedback/pb+exec` stream), SELECT = **Go**, MUTE = a true **Flash** (in on press, out on release), encoders drive execute grid 1, master fader rides playback 9, STOP = blackout on / PLAY = blackout off. Enable OSC in MagicQ: Setup → View Settings → Network, receive 8000 / transmit 9000 |
 | `x32` | Fader wing for an X32/M32: faders are channel levels (motors follow the desk), MUTE is the real mute with LED state, SELECT selects the channel, encoders are pan with ring feedback, master fader is the main stereo bus, FADER BANK pages through ch 1–8 / 9–16 / 17–24 / 25–32, and the scribble strips show the console's **own channel names** |
 | `resolume` | Media wing for Resolume Arena/Avenue: faders are **layer opacity** (banked 8 layers at a time), MUTE bypasses the layer, SELECT connects the matching column, encoders ride the layer masters, master fader is the composition master. For motor feedback enable OSC *output* in Resolume's preferences at this machine's listen port |
@@ -24,7 +25,8 @@ lx xtouch run --target resolume
 lx xtouch run --target companion                  # Companion, port 12321
 ```
 
-Send ports default per target (MA3 8000, MagicQ 8000, Eos 8000, X32 10023,
+Send ports default per target (MA3 8000, MA2 80 [websocket], MagicQ 8000,
+Eos 8000, X32 10023,
 Resolume 7000, Companion 12321, generic 9001). The X32 needs **no setup at all** — it
 answers OSC out of the box; the bridge subscribes itself and keeps the
 subscription alive.

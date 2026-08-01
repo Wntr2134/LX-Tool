@@ -726,8 +726,137 @@ class GenericOSCTarget:
         return []
 
 
+class MA2Target:
+    """grandMA2 via its Web Remote websocket - MA2 has no OSC.
+
+    The same route ShowCockpit takes. The console's built-in web server
+    (port 80) accepts a websocket session: {"session":0} to get a session
+    number, a login with an MD5'd password, then JSON-wrapped command-line
+    commands - so faders ride "Executor <page>.<n> At <pct>" and buttons
+    are Go/Off, exactly as if typed. Keepalives hold the session open,
+    and polling the "playbacks" request returns executor levels and
+    titles, which this target parses (best-effort - the response shape is
+    reverse-engineered, not documented) to drive the motors and strips.
+
+    MA2 setup: Setup > Console > Global Settings > Remotes: "Login
+    enabled"; make sure the web remote works from a browser first. The
+    default remote user is "remote"/"remote" - change ma2_user /
+    ma2_password in the mapping if yours differs.
+
+    Unlike the OSC targets this speaks TCP websocket; the runner opens a
+    websocket session for it instead of a UDP socket.
+    """
+
+    name = "ma2"
+    transport = "ma2ws"
+    default_send_port = 80
+    pages = 9999
+
+    def __init__(self, config):
+        self.config = config
+        self._labels: dict[int, str] = {}     # strip -> title
+
+    def _exec(self, strip: int) -> str:
+        return f"{self.config.page}.{strip + 1}"
+
+    # ---- surface -> console (command strings, not OSC) -------------------
+
+    def fader(self, strip: int, unit: float) -> list[str]:
+        return [f"Executor {self._exec(strip)} At {unit * 100:.1f}"]
+
+    def master(self, unit: float) -> list[str]:
+        cmd = getattr(self.config, "ma2_master_cmd", "SpecialMaster 2.1 At {pct}")
+        if not cmd:
+            return []
+        return [cmd.replace("{pct}", f"{unit * 100:.1f}")]
+
+    def button(self, row: str, idx: int, down: bool) -> list[str]:
+        if not down:
+            return []
+        if row == "select":
+            return [f"Go Executor {self._exec(idx)}"]
+        if row == "mute":
+            return [f"Off Executor {self._exec(idx)}"]
+        return []
+
+    def encoder(self, idx: int, unit: float) -> list[str]:
+        # Encoders ride executors 9-16 of the same page.
+        return [f"Executor {self.config.page}.{idx + 9} At {unit * 100:.1f}"]
+
+    def transport(self, key: str, down: bool) -> list[str]:
+        if not down:
+            return []
+        if key == "play":
+            return ["Go Executor " + self._exec(0)]
+        if key == "stop":
+            return ["Pause Executor " + self._exec(0)]
+        if key == "rewind":
+            return ["GoBack Executor " + self._exec(0)]
+        return []
+
+    def set_page(self, page: int) -> list[str]:
+        return []
+
+    def strip_labels(self, page: int) -> list[tuple[int, int, str]]:
+        out = []
+        for s in range(8):
+            out.append((s, 0, self._labels.get(s, f"Ex {page}.{s + 1}")))
+            out.append((s, 1, f"MA2 p{page}"))
+        return out
+
+    # ---- console -> surface (parsed web-remote JSON) ---------------------
+
+    def playbacks_request(self, session: int) -> dict:
+        """The poll that makes MA2 report executor levels and titles."""
+        return {
+            "requestType": "playbacks",
+            "startIndex": [(self.config.page - 1) * 0],
+            "itemsCount": [16],
+            "pageIndex": self.config.page - 1,
+            "itemsType": [2],
+            "view": 2,
+            "execButtonViewMode": 1,
+            "buttonsViewMode": 0,
+            "session": session,
+            "maxRequests": 1,
+        }
+
+    def ws_feedback(self, msg: dict):
+        """Surface intents out of a web-remote JSON message (best-effort)."""
+        if msg.get("responseType") != "playbacks":
+            return []
+        out = []
+        try:
+            for group in msg.get("itemGroups", []):
+                for row in group.get("items", []):
+                    for item in row if isinstance(row, list) else [row]:
+                        out += self._item_feedback(item)
+        except (TypeError, AttributeError):
+            return []
+        return out
+
+    def _item_feedback(self, item: dict):
+        out = []
+        idx = item.get("iExec")
+        if not isinstance(idx, int) or not 0 <= idx < 8:
+            return out
+        title = (item.get("i") or {}).get("t")
+        if isinstance(title, str) and title.strip():
+            if self._labels.get(idx) != title.strip():
+                self._labels[idx] = title.strip()
+                out.append(LabelFB(idx, 0, title.strip()))
+        for block in item.get("executorBlocks", []):
+            fader = block.get("fader") if isinstance(block, dict) else None
+            if isinstance(fader, dict):
+                v = fader.get("v")
+                if isinstance(v, (int, float)):
+                    out.append(FaderFB(idx, max(0.0, min(1.0, float(v)))))
+        return out
+
+
 TARGETS = {
     "ma3": MA3Target,
+    "ma2": MA2Target,
     "x32": X32Target,
     "magicq": MagicQTarget,
     "resolume": ResolumeTarget,

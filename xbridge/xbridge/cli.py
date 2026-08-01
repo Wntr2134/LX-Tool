@@ -18,8 +18,8 @@ def main(argv: list[str] | None = None) -> int:
 
     r = sub.add_parser("run", help="start the bridge")
     r.add_argument("--target", default="",
-                   choices=("", "ma3", "magicq", "eos", "x32", "resolume",
-                            "companion", "generic"))
+                   choices=("", "ma3", "ma2", "magicq", "eos", "x32",
+                            "resolume", "companion", "generic"))
     r.add_argument("--host", default="127.0.0.1",
                    help="machine running the console (default: this one)")
     r.add_argument("--send-port", type=int, default=0,

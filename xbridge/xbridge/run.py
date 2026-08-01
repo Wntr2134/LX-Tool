@@ -110,6 +110,9 @@ class Runner:
             self._log(self.detail)
             return 1
 
+        if getattr(self.bridge.target, "transport", "osc") == "ma2ws":
+            return self._run_ma2ws(mido)
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.bind(("0.0.0.0", self.recv_port))
@@ -202,6 +205,129 @@ class Runner:
                     sock.sendto(datagram, self.ma3)
                 if not worked:
                     time.sleep(0.002)
+
+
+    # ---- grandMA2 web remote (websocket, not OSC) ------------------------
+
+    def _run_ma2ws(self, mido) -> int:
+        """MA2 session loop: websocket to the console's web server.
+
+        Same survival rules as the OSC loop: wait for the surface, wait
+        for the console, reconnect on loss, stop cleanly.
+        """
+        try:
+            from websockets.sync.client import connect
+        except ImportError:
+            self.state, self.detail = "error", (
+                "MA2 support needs the websockets package: "
+                "pip install websockets")
+            self._log(self.detail)
+            return 1
+
+        while not self.stop_event.is_set():
+            try:
+                names = mido.get_input_names()
+            except Exception as exc:  # noqa: BLE001
+                self.state, self.detail = "error", (
+                    f"the MIDI system is unavailable: {exc}")
+                self._log(self.detail)
+                return 1
+            port_name = self.midi_port or find_xtouch_port(names)
+            if not port_name:
+                if self.state != "waiting-for-surface":
+                    self.state = "waiting-for-surface"
+                    self.detail = "no X-Touch on USB - waiting"
+                    self._log(self.detail)
+                if self.stop_event.wait(_RETRY_SECS):
+                    break
+                continue
+            try:
+                self._ma2_session(mido, port_name, connect)
+            except KeyboardInterrupt:
+                break
+            except Exception as exc:  # noqa: BLE001 - reconnect, don't die
+                self.state = "waiting-for-surface"
+                self.detail = f"MA2 link lost: {exc} - reconnecting"
+                self._log(self.detail)
+                if self.stop_event.wait(_RETRY_SECS):
+                    break
+        self.state, self.detail = "stopped", ""
+        self._log("bridge stopped")
+        return 0
+
+    def _ma2_session(self, mido, port_name: str, connect) -> None:
+        import hashlib
+        import json as jsonlib
+
+        cfg = self.bridge.config
+        url = f"ws://{self.ma3[0]}:{self.ma3[1]}/"
+        target = self.bridge.target
+
+        with mido.open_input(port_name) as midi_in, \
+                mido.open_output(port_name) as midi_out, \
+                connect(url, open_timeout=5) as ws:
+            self.midi_name = port_name
+            self.state = "running"
+            self.detail = f"{port_name} <-> MA2 web remote {url}"
+            self._log(self.detail)
+            for raw in self.bridge.hello():
+                midi_out.send(mido.Message.from_bytes(raw))
+
+            session = 0
+            logged_in = False
+            last_keepalive = last_poll = 0.0
+
+            def send(obj: dict) -> None:
+                ws.send(jsonlib.dumps(obj))
+
+            send({"session": 0})
+            while not self.stop_event.is_set():
+                now = time.monotonic()
+                # ---- console -> surface
+                try:
+                    raw_msg = ws.recv(timeout=0.02)
+                except TimeoutError:
+                    raw_msg = None
+                if raw_msg is not None:
+                    self.counters["osc_in"] += 1
+                    try:
+                        msg = jsonlib.loads(raw_msg)
+                    except ValueError:
+                        msg = None
+                    if isinstance(msg, dict):
+                        new_session = msg.get("session")
+                        if isinstance(new_session, int) and new_session > 0 \
+                                and new_session != session:
+                            session = new_session
+                            logged_in = False
+                        if session and not logged_in:
+                            pw = hashlib.md5(
+                                cfg.ma2_password.encode()).hexdigest()
+                            send({"requestType": "login",
+                                  "username": cfg.ma2_user,
+                                  "password": pw, "session": session,
+                                  "maxRequests": 10})
+                            logged_in = True
+                            self.detail = (f"{port_name} <-> MA2 {url} "
+                                           f"(session {session})")
+                        for raw in self.bridge.apply_feedback(
+                                target.ws_feedback(msg)):
+                            midi_out.send(mido.Message.from_bytes(raw))
+                # ---- surface -> console
+                for m in midi_in.iter_pending():
+                    self.counters["midi_in"] += 1
+                    for cmd in self.bridge.midi_in(bytes(m.bytes())):
+                        if isinstance(cmd, str) and session:
+                            send({"command": cmd, "session": session,
+                                  "requestType": "command",
+                                  "maxRequests": 0})
+                # ---- keepalive + playback polling
+                if session and now - last_keepalive > 5.0:
+                    last_keepalive = now
+                    send({"session": session})
+                if session and logged_in and now - last_poll > 0.4:
+                    last_poll = now
+                    send(target.playbacks_request(session))
 
 
 def run(*, ma3_host: str = "127.0.0.1", send_port: int = 0,

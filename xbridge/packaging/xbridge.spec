@@ -29,6 +29,9 @@ hidden = [
     "mido",
     "mido.backends.rtmidi",
     "rtmidi",
+    # The MA2 target's websocket client, imported lazily.
+    "websockets",
+    "websockets.sync.client",
 ]
 hidden += collect_submodules("xbridge")
 
