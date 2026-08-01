@@ -79,6 +79,7 @@ exe = EXE(
     a.datas,
     [],
     name="LX-Tool",
+    version="packaging/lxtool_version.txt" if sys.platform == "win32" else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

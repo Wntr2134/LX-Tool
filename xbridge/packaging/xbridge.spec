@@ -60,6 +60,7 @@ exe = EXE(
     a.datas,
     [],
     name="XBridge",
+    version="xbridge/packaging/xbridge_version.txt" if sys.platform == "win32" else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

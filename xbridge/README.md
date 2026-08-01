@@ -246,3 +246,26 @@ Developer ID (~USD 99/yr, plus notarisation) and a Windows Authenticode
 certificate — which only the project owner can purchase; the CI has a
 marked slot ready for the day the secrets exist. Until then:
 right-click → Open on macOS, "More info → Run anyway" on Windows.
+
+## If Windows Defender flags the download
+
+Defender sometimes quarantines the unsigned `.exe` as
+**Trojan:Win32/Wacatac.B!ml**. The `!ml` suffix means a machine-learning
+heuristic, not a match against known malware — unsigned single-file
+Python apps trip it routinely, and this build comes from the repository's
+own public CI with its SHA-256 recorded on the release page.
+
+To verify and unblock:
+
+1. Check the hash matches the release: in PowerShell,
+   `Get-FileHash .\XBridge.exe` and compare with the digest shown on
+   https://github.com/Wntr2134/LX-Tool/releases (expand the asset).
+2. Windows Security → Protection history → the XBridge entry →
+   **Actions → Restore**, then **Allow on device**.
+3. Optional: report the false positive to Microsoft at
+   https://www.microsoft.com/wdsi/filesubmission — a few reports usually
+   clears the heuristic for everyone.
+
+The builds carry proper Windows version metadata to lower the heuristic
+score; the real fix is code signing, which needs a purchased certificate
+(see the signing section).
