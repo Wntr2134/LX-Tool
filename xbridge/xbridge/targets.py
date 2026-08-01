@@ -126,9 +126,9 @@ class MA3Target:
         if not msg.args:
             return []
         # Real executor names, pushed by the optional MA3 Lua plugin
-        # (data/ma3-plugin/): /lxtool/label/<strip 1-8> "name".
+        # (ma3-plugin/): /xbridge/label/<strip 1-8> "name".
         parts = msg.address.strip("/").split("/")
-        if (len(parts) == 3 and parts[0] == "lxtool" and parts[1] == "label"
+        if (len(parts) == 3 and parts[0] == "xbridge" and parts[1] == "label"
                 and isinstance(msg.args[0], str)):
             try:
                 strip = int(parts[2])

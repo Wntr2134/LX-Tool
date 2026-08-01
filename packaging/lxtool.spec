@@ -34,11 +34,6 @@ hidden = [
     "webview.platforms.cocoa",
     "webview.platforms.winforms",
     "webview.platforms.edgechromium",
-    # The X-Touch bridge. mido picks its backend at runtime by name, so the
-    # rtmidi backend must be listed or the frozen app has silent no-MIDI.
-    "mido",
-    "mido.backends.rtmidi",
-    "rtmidi",
     # Built-in OCR: each platform's own engine, imported lazily. Names that
     # don't exist on the build platform just produce a PyInstaller warning.
     "Vision",

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xbridge"
+version = "0.1.0"
+description = "Behringer X-Touch as a native surface for lighting, media and show control"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "mido>=1.3",
+    "python-rtmidi>=1.5",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+]
+desktop = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+    "pywebview>=5.0",
+    "pyobjc-core>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-WebKit>=10; sys_platform == 'darwin'",
+]
+dev = ["pytest>=8"]
+
+[project.scripts]
+xbridge = "xbridge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["xbridge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

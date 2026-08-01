@@ -1,6 +1,6 @@
--- LX-Tool: push executor labels to the X-Touch scribble strips.
+-- XBridge: push executor labels to the X-Touch scribble strips.
 --
--- Sends /lxtool/label/<strip>,s,<name> for the executors the bridge's
+-- Sends /xbridge/label/<strip>,s,<name> for the executors the bridge's
 -- faders ride (201-208 on the current page by default), via the console's
 -- OSC line, every few seconds - so the strips show what the executors are
 -- actually called instead of just their numbers.
@@ -37,14 +37,14 @@ local function sendLabels()
         if name ~= "" then
             -- Escape commas: they separate OSC arguments in SendOSC.
             name = string.gsub(name, ",", "\\,")
-            Cmd(string.format('SendOSC %d "/lxtool/label/%d,s,%s"',
+            Cmd(string.format('SendOSC %d "/xbridge/label/%d,s,%s"',
                               OSC_LINE, strip, string.sub(name, 1, 12)))
         end
     end
 end
 
 local function main()
-    Printf("LX-Tool labels: pushing executor names every 5s (plugin keeps running)")
+    Printf("XBridge labels: pushing executor names every 5s (plugin keeps running)")
     while true do
         sendLabels()
         coroutine.yield(5)   -- re-run in 5 seconds

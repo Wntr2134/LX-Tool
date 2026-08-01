@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from lxtool.xtouch import mcu, osc
-from lxtool.xtouch.bridge import Bridge, Config
-from lxtool.xtouch.run import default_config_json, find_xtouch_port, load_config
+from xbridge import mcu, osc
+from xbridge.bridge import Bridge, Config
+from xbridge.run import default_config_json, find_xtouch_port, load_config
 
 # ---- MCU codec ---------------------------------------------------------
 
@@ -249,7 +249,7 @@ def test_runner_errors_cleanly_when_the_udp_port_is_taken():
     import socket
     import threading
 
-    from lxtool.xtouch.run import Runner, midi_available
+    from xbridge.run import Runner, midi_available
 
     if not midi_available():
         pytest.skip("mido not installed here; the port check needs run()")
@@ -274,7 +274,7 @@ def test_runner_errors_cleanly_when_the_udp_port_is_taken():
 
 
 def test_runner_stop_event_ends_the_wait_for_a_surface():
-    from lxtool.xtouch.run import Runner, midi_available
+    from xbridge.run import Runner, midi_available
 
     if not midi_available():
         pytest.skip("mido not installed here")
@@ -285,7 +285,7 @@ def test_runner_stop_event_ends_the_wait_for_a_surface():
 
 
 def test_sniffer_formatting_is_readable_and_junk_proof():
-    from lxtool.xtouch.run import format_midi, format_osc
+    from xbridge.run import format_midi, format_osc
 
     line = format_osc(osc.encode(osc.Message("/Page1/Fader201", (75,))))
     assert "/Page1/Fader201" in line and "75" in line
@@ -295,9 +295,9 @@ def test_sniffer_formatting_is_readable_and_junk_proof():
 
 
 def test_web_status_endpoint_reports_without_midi_installed():
-    from lxtool.web import app as web
+    from xbridge import app as web
 
-    d = web.api_xtouch_status()
+    d = web.api_status()
     assert set(d) >= {"available", "running", "state", "detail"}
     assert d["running"] is False
 
@@ -389,7 +389,7 @@ def test_x32_feedback_fader_and_mute_reach_the_surface():
 
 
 def test_unknown_target_is_rejected():
-    from lxtool.xtouch import targets
+    from xbridge import targets
 
     with pytest.raises(ValueError):
         targets.make_target(Config(target="hog4"))
@@ -613,17 +613,17 @@ def test_generic_feedback_on_the_fader_template_moves_motors():
 def test_ma3_lua_plugin_labels_reach_the_strips():
     b = Bridge()
     (raw,) = b.osc_in(osc.encode(
-        osc.Message("/lxtool/label/1", ("Front Wash",))))
+        osc.Message("/xbridge/label/1", ("Front Wash",))))
     assert raw == mcu.lcd_text(0, 0, "Front Wash")
-    assert b.osc_in(osc.encode(osc.Message("/lxtool/label/9", ("x",)))) == []
+    assert b.osc_in(osc.encode(osc.Message("/xbridge/label/9", ("x",)))) == []
 
 
 def test_ma3_plugin_file_ships_and_names_the_contract():
     from pathlib import Path
 
-    lua = Path(__file__).parent.parent / "data" / "ma3-plugin" / "lxtool_labels.lua"
+    lua = Path(__file__).parent.parent / "ma3-plugin" / "xbridge_labels.lua"
     text = lua.read_text(encoding="utf-8")
-    assert "/lxtool/label/" in text
+    assert "/xbridge/label/" in text
     assert "SendOSC" in text
 
 
@@ -635,10 +635,10 @@ def test_preset_export_import_roundtrip(tmp_path, monkeypatch):
     import json as jsonlib
     from pathlib import Path
 
-    from lxtool.web import app as web
+    from xbridge import app as web
 
-    monkeypatch.setenv("LXTOOL_XTOUCH", str(tmp_path / "xtouch.json"))
-    resp = web.api_xtouch_config_export()
+    monkeypatch.setenv("XBRIDGE_CONFIG", str(tmp_path / "xtouch.json"))
+    resp = web.api_config_export()
     exported = jsonlib.loads(Path(resp.path).read_text(encoding="utf-8"))
     assert exported["target"] == "ma3"
 
@@ -649,55 +649,16 @@ def test_preset_export_import_roundtrip(tmp_path, monkeypatch):
             return jsonlib.dumps({"target": "generic",
                                   "gen_fader": "/x/{n}"}).encode()
 
-    d = asyncio.run(web.api_xtouch_config_import(FakeUpload()))
+    d = asyncio.run(web.api_config_import(FakeUpload()))
     assert d["target"] == "generic"
-    from lxtool.xtouch.run import load_stored_config
+    from xbridge.run import load_stored_config
     assert load_stored_config().gen_fader == "/x/{n}"
 
 
-def test_ocr_is_honest_about_availability():
-    import sys
-
-    from lxtool import textimage
-
-    ok, detail = textimage.available()
-    if sys.platform not in ("darwin", "win32"):
-        assert not ok
-        assert "phone" in detail
-        with pytest.raises(RuntimeError):
-            textimage.read_text(b"not an image")
-
-
-def test_ocr_endpoint_maps_unavailable_to_409(monkeypatch):
-    import asyncio
-
-    from fastapi import HTTPException
-
-    from lxtool import textimage
-    from lxtool.web import app as web
-
-    monkeypatch.setattr(textimage, "available",
-                        lambda: (False, "no OCR engine here"))
-
-    class FakeUpload:
-        filename = "chart.png"
-
-        async def read(self):
-            return b"\x89PNG fake"
-
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(web.api_ocr(FakeUpload()))
-    assert exc.value.status_code == 409
-    assert "no OCR engine" in exc.value.detail
-
-
-# ---- the stored mapping (what the editor UI reads and writes) ---------
-
-
 def test_stored_mapping_roundtrip(tmp_path, monkeypatch):
-    from lxtool.xtouch.run import load_stored_config, store_config
+    from xbridge.run import load_stored_config, store_config
 
-    monkeypatch.setenv("LXTOOL_XTOUCH", str(tmp_path / "xtouch.json"))
+    monkeypatch.setenv("XBRIDGE_CONFIG", str(tmp_path / "xtouch.json"))
     assert load_stored_config() == Config()          # nothing stored yet
     store_config({"target": "x32", "page": 3, "fader_execs": [401, 402],
                   "wat": "dropped"})
@@ -711,10 +672,10 @@ def test_web_config_endpoints_roundtrip(tmp_path, monkeypatch):
     import asyncio
     import json as jsonlib
 
-    from lxtool.web import app as web
+    from xbridge import app as web
 
-    monkeypatch.setenv("LXTOOL_XTOUCH", str(tmp_path / "xtouch.json"))
-    d = web.api_xtouch_config()
+    monkeypatch.setenv("XBRIDGE_CONFIG", str(tmp_path / "xtouch.json"))
+    d = web.api_config()
     assert d["config"]["target"] == "ma3"
     assert d["config"]["fader_execs"] == list(range(201, 209))
 
@@ -722,6 +683,6 @@ def test_web_config_endpoints_roundtrip(tmp_path, monkeypatch):
         async def json(self):
             return {"target": "x32", "page": 2}
 
-    asyncio.run(web.api_xtouch_config_save(FakeRequest()))
-    assert web.api_xtouch_config()["config"]["target"] == "x32"
+    asyncio.run(web.api_config_save(FakeRequest()))
+    assert web.api_config()["config"]["target"] == "x32"
     assert jsonlib.loads((tmp_path / "xtouch.json").read_text())["page"] == 2

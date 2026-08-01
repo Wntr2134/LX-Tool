@@ -2,7 +2,7 @@
 
 This is the only module in the package that touches hardware; everything
 above it is pure and tested. MIDI needs the optional `mido` +
-`python-rtmidi` pair (pip install "lx-tool[xtouch]"); OSC is a plain UDP
+`python-rtmidi` pair (pip install mido python-rtmidi); OSC is a plain UDP
 socket.
 
 The Runner survives the real world: X-Touch unplugged mid-show, MA3
@@ -106,7 +106,7 @@ class Runner:
         except ImportError:
             self.state, self.detail = "error", (
                 'MIDI support is not installed. Run:  '
-                'pip install "lx-tool[xtouch]"')
+                'pip install mido python-rtmidi')
             self._log(self.detail)
             return 1
 
@@ -219,10 +219,10 @@ def config_store_path() -> Path:
     """Where the app keeps the surface mapping between runs."""
     import os
 
-    env = os.environ.get("LXTOOL_XTOUCH")
+    env = os.environ.get("XBRIDGE_CONFIG")
     if env:
         return Path(env)
-    return Path.home() / ".local" / "share" / "lxtool" / "xtouch.json"
+    return Path.home() / ".local" / "share" / "xbridge" / "config.json"
 
 
 def load_stored_config() -> Config:
@@ -333,7 +333,7 @@ def selftest(midi_port: str = "") -> int:
     try:
         import mido
     except ImportError:
-        print('MIDI support is not installed. Run:  pip install "lx-tool[xtouch]"',
+        print('MIDI support is not installed. Run:  pip install mido python-rtmidi',
               file=sys.stderr)
         return 1
 
@@ -348,7 +348,7 @@ def selftest(midi_port: str = "") -> int:
     with mido.open_output(port_name) as out:
         print(f"testing {port_name}: faders sweep, rings light, "
               "strips say hello")
-        for raw in (mcu.lcd_text(s, 0, "LX-Tool") for s in range(8)):
+        for raw in (mcu.lcd_text(s, 0, "XBridge") for s in range(8)):
             out.send(mido.Message.from_bytes(raw))
         for step in range(0, 11):
             for s in range(9):

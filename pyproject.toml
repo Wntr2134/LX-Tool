@@ -35,12 +35,6 @@ desktop = [
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
     "winsdk>=1.0; sys_platform == 'win32'",
 ]
-# The X-Touch <-> grandMA3 bridge. Only the MIDI layer needs these; the
-# protocol and mapping logic are dependency-free and test without hardware.
-xtouch = [
-    "mido>=1.3",
-    "python-rtmidi>=1.5",
-]
 dev = [
     "pytest>=8",
     "httpx>=0.27",

@@ -178,7 +178,7 @@ lx heads edit China_AuraClone_14ch -o plan.txt   # reopen to tweak
 Saved heads live under your user folder (override with `LXTOOL_MYHEADS`) and
 **automatically join every match and "What is this?" from then on** - so the
 second time you meet that clone, the tool recognises it. The app has them in
-section 8, with Edit / Download / Remove.
+section 7, with Edit / Download / Remove.
 
 ## Reading a whole patch sheet
 
@@ -209,17 +209,11 @@ Every readable fixture file in the folder is converted; unreadable ones are
 skipped and named, never silently dropped. Drag the resulting `.gdtf` files
 onto the MA3, or copy them to a USB stick's `gma3_library` folder.
 
-## X-Touch as a grandMA3 surface
+## XBridge (separate app)
 
-A Behringer X-Touch (full size) can drive MA3 onPC natively — motorised
-faders following executors, button LEDs, encoder rings, scribble strips.
-See **docs/XTOUCH-MA3.md**; short version:
-
-```bash
-pip install "lx-tool[xtouch]"
-lx xtouch test        # prove the surface responds
-lx xtouch run         # bridge to MA3 onPC (OSC on ports 8000/9000)
-```
+The X-Touch control-surface bridge is its own app now: **XBridge**, in the
+`xbridge/` folder with its own download (`XBridge.exe` /
+`XBridge-macos.zip` on the same releases page). See `xbridge/README.md`.
 
 ## Two other tricks worth trying
 

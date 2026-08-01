@@ -43,13 +43,15 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[web,desktop,xtouch]"
+          pip install -e ".[web,desktop]"
+          pip install -e "./xbridge[desktop]"
           pip install pyinstaller
 
       - name: Test
         run: |
           pip install pytest
           pytest -q
+          pytest -q xbridge/tests
 
       - name: Stamp the build
         shell: bash
@@ -62,18 +64,26 @@ jobs:
       - name: Build
         run: pyinstaller --noconfirm packaging/lxtool.spec
 
+      - name: Build XBridge
+        run: pyinstaller --noconfirm xbridge/packaging/xbridge.spec
+
       # Ad-hoc signing keeps Gatekeeper from reporting the app as
       # "damaged" after download. Real trust (no right-click-to-open, no
       # SmartScreen) needs paid certificates: an Apple Developer ID with
       # notarisation, and a Windows Authenticode cert. When those exist,
       # add the secrets and swap this for a real codesign/signtool step.
-      - name: Sign macOS app (ad-hoc)
+      - name: Sign macOS apps (ad-hoc)
         if: matrix.os == 'macos-latest'
-        run: codesign --force --deep --sign - dist/LX-Tool.app
+        run: |
+          codesign --force --deep --sign - dist/LX-Tool.app
+          codesign --force --deep --sign - dist/XBridge.app
 
-      - name: Zip macOS app
+      - name: Zip macOS apps
         if: matrix.os == 'macos-latest'
-        run: cd dist && zip -r LX-Tool-macos.zip LX-Tool.app
+        run: |
+          cd dist
+          zip -r LX-Tool-macos.zip LX-Tool.app
+          zip -r XBridge-macos.zip XBridge.app
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,6 +91,8 @@ jobs:
           path: |
             dist/LX-Tool-macos.zip
             dist/LX-Tool.exe
+            dist/XBridge-macos.zip
+            dist/XBridge.exe
           if-no-files-found: warn
 
       - name: Attach to release
@@ -95,3 +107,5 @@ jobs:
           files: |
             dist/LX-Tool-macos.zip
             dist/LX-Tool.exe
+            dist/XBridge-macos.zip
+            dist/XBridge.exe

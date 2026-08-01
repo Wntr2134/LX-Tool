@@ -569,29 +569,6 @@ def cmd_sheet(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_xtouch(args: argparse.Namespace) -> int:
-    """Behringer X-Touch as a native grandMA3 onPC surface."""
-    from .xtouch import run as xrun
-
-    if args.action == "run":
-        return xrun.run(ma3_host=args.host, send_port=args.send_port,
-                        recv_port=args.recv_port, midi_port=args.midi_port,
-                        config_path=args.config, target=args.target)
-    if args.action == "test":
-        return xrun.selftest(midi_port=args.midi_port)
-    if args.action == "sniff":
-        return xrun.sniff(recv_port=args.recv_port,
-                          midi_port=args.midi_port, seconds=args.seconds)
-    # config
-    text = xrun.default_config_json()
-    if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"wrote {args.out} - edit it, then: lx xtouch run --config {args.out}")
-    else:
-        print(text, end="")
-    return 0
-
-
 def cmd_heads(args: argparse.Namespace) -> int:
     """List, reopen and remove your saved custom heads."""
     from . import mylib, plan
@@ -806,45 +783,6 @@ def build_parser() -> argparse.ArgumentParser:
     hb.add_argument("--save", action="store_true",
                     help="also save into your personal head library for next time")
     hb.set_defaults(func=cmd_head)
-
-    xt = sub.add_parser("xtouch", help="Behringer X-Touch as a native "
-                                       "grandMA3 onPC surface")
-    xtsub = xt.add_subparsers(dest="action", required=True)
-    xtr = xtsub.add_parser("run", help="start the bridge")
-    xtr.add_argument("--target", default="",
-                     choices=("", "ma3", "x32", "magicq", "eos", "resolume",
-                              "companion", "generic"),
-                     help="what to drive: ma3 (grandMA3 onPC, default), "
-                          "magicq (ChamSys), eos (ETC Eos family), "
-                          "x32 (Behringer X32/M32 audio), resolume "
-                          "(Arena/Avenue media), companion (Bitfocus "
-                          "Companion), generic (OSC address templates "
-                          "from the config)")
-    xtr.add_argument("--host", default="127.0.0.1",
-                     help="machine running the console (default: this one)")
-    xtr.add_argument("--send-port", type=int, default=0,
-                     help="console's OSC port (default: 8000 for MA3, "
-                          "10023 for X32)")
-    xtr.add_argument("--recv-port", type=int, default=9000,
-                     help="port MA3 sends feedback to (default 9000)")
-    xtr.add_argument("--midi-port", default="",
-                     help="MIDI port name (default: first X-Touch found)")
-    xtr.add_argument("--config", default="",
-                     help="JSON mapping file from 'lx xtouch config'")
-    xtr.set_defaults(func=cmd_xtouch)
-    xtt = xtsub.add_parser("test", help="wiggle the surface: prove MIDI and MC mode")
-    xtt.add_argument("--midi-port", default="")
-    xtt.set_defaults(func=cmd_xtouch)
-    xtc = xtsub.add_parser("config", help="write the default mapping to edit")
-    xtc.add_argument("-o", "--out", help="file to write (default: print)")
-    xtc.set_defaults(func=cmd_xtouch)
-    xts = xtsub.add_parser("sniff", help="print everything MA3 and the "
-                                         "surface say, decoded - the "
-                                         "first-session diagnostic")
-    xts.add_argument("--recv-port", type=int, default=9000)
-    xts.add_argument("--midi-port", default="")
-    xts.add_argument("--seconds", type=float, default=30.0)
-    xts.set_defaults(func=cmd_xtouch)
 
     sh = sub.add_parser("sheet", help="triage a pasted patch sheet: group "
                                       "fixtures, flag address collisions")
