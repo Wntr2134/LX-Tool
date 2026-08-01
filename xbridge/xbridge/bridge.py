@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from . import mcu, osc, targets
+from . import mcu, osc, surfaces, targets
 
 
 @dataclass
@@ -58,6 +58,10 @@ class Config:
     ma2_user: str = "remote"
     ma2_password: str = "remote"
     ma2_master_cmd: str = "SpecialMaster 2.1 At {pct}"
+    # Which hardware is in your hands, and the MPK's factory MIDI numbers.
+    surface: str = "xtouch"            # "xtouch" | "mpk"
+    mpk_knob_ccs: tuple = tuple(range(70, 78))
+    mpk_pad_notes: tuple = tuple(range(36, 44))
 
 
 _BUTTON_ROWS = (("select", mcu.SELECT), ("mute", mcu.MUTE))
@@ -72,9 +76,13 @@ class Bridge:
     _enc_levels: dict = field(default_factory=dict)
     _touched: set = field(default_factory=set)
 
+    surface: object = None
+
     def __post_init__(self):
         if self.target is None:
             self.target = targets.make_target(self.config)
+        if self.surface is None:
+            self.surface = surfaces.make_surface(self.config)
 
     @property
     def max_page(self) -> int:
@@ -84,10 +92,19 @@ class Bridge:
 
     def midi_in(self, data: bytes) -> list[bytes]:
         """One MIDI message from the X-Touch -> OSC datagrams out."""
-        ev = mcu.decode(data)
         out: list[osc.Message] = []
+        for ev in self.surface.decode(data):
+            out += self._event(ev)
+        return _wire(out)
 
-        if isinstance(ev, mcu.FaderMoved):
+    def _event(self, ev) -> list:
+        out: list = []
+
+        if isinstance(ev, surfaces.KnobSet):
+            self._enc_levels[ev.knob] = ev.unit
+            out += self.target.encoder(ev.knob, ev.unit)
+
+        elif isinstance(ev, mcu.FaderMoved):
             if ev.strip == 8:
                 out += self.target.master(ev.unit)
             else:
@@ -114,7 +131,7 @@ class Bridge:
                 self._enc_levels[ev.encoder] = level
                 out += self.target.encoder(ev.encoder, level)
 
-        return _wire(out)
+        return out
 
     def _button(self, ev: mcu.ButtonPressed) -> list[osc.Message]:
         if ev.note in _TRANSPORT:
@@ -149,23 +166,18 @@ class Bridge:
         for fb in intents:
             if isinstance(fb, targets.FaderFB):
                 # Never fight the human hand on the fader.
-                if fb.strip not in self._touched:
-                    out.append(mcu.fader_out(fb.strip, fb.unit))
-            elif isinstance(fb, targets.ButtonFB):
-                row_notes = mcu.SELECT if fb.row == "select" else mcu.MUTE
-                out.append(mcu.button_led(row_notes[fb.idx], fb.on))
+                if fb.strip in self._touched:
+                    continue
             elif isinstance(fb, targets.RingFB):
                 self._enc_levels[fb.idx] = fb.unit
-                out.append(mcu.encoder_ring(fb.idx, fb.unit, mode=2))
-            elif isinstance(fb, targets.LabelFB):
-                out.append(mcu.lcd_text(fb.strip, fb.line, fb.text))
+            out += self.surface.render(fb, targets)
         return out
 
     # ---- lifecycle -------------------------------------------------------
 
     def hello(self) -> list[bytes]:
         """MIDI to bring the surface to a known state, with strip labels."""
-        return mcu.blank_surface() + self.page_labels()
+        return self.surface.hello(self.target.strip_labels(self.config.page))
 
     def osc_hello(self) -> list[bytes]:
         """Datagrams to introduce ourselves to the console (subscribe/query)."""
@@ -176,11 +188,73 @@ class Bridge:
         return _wire(self.target.tick(now))
 
     def page_labels(self) -> list[bytes]:
-        return [mcu.lcd_text(s, ln, text)
-                for s, ln, text in self.target.strip_labels(self.config.page)]
+        out = []
+        for s, ln, text in self.target.strip_labels(self.config.page):
+            out += self.surface.render(targets.LabelFB(s, ln, text), targets)
+        return out
+
+    # ---- the OSC control port: Stream Decks (via Companion), TouchOSC,
+    # anything that can send OSC becomes extra buttons and faders. -------
+
+    def control_in(self, msg: osc.Message) -> list:
+        """/xbridge/... datagrams -> console output, same paths as hardware.
+
+        Addresses (n = 1-8):
+          /xbridge/fader/<n>   float 0-1 or int 0-100
+          /xbridge/master      float 0-1 or int 0-100
+          /xbridge/enc/<n>     float 0-1 or int 0-100
+          /xbridge/key/select/<n>  1 press / 0 release
+          /xbridge/key/mute/<n>    1 press / 0 release
+          /xbridge/page        int (absolute page/bank)
+        """
+        parts = msg.address.strip("/").split("/")
+        if not parts or parts[0] != "xbridge":
+            return []
+        arg = msg.args[0] if msg.args else 1
+        unit = _ctl_unit(arg)
+
+        if len(parts) == 3 and parts[1] in ("fader", "enc"):
+            n = _ctl_int(parts[2])
+            if n is None or not 1 <= n <= 8 or unit is None:
+                return []
+            if parts[1] == "fader":
+                return _wire(self.target.fader(n - 1, unit))
+            self._enc_levels[n - 1] = unit
+            return _wire(self.target.encoder(n - 1, unit))
+        if len(parts) == 2 and parts[1] == "master" and unit is not None:
+            return _wire(self.target.master(unit))
+        if len(parts) == 4 and parts[1] == "key" and parts[2] in ("select", "mute"):
+            n = _ctl_int(parts[3])
+            if n is None or not 1 <= n <= 8:
+                return []
+            return _wire(self.target.button(parts[2], n - 1, bool(unit)))
+        if len(parts) == 2 and parts[1] == "page":
+            n = _ctl_int(str(int(arg)) if isinstance(arg, (int, float)) else "")
+            if n and 1 <= n <= self.max_page:
+                self.config.page = n
+                return _wire(self.target.set_page(n))
+        return []
 
 
 def _wire(out):
     """Encode a target's mixed output: OSC messages to datagrams, command
     strings (the MA2 web-remote transport) passed through untouched."""
     return [osc.encode(m) if isinstance(m, osc.Message) else m for m in out]
+
+
+def _ctl_unit(arg) -> float | None:
+    if isinstance(arg, bool):
+        return 1.0 if arg else 0.0
+    if isinstance(arg, (int, float)):
+        v = float(arg)
+        if v > 1.0:
+            v = v / 100.0
+        return max(0.0, min(1.0, v))
+    return None
+
+
+def _ctl_int(s: str) -> int | None:
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None

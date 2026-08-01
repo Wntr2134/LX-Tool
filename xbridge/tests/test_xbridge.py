@@ -771,3 +771,80 @@ def test_ma2_touch_suppression_applies_to_ws_feedback_too():
         {"iExec": 0, "executorBlocks": [{"fader": {"v": 0.9}}]}]]}]}
     out = b.apply_feedback(b.target.ws_feedback(msg))
     assert all(not isinstance(mcu.decode(r), mcu.FaderMoved) for r in out)
+
+
+# ---- surfaces: MPK Mini and the OSC control port ----------------------
+
+
+def _mpk() -> Bridge:
+    return Bridge(config=Config(surface="mpk"))
+
+
+def test_mpk_knobs_ride_encoder_slots_absolutely():
+    b = _mpk()
+    (d,) = b.midi_in(bytes((0xB0, 70, 64)))          # knob 1 at half
+    msg = osc.decode(d)
+    assert msg.address == "/Page1/Fader301"
+    assert msg.args == (50,)
+    (d,) = b.midi_in(bytes((0xB0, 77, 127)))         # knob 8 full
+    assert osc.decode(d).address == "/Page1/Fader308"
+
+
+def test_mpk_pads_press_the_select_row_with_led_feedback():
+    b = _mpk()
+    (dn,) = b.midi_in(bytes((0x90, 36, 100)))
+    assert osc.decode(dn) == osc.Message("/Page1/Key101", (1,))
+    (up,) = b.midi_in(bytes((0x80, 36, 0)))
+    assert osc.decode(up) == osc.Message("/Page1/Key101", (0,))
+    # console reports the exec on: the pad lights
+    (led,) = b.osc_in(osc.encode(osc.Message("/Page1/Key101", (1,))))
+    assert led == bytes((0x90, 36, 127))
+    # motors/labels have nowhere to go on an MPK: silently dropped
+    assert b.osc_in(osc.encode(osc.Message("/Page1/Fader201", (50,)))) == []
+
+
+def test_mpk_ignores_unmapped_midi_and_custom_numbers_work():
+    b = _mpk()
+    assert b.midi_in(bytes((0xB0, 1, 64))) == []     # mod wheel: not a knob
+    b2 = Bridge(config=Config(surface="mpk", mpk_knob_ccs=(20, 21),
+                              mpk_pad_notes=(40,)))
+    (d,) = b2.midi_in(bytes((0xB0, 21, 127)))
+    assert osc.decode(d).address == "/Page1/Fader302"
+
+
+def test_mpk_hello_clears_the_pads():
+    hello = _mpk().hello()
+    assert bytes((0x90, 36, 0)) in hello
+    assert len(hello) == 8                            # pads only - no motors
+
+
+def test_unknown_surface_is_rejected():
+    from xbridge import surfaces
+
+    with pytest.raises(ValueError):
+        surfaces.make_surface(Config(surface="pushctl"))
+
+
+def test_control_port_reaches_every_path():
+    b = Bridge()
+    (d,) = b.control_in(osc.Message("/xbridge/fader/1", (0.5,)))
+    assert osc.decode(d) == osc.Message("/Page1/Fader201", (50,))
+    (d,) = b.control_in(osc.Message("/xbridge/fader/2", (75,)))   # int 0-100
+    assert osc.decode(d).args == (75,)
+    (d,) = b.control_in(osc.Message("/xbridge/key/select/3", (1,)))
+    assert osc.decode(d) == osc.Message("/Page1/Key103", (1,))
+    (d,) = b.control_in(osc.Message("/xbridge/key/mute/1", (0,)))
+    assert osc.decode(d) == osc.Message("/Page1/Key291", (0,))
+    (d,) = b.control_in(osc.Message("/xbridge/enc/1", (1.0,)))
+    assert osc.decode(d).address == "/Page1/Fader301"
+    b.control_in(osc.Message("/xbridge/page", (3,)))
+    assert b.config.page == 3
+    (d,) = b.control_in(osc.Message("/xbridge/fader/1", (1.0,)))
+    assert osc.decode(d).address == "/Page3/Fader201"
+
+
+def test_control_port_rejects_junk_quietly():
+    b = Bridge()
+    for addr in ("/xbridge/fader/99", "/xbridge/fader/x", "/xbridge/nope",
+                 "/xbridge/key/rec/1", "/other/fader/1"):
+        assert b.control_in(osc.Message(addr, (1,))) == []

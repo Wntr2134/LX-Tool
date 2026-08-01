@@ -34,7 +34,8 @@ def api_status() -> dict:
 
 @app.post("/api/start")
 def api_start(host: str = Form("127.0.0.1"), send_port: int = Form(0),
-              recv_port: int = Form(9000), target: str = Form("")) -> dict:
+              recv_port: int = Form(9000), target: str = Form(""),
+              surface: str = Form("")) -> dict:
     import threading
 
     from . import run as xrun
@@ -50,7 +51,8 @@ def api_start(host: str = Form("127.0.0.1"), send_port: int = Form(0),
     _runner = xrun.Runner(ma3_host=host, send_port=send_port,
                           recv_port=recv_port,
                           config_path=str(store) if store.is_file() else "",
-                          target=target, log=lambda *a: None)
+                          target=target, surface=surface,
+                          log=lambda *a: None)
     _thread = threading.Thread(target=_runner.run, daemon=True)
     _thread.start()
     return {"ok": True}
@@ -169,8 +171,9 @@ PAGE = """<!doctype html>
  :focus-visible{outline:2px solid var(--amber);outline-offset:1px}
 </style></head><body><div class="wrap">
 <h1>XBridge <small>X-Touch &rarr; anything with faders</small></h1>
-<p class="tag">grandMA3 &middot; MagicQ &middot; Eos &middot; X32/M32 &middot; Resolume &middot; Companion &middot; any OSC.
-Motors follow the console both ways. Surface in MC/USB mode.</p>
+<p class="tag">grandMA3 &middot; grandMA2 &middot; MagicQ &middot; Eos &middot; X32/M32 &middot; Resolume &middot; Companion &middot; any OSC.
+Motors follow the console both ways. Stream Decks reach the bridge through
+Companion at <code>/xbridge/...</code> on the listen port.</p>
 
 <fieldset><legend>Bridge</legend>
  <div class="row">
@@ -184,6 +187,11 @@ Motors follow the console both ways. Surface in MC/USB mode.</p>
     <option value="resolume">Resolume Arena/Avenue</option>
     <option value="companion">Bitfocus Companion</option>
     <option value="generic">Generic OSC templates</option>
+  </select>
+  <label>Surface</label>
+  <select id="surface">
+    <option value="xtouch">X-Touch (full size)</option>
+    <option value="mpk">Akai MPK Mini (knobs + pads)</option>
   </select>
   <label>host</label><input type="text" id="host" value="127.0.0.1" style="width:9rem">
   <label>send</label><input type="number" id="send" placeholder="auto">
@@ -230,6 +238,7 @@ async function start() {
   const fd = new FormData();
   fd.append('host', $('host').value); fd.append('send_port', $('send').value || '0');
   fd.append('recv_port', $('recv').value); fd.append('target', $('target').value);
+  fd.append('surface', $('surface').value);
   try {
     await post('/api/start', fd);
     if (!timer) timer = setInterval(refresh, 2000);

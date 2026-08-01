@@ -31,6 +31,18 @@ Resolume 7000, Companion 12321, generic 9001). The X32 needs **no setup at all**
 answers OSC out of the box; the bridge subscribes itself and keeps the
 subscription alive.
 
+## Surfaces (what's in your hands)
+
+| Surface | What it does |
+|---|---|
+| **X-Touch (full size)** — default | The whole two-way conversation: motorised faders, scribble strips, LED rings, transport |
+| **Akai MPK Mini** | The 8 **knobs** ride the target's encoder slots as absolute levels; the 8 **pads** press the SELECT row (Go / column-connect / channel-select per target) with pad-LED feedback. Defaults match the mk3 factory profile (knobs CC 70–77, pads notes 36–43) — both remappable in the config for any knobby MIDI box |
+| **Stream Deck** | Via **Bitfocus Companion**, which owns Stream Decks natively: add a *Generic OSC* connection in Companion aimed at the bridge's listen port (default 9000), and give buttons actions like `/xbridge/key/select/1` (value 1 on down, 0 on up), `/xbridge/fader/3` (0–100), `/xbridge/page` (bank number). Every deck key becomes a bridge control, and the same addresses work from TouchOSC or anything else that speaks OSC |
+
+Pick the surface in the app panel or `--surface mpk` / config. The OSC
+control port speaks: `/xbridge/fader/<n>`, `/xbridge/master`,
+`/xbridge/enc/<n>`, `/xbridge/key/select|mute/<n>`, `/xbridge/page`.
+
 ## Remapping (the nice way)
 
 In the desktop app, section 7 → **Remap buttons & faders**: a grid of

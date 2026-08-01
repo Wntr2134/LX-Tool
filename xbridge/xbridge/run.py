@@ -54,8 +54,18 @@ def default_config_json() -> str:
 
 def find_xtouch_port(names: list[str]) -> str | None:
     """The first MIDI port that looks like an X-Touch."""
+    return find_surface_port(names, "xtouch")
+
+
+_PORT_HINTS = {"xtouch": ("x-touch", "xtouch"), "mpk": ("mpk",)}
+
+
+def find_surface_port(names: list[str], surface: str) -> str | None:
+    """The first MIDI port that looks like the configured surface."""
+    hints = _PORT_HINTS.get(surface, ("x-touch", "xtouch"))
     for n in names:
-        if "x-touch" in n.lower() or "xtouch" in n.lower():
+        low = n.lower()
+        if any(h in low for h in hints):
             return n
     return None
 
@@ -78,10 +88,13 @@ class Runner:
 
     def __init__(self, *, ma3_host: str = "127.0.0.1", send_port: int = 0,
                  recv_port: int = 9000, midi_port: str = "",
-                 config_path: str = "", target: str = "", log=print):
+                 config_path: str = "", target: str = "", surface: str = "",
+                 log=print):
         cfg = load_config(config_path or None)
         if target:
             cfg.target = target
+        if surface:
+            cfg.surface = surface
         self.bridge = Bridge(config=cfg)
         # port 0 = "the target's usual port": 8000 for MA3, 10023 for X32.
         if not send_port:
@@ -133,13 +146,14 @@ class Runner:
                         f"the MIDI system is unavailable: {exc}")
                     self._log(self.detail)
                     return 1
-                port_name = self.midi_port or find_xtouch_port(names)
+                port_name = self.midi_port or find_surface_port(
+                    names, self.bridge.config.surface)
                 if not port_name:
                     if self.state != "waiting-for-surface":
                         self.state = "waiting-for-surface"
-                        self.detail = ("no X-Touch on USB - plug it in "
-                                       "(MC mode, USB) and it will be "
-                                       "picked up automatically")
+                        self.detail = ("no surface on USB - plug it in "
+                                       "(X-Touch: MC mode, USB) and it "
+                                       "will be picked up automatically")
                         self._log(self.detail)
                     if self.stop_event.wait(_RETRY_SECS):
                         break
@@ -199,6 +213,12 @@ class Runner:
                         return
                     worked = True
                     self.counters["osc_in"] += 1
+                    ctl = osc.decode(datagram)
+                    if ctl is not None and ctl.address.startswith("/xbridge"):
+                        for out_d in self.bridge.control_in(ctl):
+                            if isinstance(out_d, bytes):
+                                sock.sendto(out_d, self.ma3)
+                        continue
                     for raw in self.bridge.osc_in(datagram):
                         midi_out.send(mido.Message.from_bytes(raw))
                 for datagram in self.bridge.tick(time.monotonic()):
@@ -232,11 +252,12 @@ class Runner:
                     f"the MIDI system is unavailable: {exc}")
                 self._log(self.detail)
                 return 1
-            port_name = self.midi_port or find_xtouch_port(names)
+            port_name = self.midi_port or find_surface_port(
+                names, self.bridge.config.surface)
             if not port_name:
                 if self.state != "waiting-for-surface":
                     self.state = "waiting-for-surface"
-                    self.detail = "no X-Touch on USB - waiting"
+                    self.detail = "no surface on USB - waiting"
                     self._log(self.detail)
                 if self.stop_event.wait(_RETRY_SECS):
                     break

@@ -57,11 +57,14 @@ jobs:
 
       - name: Stamp the build
         shell: bash
+        # Replace the two values IN PLACE - overwriting the file used to
+        # delete label(), which is what made every shipped app say
+        # "unknown build".
         run: |
-          printf 'COMMIT = "%s"\nDATE = "%s"\n' \
-            "$(git rev-parse --short HEAD)" "$(date -u +%Y-%m-%d)" \
-            > lxtool/_build.py
-          cat lxtool/_build.py
+          sed -i.bak -e "s/^COMMIT = .*/COMMIT = \"$(git rev-parse --short HEAD)\"/" \
+                     -e "s/^DATE = .*/DATE = \"$(date -u +%Y-%m-%d)\"/" lxtool/_build.py
+          rm -f lxtool/_build.py.bak
+          python -c "from lxtool import _build; print(_build.label())" 
 
       - name: Build
         run: pyinstaller --noconfirm packaging/lxtool.spec
