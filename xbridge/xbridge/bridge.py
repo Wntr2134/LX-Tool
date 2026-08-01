@@ -58,6 +58,10 @@ class Config:
     ma2_user: str = "remote"
     ma2_password: str = "remote"
     ma2_master_cmd: str = "SpecialMaster 2.1 At {pct}"
+    # MA3 fader argument type. The manual documents int 0-100
+    # ("/Page1/Fader201,i,100"); some versions/configs want a float, so
+    # this is switchable rather than a guess baked into the code.
+    ma3_value: str = "int"             # "int" | "float"
     # Which hardware is in your hands, and the MPK's factory MIDI numbers.
     surface: str = "xtouch"            # "xtouch" | "mpk"
     mpk_knob_ccs: tuple = tuple(range(70, 78))

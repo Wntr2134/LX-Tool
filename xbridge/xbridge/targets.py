@@ -60,6 +60,12 @@ class MA3Target:
     def __init__(self, config):
         self.config = config
 
+    def _level(self, unit: float):
+        """MA3's fader argument: int 0-100 per the manual, or float."""
+        if getattr(self.config, "ma3_value", "int") == "float":
+            return float(unit * 100.0)
+        return round(unit * 100)
+
     # -- surface -> console ------------------------------------------------
 
     def fader(self, strip: int, unit: float) -> list[osc.Message]:
@@ -67,13 +73,13 @@ class MA3Target:
         if strip >= len(cfg.fader_execs):
             return []
         return [osc.Message(self._addr(f"Fader{cfg.fader_execs[strip]}"),
-                            (round(unit * 100),))]
+                            (self._level(unit),))]
 
     def master(self, unit: float) -> list[osc.Message]:
         cfg = self.config
         if cfg.master_exec:
             return [osc.Message(self._addr(f"Fader{cfg.master_exec}"),
-                                (round(unit * 100),))]
+                                (self._level(unit),))]
         return [osc.Message(self._cmd_addr(),
                             (f"Master 2.1 At {unit * 100:.1f}",))]
 
@@ -90,7 +96,7 @@ class MA3Target:
         if idx >= len(cfg.encoder_execs):
             return []
         return [osc.Message(self._addr(f"Fader{cfg.encoder_execs[idx]}"),
-                            (round(unit * 100),))]
+                            (self._level(unit),))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         cmd = {"play": self.config.cmd_play, "stop": self.config.cmd_stop,

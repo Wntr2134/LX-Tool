@@ -29,7 +29,20 @@ def api_status() -> dict:
         "detail": r.detail if r else "",
         "midi": r.midi_name if r else "",
         "counters": r.counters if r else {},
+        "sent": list(r.last_sent) if r else [],
     }
+
+
+@app.post("/api/test-send")
+def api_test_send(strip: int = Form(0), level: float = Form(0.5)) -> dict:
+    """Send one fader value as if the surface had moved, so the console
+    can be proved without touching hardware."""
+    if _runner is None:
+        raise HTTPException(409, "start the bridge first")
+    sent = _runner.test_send(strip=strip, level=level)
+    if not sent:
+        raise HTTPException(400, "this target has no fader for that strip")
+    return {"sent": sent, "to": f"{_runner.ma3[0]}:{_runner.ma3[1]}"}
 
 
 @app.get("/api/ports")
@@ -222,6 +235,7 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <button class="ghost" onclick="stop()">Stop</button>
   <button class="ghost" onclick="toggleMap()">Remap&hellip;</button>
   <button class="ghost" onclick="showPorts()">MIDI ports</button>
+  <button class="ghost" onclick="testSend()">Test fader 1</button>
  </div>
  <div id="out"></div>
 </fieldset>
@@ -246,8 +260,13 @@ async function refresh() {
   try {
     const d = await (await fetch('/api/status')).json();
     let line;
-    if (d.running)
-      line = `<span class="ok"><b>${esc(d.state)}</b></span> ${esc(d.detail)} | MIDI in: ${d.counters.midi_in||0} · console in: ${d.counters.osc_in||0}`;
+    if (d.running) {
+      line = `<span class="ok"><b>${esc(d.state)}</b></span> ${esc(d.detail)}`
+        + `<br>MIDI in: ${d.counters.midi_in||0} · sent to console: ${d.counters.sent||0}`
+        + ` · console in: ${d.counters.osc_in||0}`;
+      if (d.sent && d.sent.length)
+        line += '<br>last sent: ' + d.sent.slice(-4).map(esc).join(' , ');
+    }
     else if (d.state === 'error') line = `<span class="err">${esc(d.detail)}</span>`;
     else if (d.available) line = 'stopped';
     else line = '<span class="err">MIDI support not installed - pip install mido python-rtmidi</span>';
@@ -270,6 +289,15 @@ async function stop() {
   try { await post('/api/stop', new FormData()); } catch (e) {}
   setTimeout(refresh, 400);
 }
+async function testSend() {
+  const fd = new FormData(); fd.append('strip', '0'); fd.append('level', '0.5');
+  try {
+    const d = await (await post('/api/test-send', fd)).json();
+    $('out').innerHTML = `sent <b>${esc(d.sent)}</b> to ${esc(d.to)}` +
+      '<br>if the console did not move, the address or port is wrong - not the surface.';
+  } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
 async function showPorts() {
   try {
     const d = await (await fetch('/api/ports')).json();
@@ -311,7 +339,11 @@ function renderMap() {
     h += `<div class="row"><label>master exec (0 = grand master)</label>${num('m_master', cfg.master_exec)}
       <label>page</label>${num('m_page', cfg.page)}
       <label>prefix</label><input type="text" id="m_prefix" value="${esc(cfg.prefix)}" style="width:6rem">
-      <label>enc step</label>${num('m_step', cfg.encoder_step, '4.5rem')}</div>`;
+      <label>enc step</label>${num('m_step', cfg.encoder_step, '4.5rem')}
+      <label>fader value</label><select id="m_3v">
+        <option value="int" ${(cfg.ma3_value||'int')==='int'?'selected':''}>int 0-100 (manual)</option>
+        <option value="float" ${(cfg.ma3_value||'int')==='float'?'selected':''}>float</option>
+      </select></div>`;
     h += `<div class="row"><label>PLAY</label><input type="text" id="m_play" value="${esc(cfg.cmd_play)}" style="width:8rem">
       <label>STOP</label><input type="text" id="m_stop" value="${esc(cfg.cmd_stop)}" style="width:8rem">
       <label>REW</label><input type="text" id="m_rew" value="${esc(cfg.cmd_rewind)}" style="width:8rem"></div>`;
@@ -398,6 +430,7 @@ async function saveMap() {
     body.encoder_step = parseFloat($('m_step').value) || 0.02;
     body.cmd_play = $('m_play').value; body.cmd_stop = $('m_stop').value;
     body.cmd_rewind = $('m_rew').value;
+    if ($('m_3v')) body.ma3_value = $('m_3v').value;
   }
   if (t === 'generic') {
     body.gen_fader = $('m_gf').value; body.gen_master = $('m_gm').value;

@@ -295,3 +295,35 @@ If the panel says *"no surface on USB"*, it lists every MIDI input it
 did see - if the X-Touch is not among them, it is not in **MC mode**
 (hold channel-1 SELECT while powering on: encoder 1 = MC, encoder 2 =
 USB), or it is on a USB hub that is dropping it.
+
+## The faders move but the console does not
+
+The surface connecting (LEDs light, strips show text) only proves the
+**MIDI** half. Use the panel to see the other half:
+
+- **The counters** now read `MIDI in / sent to console / console in`.
+  If *MIDI in* climbs when you move a fader but *sent to console* does
+  not, the surface event is not being mapped - tell me what you moved.
+  If *sent* climbs and nothing happens on the desk, the OSC is leaving
+  this machine and the problem is address, port or the console's own
+  setup.
+- **last sent** shows the actual messages, e.g. `/Page1/Fader201 50`.
+- **Test fader 1** sends one of those without touching the hardware, so
+  the console can be proved on its own.
+
+Then check, in this order:
+
+1. **Does anything live at that executor?** `/Page1/Fader201` moves
+   executor **201 on page 1** - if your show has nothing assigned there,
+   a perfectly delivered message does nothing. Assign a sequence to
+   executor 201, or change the mapping to the executors you actually
+   use (Remap → Fader→exec).
+2. **Ports are crossed over.** The bridge *sends* to MA3's **input**
+   port (8000 by default) and *listens* on 9000. In MA3's OSC line those
+   are the other way round from the bridge's point of view - the
+   console's "output/destination" port must be the bridge's listen port.
+3. **Destination IP.** On the same PC use `127.0.0.1`. MA3 must be
+   sending to, and receiving on, an interface that actually carries it.
+4. **Value type.** The MA3 manual documents int 0-100 and that is the
+   default; if your version wants a float, Remap → *fader value* →
+   float.

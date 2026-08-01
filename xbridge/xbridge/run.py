@@ -162,11 +162,46 @@ class Runner:
         self.state = "starting"
         self.detail = ""
         self.midi_name = ""
-        self.counters = {"midi_in": 0, "osc_in": 0}
+        self.counters = {"midi_in": 0, "osc_in": 0, "sent": 0}
+        # The last few things we sent to the console. Without this, "the
+        # fader does nothing" is unanswerable: it cannot be told apart
+        # from "the bridge sent nothing at all".
+        self.last_sent: list = []
         self._log = log
 
     def stop(self) -> None:
         self.stop_event.set()
+
+    def _send(self, sock, datagram) -> None:
+        """One datagram to the console, recorded so it can be seen."""
+        sock.sendto(datagram, self.ma3)
+        self.counters["sent"] += 1
+        msg = osc.decode(datagram) if isinstance(datagram, bytes) else None
+        if msg is not None:
+            args = " ".join(str(a) for a in msg.args)
+            line = f"{msg.address} {args}".rstrip()
+        else:
+            line = str(datagram)
+        self.last_sent.append(line)
+        del self.last_sent[:-8]
+
+    def test_send(self, strip: int = 0, level: float = 0.5) -> str:
+        """Pretend a fader moved, so the console can be tested without
+        touching the surface. Returns what was sent."""
+        out = self.bridge.target.fader(strip, level)
+        if not out:
+            return ""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            lines = []
+            for m in out:
+                datagram = osc.encode(m) if isinstance(m, osc.Message) else m
+                if isinstance(datagram, bytes):
+                    self._send(sock, datagram)
+                    lines.append(self.last_sent[-1])
+            return " | ".join(lines)
+        finally:
+            sock.close()
 
     def run(self) -> int:
         """Bridge until stopped. Reconnects instead of dying."""
@@ -283,7 +318,7 @@ class Runner:
                             self.bridge.config.page)):
                     mout.send(mido.Message.from_bytes(raw))
             for datagram in self.bridge.osc_hello():
-                sock.sendto(datagram, self.ma3)
+                self._send(sock, datagram)
 
             page = self.bridge.config.page
             last_rescan = time.monotonic()
@@ -295,7 +330,7 @@ class Runner:
                         self.counters["midi_in"] += 1
                         for datagram in self.bridge.midi_in(
                                 bytes(msg.bytes()), surface=surface):
-                            sock.sendto(datagram, self.ma3)
+                            self._send(sock, datagram)
                 if self.bridge.config.page != page:
                     page = self.bridge.config.page
                     for surface, _mi, mout, _p in conns:
@@ -319,7 +354,7 @@ class Runner:
                     if ctl is not None and ctl.address.startswith("/xbridge"):
                         for out_d in self.bridge.control_in(ctl):
                             if isinstance(out_d, bytes):
-                                sock.sendto(out_d, self.ma3)
+                                self._send(sock, out_d)
                         continue
                     msg = osc.decode(datagram)
                     intents = (self.bridge.target.feedback(msg)
@@ -330,7 +365,7 @@ class Runner:
                         for raw in self.bridge.render_for(surface, intents):
                             mout.send(mido.Message.from_bytes(raw))
                 for datagram in self.bridge.tick(time.monotonic()):
-                    sock.sendto(datagram, self.ma3)
+                    self._send(sock, datagram)
                 # A configured surface plugged in mid-session joins live.
                 if (len(conns) < len(self.bridge.surfaces)
                         and time.monotonic() - last_rescan > 3.0):

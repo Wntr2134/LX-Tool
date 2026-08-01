@@ -990,3 +990,65 @@ def test_exact_output_match_is_preferred_over_index_pairing():
 
     outs = ["X-Touch 1", "Other 0"]
     assert xrun._matching_port("X-Touch 0", outs) == "X-Touch 1"
+
+
+# ---- outbound visibility (the "fader does nothing" question) ----------
+
+
+def test_sends_are_counted_and_remembered():
+    """"The fader does nothing" cannot be diagnosed unless the app can
+    say what - if anything - it actually sent."""
+    from xbridge import run as xrun
+
+    class FakeSock:
+        def __init__(self):
+            self.sent = []
+
+        def sendto(self, data, addr):
+            self.sent.append((data, addr))
+
+    r = xrun.Runner(log=lambda *a: None)
+    sock = FakeSock()
+    r._send(sock, osc.encode(osc.Message("/Page1/Fader201", (75,))))
+    assert r.counters["sent"] == 1
+    assert sock.sent[0][1] == r.ma3
+    assert r.last_sent == ["/Page1/Fader201 75"]
+
+
+def test_the_sent_history_stays_short():
+    from xbridge import run as xrun
+
+    class FakeSock:
+        def sendto(self, data, addr):
+            pass
+
+    r = xrun.Runner(log=lambda *a: None)
+    for i in range(30):
+        r._send(FakeSock(), osc.encode(osc.Message(f"/x/{i}", (i,))))
+    assert len(r.last_sent) == 8
+    assert r.last_sent[-1] == "/x/29 29"
+    assert r.counters["sent"] == 30
+
+
+def test_test_send_reports_the_exact_message(monkeypatch):
+    from xbridge import run as xrun
+
+    r = xrun.Runner(log=lambda *a: None)
+    line = r.test_send(strip=0, level=0.5)
+    assert line == "/Page1/Fader201 50"
+    assert r.counters["sent"] == 1
+
+
+def test_ma3_fader_value_type_is_switchable():
+    """The MA3 manual documents int 0-100; a float is the fallback when a
+    version wants one, so it must not be hard-coded."""
+    as_int = Bridge(config=Config())
+    (d,) = as_int.midi_in(mcu.fader_out(0, 0.5))
+    assert osc.decode(d).args == (50,)
+
+    as_float = Bridge(config=Config(ma3_value="float"))
+    (d,) = as_float.midi_in(mcu.fader_out(0, 0.5))
+    (value,) = osc.decode(d).args
+    assert isinstance(value, float)
+    # 14-bit faders quantise: 8192/16383 is 50.003%, not exactly 50.
+    assert value == pytest.approx(50.0, abs=0.01)
