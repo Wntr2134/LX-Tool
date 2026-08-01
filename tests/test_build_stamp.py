@@ -36,3 +36,17 @@ def test_workflow_stamps_in_place_and_proves_it():
     assert "> lxtool/_build.py" not in wf, "stamp must not overwrite the file"
     assert 's/^COMMIT = .*/' in wf
     assert "_build.label()" in wf or "print(_build.label())" in wf
+
+
+def test_version_file_paths_resolve_relative_to_their_spec():
+    """PyInstaller resolves EXE(version=...) against the spec's directory -
+    a repo-root-relative path broke the Windows build."""
+    import re as _re
+
+    for spec in (ROOT / "packaging" / "lxtool.spec",
+                 ROOT / "xbridge" / "packaging" / "xbridge.spec"):
+        text = spec.read_text(encoding="utf-8")
+        m = _re.search(r'version="([^"]+)"', text)
+        assert m, f"{spec} has no version resource"
+        assert (spec.parent / m.group(1)).is_file(), (
+            f"{m.group(1)} not found next to {spec.name}")
