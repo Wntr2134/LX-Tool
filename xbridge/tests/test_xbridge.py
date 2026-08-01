@@ -13,6 +13,23 @@ from xbridge import mcu, osc
 from xbridge.bridge import Bridge, Config
 from xbridge.run import default_config_json, find_xtouch_port, load_config
 
+def _cfg(**kw) -> Config:
+    """Config with the address shape the mapping tests assert.
+
+    The shipped defaults follow MA's documentation (prefix "gma3", float
+    levels); these tests are about the mapping, so they pin the plain
+    shape and let test_shipped_defaults_follow_ma_documentation own the
+    defaults.
+    """
+    kw.setdefault("prefix", "")
+    kw.setdefault("ma3_value", "int100")
+    return Config(**kw)
+
+
+def _plain(**kw) -> Bridge:
+    return Bridge(config=_cfg(**kw))
+
+
 # ---- MCU codec ---------------------------------------------------------
 
 
@@ -89,7 +106,7 @@ def test_osc_garbage_never_raises():
 
 
 def test_fader_move_becomes_ma3_executor_level():
-    b = Bridge()
+    b = _plain()
     (datagram,) = b.midi_in(mcu.fader_out(0, 0.75))
     msg = osc.decode(datagram)
     assert msg.address == "/Page1/Fader201"
@@ -103,7 +120,7 @@ def test_prefix_and_page_shape_the_address():
 
 
 def test_master_fader_uses_the_command_line():
-    b = Bridge()
+    b = _plain()
     (datagram,) = b.midi_in(mcu.fader_out(8, 0.8))
     msg = osc.decode(datagram)
     assert msg.address == "/cmd"
@@ -111,7 +128,7 @@ def test_master_fader_uses_the_command_line():
 
 
 def test_select_button_press_and_release_hit_the_key():
-    b = Bridge()
+    b = _plain()
     (down,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
     (up,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 0)))
     assert osc.decode(down) == osc.Message("/Page1/Key101", (1,))
@@ -119,7 +136,7 @@ def test_select_button_press_and_release_hit_the_key():
 
 
 def test_encoder_ticks_accumulate_and_clamp():
-    b = Bridge()
+    b = _plain()
     for _ in range(3):
         (d,) = b.midi_in(bytes((0xB0, 16, 1)))
     assert osc.decode(d).args == (6,)          # 3 ticks * 2% = 6
@@ -129,7 +146,7 @@ def test_encoder_ticks_accumulate_and_clamp():
 
 
 def test_bank_buttons_flip_the_page():
-    b = Bridge()
+    b = _plain()
     b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
     assert b.config.page == 2
     (datagram,) = b.midi_in(mcu.fader_out(0, 1.0))
@@ -143,7 +160,7 @@ def test_bank_buttons_flip_the_page():
 
 
 def test_ma3_fader_feedback_moves_the_motor():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Fader201", (50,))))
     ev = mcu.decode(raw)
     assert isinstance(ev, mcu.FaderMoved)
@@ -152,7 +169,7 @@ def test_ma3_fader_feedback_moves_the_motor():
 
 
 def test_feedback_never_fights_a_touched_fader():
-    b = Bridge()
+    b = _plain()
     b.midi_in(bytes((0x90, 104, 127)))         # finger down on strip 1
     assert b.osc_in(osc.encode(osc.Message("/Page1/Fader201", (99,)))) == []
     b.midi_in(bytes((0x90, 104, 0)))           # finger off
@@ -160,24 +177,24 @@ def test_feedback_never_fights_a_touched_fader():
 
 
 def test_feedback_for_another_page_is_ignored():
-    b = Bridge()
+    b = _plain()
     assert b.osc_in(osc.encode(osc.Message("/Page9/Fader201", (50,)))) == []
 
 
 def test_key_feedback_lights_the_button_led():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Key101", (1,))))
     assert raw == mcu.button_led(mcu.SELECT[0], True)
 
 
 def test_encoder_feedback_paints_the_ring():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Fader301", (100,))))
     assert raw[0] == 0xB0 and raw[1] == 48     # ring CC for encoder 1
 
 
 def test_float_and_junk_feedback_are_safe():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Fader201", (50.0,))))
     assert mcu.decode(raw).unit == pytest.approx(0.5, abs=0.01)
     assert b.osc_in(b"\x01\x02not osc") == []
@@ -185,7 +202,7 @@ def test_float_and_junk_feedback_are_safe():
 
 
 def test_hello_labels_the_strips():
-    payloads = b"".join(Bridge().hello())
+    payloads = b"".join(_plain().hello())
     assert b"Ex 201" in payloads
     assert b"Pg 1" in payloads
 
@@ -220,7 +237,7 @@ def test_port_finder_matches_xtouch_names():
 
 
 def test_transport_buttons_fire_commands_on_press_only():
-    b = Bridge()
+    b = _plain()
     (down,) = b.midi_in(bytes((0x90, mcu.PLAY, 127)))
     assert osc.decode(down) == osc.Message("/cmd", ("Go+",))
     assert b.midi_in(bytes((0x90, mcu.PLAY, 0))) == []       # release: nothing
@@ -231,7 +248,7 @@ def test_transport_buttons_fire_commands_on_press_only():
 
 
 def test_unmapped_transport_button_stays_silent():
-    b = Bridge()
+    b = _plain()
     assert b.midi_in(bytes((0x90, mcu.RECORD, 127))) == []
     b.config.cmd_record = "Off Sequence 1"
     (d,) = b.midi_in(bytes((0x90, mcu.RECORD, 127)))
@@ -306,7 +323,7 @@ def test_web_status_endpoint_reports_without_midi_installed():
 
 
 def _x32() -> Bridge:
-    return Bridge(config=Config(target="x32"))
+    return Bridge(config=_cfg(target="x32"))
 
 
 def test_x32_fader_is_a_channel_level():
@@ -399,7 +416,7 @@ def test_unknown_target_is_rejected():
 
 
 def _magicq() -> Bridge:
-    return Bridge(config=Config(target="magicq"))
+    return Bridge(config=_cfg(target="magicq"))
 
 
 def test_magicq_faders_ride_playbacks():
@@ -449,7 +466,7 @@ def test_magicq_has_no_paging():
 
 
 def _resolume() -> Bridge:
-    return Bridge(config=Config(target="resolume"))
+    return Bridge(config=_cfg(target="resolume"))
 
 
 def test_resolume_faders_are_layer_opacity_banked():
@@ -487,7 +504,7 @@ def test_resolume_feedback_drives_motors_and_leds():
 
 
 def _companion() -> Bridge:
-    return Bridge(config=Config(target="companion"))
+    return Bridge(config=_cfg(target="companion"))
 
 
 def test_companion_buttons_are_locations_with_true_down_up():
@@ -537,7 +554,7 @@ def test_companion_bank_changes_the_companion_page():
 
 
 def _eos() -> Bridge:
-    return Bridge(config=Config(target="eos"))
+    return Bridge(config=_cfg(target="eos"))
 
 
 def test_eos_hello_configures_the_fader_bank():
@@ -579,7 +596,7 @@ def test_eos_feedback_moves_the_motors():
 
 
 def test_generic_templates_fill_the_strip_number():
-    b = Bridge(config=Config(target="generic", gen_fader="/qlab/cue/{n}/level",
+    b = Bridge(config=_cfg(target="generic", gen_fader="/qlab/cue/{n}/level",
                              gen_scale="float01"))
     (d,) = b.midi_in(mcu.fader_out(0, 0.5))
     msg = osc.decode(d)
@@ -591,7 +608,7 @@ def test_generic_templates_fill_the_strip_number():
 
 
 def test_generic_int_scale_and_buttons_and_unmapped():
-    b = Bridge(config=Config(target="generic", gen_scale="int100",
+    b = Bridge(config=_cfg(target="generic", gen_scale="int100",
                              gen_mute=""))
     (d,) = b.midi_in(mcu.fader_out(1, 0.5))
     assert osc.decode(d).args == (50,)
@@ -601,7 +618,7 @@ def test_generic_int_scale_and_buttons_and_unmapped():
 
 
 def test_generic_feedback_on_the_fader_template_moves_motors():
-    b = Bridge(config=Config(target="generic", gen_fader="/fader/{n}"))
+    b = Bridge(config=_cfg(target="generic", gen_fader="/fader/{n}"))
     (motor,) = b.osc_in(osc.encode(osc.Message("/fader/3", (0.25,))))
     assert mcu.decode(motor).strip == 2
     assert b.osc_in(osc.encode(osc.Message("/other/3", (0.25,)))) == []
@@ -611,7 +628,7 @@ def test_generic_feedback_on_the_fader_template_moves_motors():
 
 
 def test_ma3_lua_plugin_labels_reach_the_strips():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(
         osc.Message("/xbridge/label/1", ("Front Wash",))))
     assert raw == mcu.lcd_text(0, 0, "Front Wash")
@@ -692,7 +709,7 @@ def test_web_config_endpoints_roundtrip(tmp_path, monkeypatch):
 
 
 def _ma2() -> Bridge:
-    return Bridge(config=Config(target="ma2"))
+    return Bridge(config=_cfg(target="ma2"))
 
 
 def test_ma2_faders_are_executor_commands():
@@ -719,10 +736,10 @@ def test_ma2_master_and_buttons_and_encoders():
 
 
 def test_ma2_master_command_is_a_template():
-    b = Bridge(config=Config(target="ma2", ma2_master_cmd="Master 2.2 At {pct}"))
+    b = Bridge(config=_cfg(target="ma2", ma2_master_cmd="Master 2.2 At {pct}"))
     (m,) = b.midi_in(mcu.fader_out(8, 0.5))
     assert m == "Master 2.2 At 50.0"
-    b2 = Bridge(config=Config(target="ma2", ma2_master_cmd=""))
+    b2 = Bridge(config=_cfg(target="ma2", ma2_master_cmd=""))
     assert b2.midi_in(mcu.fader_out(8, 0.5)) == []
 
 
@@ -777,7 +794,7 @@ def test_ma2_touch_suppression_applies_to_ws_feedback_too():
 
 
 def _mpk() -> Bridge:
-    return Bridge(config=Config(surface="mpk"))
+    return Bridge(config=_cfg(surface="mpk"))
 
 
 def test_mpk_knobs_ride_encoder_slots_absolutely():
@@ -806,7 +823,7 @@ def test_mpk_pads_press_the_select_row_with_led_feedback():
 def test_mpk_ignores_unmapped_midi_and_custom_numbers_work():
     b = _mpk()
     assert b.midi_in(bytes((0xB0, 1, 64))) == []     # mod wheel: not a knob
-    b2 = Bridge(config=Config(surface="mpk", mpk_knob_ccs=(20, 21),
+    b2 = Bridge(config=_cfg(surface="mpk", mpk_knob_ccs=(20, 21),
                               mpk_pad_notes=(40,)))
     (d,) = b2.midi_in(bytes((0xB0, 21, 127)))
     assert osc.decode(d).address == "/Page1/Fader302"
@@ -826,7 +843,7 @@ def test_unknown_surface_is_rejected():
 
 
 def test_control_port_reaches_every_path():
-    b = Bridge()
+    b = _plain()
     (d,) = b.control_in(osc.Message("/xbridge/fader/1", (0.5,)))
     assert osc.decode(d) == osc.Message("/Page1/Fader201", (50,))
     (d,) = b.control_in(osc.Message("/xbridge/fader/2", (75,)))   # int 0-100
@@ -844,7 +861,7 @@ def test_control_port_reaches_every_path():
 
 
 def test_control_port_rejects_junk_quietly():
-    b = Bridge()
+    b = _plain()
     for addr in ("/xbridge/fader/99", "/xbridge/fader/x", "/xbridge/nope",
                  "/xbridge/key/rec/1", "/other/fader/1"):
         assert b.control_in(osc.Message(addr, (1,))) == []
@@ -865,7 +882,7 @@ def test_surface_list_parses_and_rejects():
 
 
 def test_events_route_by_originating_surface():
-    b = Bridge(config=Config(surface="xtouch,mpk"))
+    b = Bridge(config=_cfg(surface="xtouch,mpk"))
     xt, mpk = b.surfaces
     # CC 70 is a knob on the MPK but nothing on the X-Touch
     assert b.midi_in(bytes((0xB0, 70, 127)), surface=xt) == []
@@ -878,7 +895,7 @@ def test_events_route_by_originating_surface():
 
 
 def test_feedback_renders_per_surface():
-    b = Bridge(config=Config(surface="xtouch,mpk"))
+    b = Bridge(config=_cfg(surface="xtouch,mpk"))
     xt, mpk = b.surfaces
     intents = b.target.feedback(osc.Message("/Page1/Key101", (1,)))
     assert b.render_for(xt, intents) == [mcu.button_led(mcu.SELECT[0], True)]
@@ -889,7 +906,7 @@ def test_feedback_renders_per_surface():
 
 
 def test_touch_suppression_holds_across_surfaces():
-    b = Bridge(config=Config(surface="xtouch,mpk"))
+    b = Bridge(config=_cfg(surface="xtouch,mpk"))
     xt, _mpk = b.surfaces
     b.midi_in(bytes((0x90, 104, 127)), surface=xt)   # finger on fader 1
     fader = b.target.feedback(osc.Message("/Page1/Fader201", (99,)))
@@ -1035,20 +1052,109 @@ def test_test_send_reports_the_exact_message(monkeypatch):
 
     r = xrun.Runner(log=lambda *a: None)
     line = r.test_send(strip=0, level=0.5)
-    assert line == "/Page1/Fader201 50"
+    # The shipped defaults are MA's documented ones: prefixed, float 0-100.
+    assert line.startswith("/gma3/Page1/Fader201 ")
+    assert abs(float(line.rsplit(" ", 1)[1]) - 50.0) < 0.01
     assert r.counters["sent"] == 1
 
 
-def test_ma3_fader_value_type_is_switchable():
-    """The MA3 manual documents int 0-100; a float is the fallback when a
-    version wants one, so it must not be hard-coded."""
-    as_int = Bridge(config=Config())
-    (d,) = as_int.midi_in(mcu.fader_out(0, 0.5))
-    assert osc.decode(d).args == (50,)
-
-    as_float = Bridge(config=Config(ma3_value="float"))
-    (d,) = as_float.midi_in(mcu.fader_out(0, 0.5))
+@pytest.mark.parametrize("form,check", [
+    ("int100", lambda v: v == 50),
+    ("float100", lambda v: isinstance(v, float) and abs(v - 50.0) < 0.01),
+    ("float01", lambda v: isinstance(v, float) and abs(v - 0.5) < 0.001),
+    ("int255", lambda v: v == 128),
+])
+def test_every_ma3_fader_value_form_is_available(form, check):
+    """MA's manual says int 0-100, MA's own worked example sends float
+    0-100, and FaderRange can move the top of the scale to 255. All four
+    ship so the probe can find which one a console actually wants."""
+    b = Bridge(config=_cfg(ma3_value=form))
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
     (value,) = osc.decode(d).args
+    assert check(value), f"{form} produced {value!r}"
+
+
+def test_shipped_defaults_follow_ma_documentation():
+    """MA drops any message not starting with the OSC line's prefix, and
+    MA's templates and examples use "gma3" with float 0-100. Defaulting
+    to no prefix made every message silently disappear."""
+    (d,) = Bridge().midi_in(mcu.fader_out(0, 1.0))
+    msg = osc.decode(d)
+    assert msg.address == "/gma3/Page1/Fader201"
+    (value,) = msg.args
     assert isinstance(value, float)
-    # 14-bit faders quantise: 8192/16383 is 50.003%, not exactly 50.
-    assert value == pytest.approx(50.0, abs=0.01)
+    assert value == pytest.approx(100.0, abs=0.01)
+
+
+# ---- the MA3 format probe ---------------------------------------------
+
+
+def test_probe_covers_every_documented_dialect():
+    """Prefix on/off crossed with all four value forms. Miss one and the
+    probe can tell a user "none of these worked" when one would have."""
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    assert len(DIALECTS) == 8
+    assert len(set(DIALECTS)) == 8
+    assert {v for _, v in DIALECTS} == {"int100", "float100", "float01",
+                                        "int255"}
+    assert {p for p, _ in DIALECTS} == {"", "gma3"}
+    assert all(s.address for s in Ma3Probe().steps)
+
+
+def test_probe_addresses_the_executor_it_was_asked_about():
+    from xbridge.probe import Ma3Probe
+
+    p = Ma3Probe(page=3, exec_=205)
+    assert p.steps[0].address == "/gma3/Page3/Fader205"
+    assert p.steps[2].address == "/Page3/Fader205"
+
+
+def test_probe_sends_each_step_once_and_pauses_between():
+    """A sweep with no gap is unwatchable: every step lands before a
+    human can look up."""
+    from xbridge.probe import Ma3Probe
+
+    sent, slept = [], []
+
+    class FakeSock:
+        def sendto(self, data, addr):
+            sent.append((osc.decode(data), addr))
+
+    p = Ma3Probe(host="10.0.0.5", port=8001)
+    p.run(dwell=1.5, sock=FakeSock(), sleep=slept.append)
+
+    assert len(sent) == len(p.steps)
+    assert all(addr == ("10.0.0.5", 8001) for _, addr in sent)
+    assert slept == [1.5] * len(p.steps)
+    forms = {(m.address.startswith("/gma3"), type(m.args[0]).__name__,
+              round(float(m.args[0]), 3)) for m, _ in sent}
+    assert len(forms) == len(p.steps), "two steps put the same bytes on the wire"
+
+
+def test_probe_answer_can_be_kept():
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    p = Ma3Probe()
+    for i, (prefix, value) in enumerate(DIALECTS):
+        cfg = p.apply(Config(), i)
+        assert (cfg.prefix, cfg.ma3_value) == (prefix, value)
+
+
+def test_probe_apply_keeps_the_rest_of_the_mapping(tmp_path, monkeypatch):
+    """The winning dialect is two fields. Saving it must not throw away
+    the executor numbers someone spent a show setting up."""
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    store = tmp_path / "mapping.json"
+    monkeypatch.setattr(xrun, "config_store_path", lambda: store)
+    xrun.store_config({"target": "ma3", "prefix": "wrong",
+                       "ma3_value": "int255", "fader_execs": [401, 402]})
+
+    out = xapp.api_probe_apply(index=1)          # gma3 + int100
+
+    assert (out["prefix"], out["ma3_value"]) == ("gma3", "int100")
+    kept = xrun.load_stored_config()
+    assert kept.fader_execs == (401, 402)
+    assert (kept.prefix, kept.ma3_value) == ("gma3", "int100")

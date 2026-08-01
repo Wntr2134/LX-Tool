@@ -61,10 +61,22 @@ class MA3Target:
         self.config = config
 
     def _level(self, unit: float):
-        """MA3's fader argument: int 0-100 per the manual, or float."""
-        if getattr(self.config, "ma3_value", "int") == "float":
-            return float(unit * 100.0)
-        return round(unit * 100)
+        """MA3's fader argument.
+
+        The manual documents int 0-100, but MA's own Open Stage Control
+        example sends float 0-100, and the OSC line's FaderRange cell can
+        move the top of the scale to 255. Which one a given console wants
+        is not knowable from here, so all four are selectable and the
+        probe (xbridge probe / "Find MA3 format") tries them in turn.
+        """
+        form = getattr(self.config, "ma3_value", "float100")
+        if form == "int100":
+            return round(unit * 100)
+        if form == "float01":
+            return float(unit)
+        if form == "int255":
+            return round(unit * 255)
+        return float(unit * 100.0)          # float100 - MA's own example
 
     # -- surface -> console ------------------------------------------------
 

@@ -310,6 +310,14 @@ The surface connecting (LEDs light, strips show text) only proves the
 - **last sent** shows the actual messages, e.g. `/Page1/Fader201 50`.
 - **Test fader 1** sends one of those without touching the hardware, so
   the console can be proved on its own.
+- **Find MA3 format** is the shortcut when *sent* climbs and the desk
+  ignores it. MA3 processes only messages that begin with the prefix on
+  its OSC page - a mismatch is discarded in silence, which looks exactly
+  like a dead bridge. The sweep sends all eight combinations of prefix
+  (`gma3` / none) and value type (int 0-100, float 0-100, float 0-1,
+  int 0-255) two seconds apart. Watch your executor: whichever step moves
+  it is your format, and **Keep** writes it into the mapping. Same thing
+  from a terminal: `xbridge probe --exec 201`.
 
 Then check, in this order:
 
@@ -324,6 +332,7 @@ Then check, in this order:
    console's "output/destination" port must be the bridge's listen port.
 3. **Destination IP.** On the same PC use `127.0.0.1`. MA3 must be
    sending to, and receiving on, an interface that actually carries it.
-4. **Value type.** The MA3 manual documents int 0-100 and that is the
-   default; if your version wants a float, Remap → *fader value* →
-   float.
+4. **Prefix and value type.** These ship as MA's own documented pair -
+   prefix `gma3`, float 0-100, which is what MA's Open Stage Control
+   example sends. If your OSC page says something else, don't guess:
+   run **Find MA3 format** above.

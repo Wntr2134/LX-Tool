@@ -128,6 +128,47 @@ async def api_config_save(request: Request) -> dict:
     return {"ok": True, "path": str(xrun.config_store_path())}
 
 
+@app.post("/api/probe")
+def api_probe(host: str = Form("127.0.0.1"), port: int = Form(8000),
+              page: int = Form(1), exec_no: int = Form(201),
+              dwell: float = Form(2.0)) -> dict:
+    """Walk every MA3 OSC dialect against one executor.
+
+    MA3 discards anything whose prefix does not match, without saying so,
+    so "the fader does nothing" has several indistinguishable causes.
+    This puts each candidate on the wire in turn; whichever one moves the
+    executor is the answer, and /api/probe/apply keeps it.
+    """
+    from .probe import Ma3Probe
+
+    if dwell < 0 or dwell > 10:
+        raise HTTPException(400, "dwell must be between 0 and 10 seconds")
+    p = Ma3Probe(host=host, port=port, page=page, exec_=exec_no)
+    try:
+        p.run(dwell=dwell)
+    except OSError as exc:
+        raise HTTPException(400, f"could not send to {host}:{port}: {exc}") from exc
+    return {"to": f"{host}:{port}", "exec": exec_no, "page": page,
+            "steps": [s.as_dict() for s in p.steps]}
+
+
+@app.post("/api/probe/apply")
+def api_probe_apply(index: int = Form(...)) -> dict:
+    """Keep the dialect that worked, so it is never guessed again."""
+    from . import run as xrun
+    from .probe import DIALECTS
+
+    if not 0 <= index < len(DIALECTS):
+        raise HTTPException(400, "no such probe step")
+    prefix, value = DIALECTS[index]
+    # store_config writes exactly what it is given, so the rest of the
+    # mapping has to be carried over or the probe would erase it.
+    body = api_config()["config"]
+    body.update({"prefix": prefix, "ma3_value": value})
+    xrun.store_config(body)
+    return {"ok": True, "prefix": prefix, "ma3_value": value}
+
+
 @app.get("/api/config/export")
 def api_config_export() -> FileResponse:
     from . import run as xrun
@@ -236,8 +277,23 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <button class="ghost" onclick="toggleMap()">Remap&hellip;</button>
   <button class="ghost" onclick="showPorts()">MIDI ports</button>
   <button class="ghost" onclick="testSend()">Test fader 1</button>
+  <button class="ghost" onclick="probe()">Find MA3 format</button>
  </div>
  <div id="out"></div>
+</fieldset>
+
+<fieldset id="probebox" style="display:none"><legend>Find MA3 format</legend>
+ <p class="note">MA3 silently ignores OSC whose prefix does not match its
+ OSC page, so a wrong setting looks exactly like a dead bridge. Put a
+ fader on an executor, watch it, and press Sweep: each step below goes out
+ two seconds apart. Whichever one moves the fader is your format - click
+ Keep on that row.</p>
+ <div class="row">
+  <label>page</label><input type="number" id="pbpage" value="1" style="width:4rem">
+  <label>exec</label><input type="number" id="pbexec" value="201" style="width:5rem">
+  <button onclick="probeRun()">Sweep</button>
+ </div>
+ <div id="probeout"></div>
 </fieldset>
 
 <fieldset id="mapbox" style="display:none"><legend>Mapping</legend>
@@ -296,6 +352,36 @@ async function testSend() {
     $('out').innerHTML = `sent <b>${esc(d.sent)}</b> to ${esc(d.to)}` +
       '<br>if the console did not move, the address or port is wrong - not the surface.';
   } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+function probe() {
+  const b = $('probebox');
+  b.style.display = b.style.display === 'none' ? '' : 'none';
+}
+async function probeRun() {
+  const fd = new FormData();
+  fd.append('host', $('host').value || '127.0.0.1');
+  fd.append('port', $('send').value || '8000');
+  fd.append('page', $('pbpage').value || '1');
+  fd.append('exec_no', $('pbexec').value || '201');
+  $('probeout').innerHTML = 'sweeping - watch the executor&hellip;';
+  try {
+    const d = await (await post('/api/probe', fd)).json();
+    $('probeout').innerHTML = `sent to ${esc(d.to)}, exec ${esc(d.exec)}:<br>` +
+      d.steps.map(s => `<div class="row"><code>${esc(s.label)}</code> ` +
+        `<span class="note">${esc(s.sent)}</span> ` +
+        `<button class="ghost" onclick="probeKeep(${s.index})">Keep</button></div>`
+      ).join('');
+  } catch (e) { $('probeout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+async function probeKeep(i) {
+  const fd = new FormData(); fd.append('index', i);
+  try {
+    const d = await (await post('/api/probe/apply', fd)).json();
+    $('probeout').innerHTML = `saved: prefix <b>${esc(d.prefix || '(none)')}</b>, ` +
+      `values <b>${esc(d.ma3_value)}</b>. Restart the bridge to use it.`;
+    loadCfg();
+  } catch (e) { $('probeout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 async function showPorts() {

@@ -39,6 +39,14 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("ports", help="list the MIDI ports this machine can see")
 
+    pb = sub.add_parser("probe", help="find the OSC format your MA3 wants")
+    pb.add_argument("--host", default="127.0.0.1")
+    pb.add_argument("--port", type=int, default=8000)
+    pb.add_argument("--page", type=int, default=1)
+    pb.add_argument("--exec", dest="exec_no", type=int, default=201)
+    pb.add_argument("--dwell", type=float, default=2.0,
+                    help="seconds between steps (default: 2)")
+
     c = sub.add_parser("config", help="write the default mapping to edit")
     c.add_argument("-o", "--out", help="file to write (default: print)")
 
@@ -82,6 +90,25 @@ def main(argv: list[str] | None = None) -> int:
                 pair = (xrun.find_surface_port(outs, name)
                         or xrun._matching_port(found, outs))
                 print(f"\n{name}: in={found!r} out={pair or 'NONE'!r}")
+        return 0
+
+    if args.action == "probe":
+        from .probe import Ma3Probe
+
+        p = Ma3Probe(host=args.host, port=args.port, page=args.page,
+                     exec_=args.exec_no)
+        print(f"Watch executor {args.exec_no} on page {args.page}. "
+              f"Sending to {args.host}:{args.port}, "
+              f"{args.dwell:g}s apart:\n")
+        try:
+            p.run(dwell=args.dwell,
+                  on_step=lambda s: print(f"  {s.label:<32} {s.line}"))
+        except OSError as exc:
+            print(f"could not send: {exc}")
+            return 1
+        print("\nWhichever step moved the fader is your format. Set it with:"
+              "\n  xbridge config -o mapping.json   (edit prefix + ma3_value)"
+              "\nor press Keep on that row in the app's 'Find MA3 format'.")
         return 0
 
     if args.action == "config":

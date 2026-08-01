@@ -31,7 +31,10 @@ class Config:
     """What the surface drives. Everything is overridable from JSON."""
 
     target: str = "ma3"     # ma3 | x32 | magicq | resolume | companion
-    prefix: str = ""                   # MA3 OSC prefix, e.g. "gMA3"
+    # MA3 drops any message that does not start with the OSC line's
+    # prefix, and MA's templates ship with "gma3" - a mismatch here is
+    # silent, and looks exactly like "the bridge is not sending".
+    prefix: str = "gma3"
     page: int = 1
     fader_execs: tuple = tuple(range(201, 209))   # strips 1-8 (MA3)
     master_exec: int = 0               # 0 = grand master via /cmd (MA3)
@@ -61,7 +64,10 @@ class Config:
     # MA3 fader argument type. The manual documents int 0-100
     # ("/Page1/Fader201,i,100"); some versions/configs want a float, so
     # this is switchable rather than a guess baked into the code.
-    ma3_value: str = "int"             # "int" | "float"
+    # MA's own worked example sends float 0-100 to /gma3/Page1/Fader230,
+    # so those are the defaults. A console whose OSC line has an empty
+    # prefix needs prefix "" here - the probe finds out which.
+    ma3_value: str = "float100"   # float100 | int100 | float01 | int255
     # Which hardware is in your hands, and the MPK's factory MIDI numbers.
     surface: str = "xtouch"            # "xtouch" | "mpk"
     mpk_knob_ccs: tuple = tuple(range(70, 78))
