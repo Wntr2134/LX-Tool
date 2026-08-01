@@ -277,3 +277,21 @@ To verify and unblock:
 The builds carry proper Windows version metadata to lower the heuristic
 score; the real fix is code signing, which needs a purchased certificate
 (see the signing section).
+
+## "unknown port" / the surface will not connect
+
+Click **MIDI ports** in the panel (or run `xbridge ports`) to see exactly
+what this machine can see. Two things that bite on Windows:
+
+- **The device is named differently in each direction** - `X-Touch 0` on
+  the input side, `X-Touch 1` on the output side, for one physical unit.
+  The bridge pairs them up itself; if you override with `--midi-port`,
+  give it the **input** name and the output is matched automatically.
+- **Windows MIDI ports are exclusive-access.** If a DAW, another copy of
+  XBridge, or Behringer's own editor holds the X-Touch, nothing else can
+  open it. Close them and hit Start again.
+
+If the panel says *"no surface on USB"*, it lists every MIDI input it
+did see - if the X-Touch is not among them, it is not in **MC mode**
+(hold channel-1 SELECT while powering on: encoder 1 = MC, encoder 2 =
+USB), or it is on a USB hub that is dropping it.

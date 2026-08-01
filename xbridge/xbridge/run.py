@@ -13,6 +13,7 @@ rather than dying, and exposes its state so a UI can show what's going on.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import sys
 import threading
@@ -68,6 +69,61 @@ def find_surface_port(names: list[str], surface: str) -> str | None:
         if any(h in low for h in hints):
             return n
     return None
+
+
+def _port_names(mido, direction: str) -> list:
+    """Input or output port names, or [] if the backend cannot say."""
+    try:
+        if direction == "output":
+            return list(mido.get_output_names())
+        return list(mido.get_input_names())
+    except Exception:      # noqa: BLE001 - a backend hiccup is not fatal here
+        return []
+
+
+def _base_name(name: str) -> str:
+    """A port name without the index the backend appends.
+
+    Windows enumerates "X-Touch 0" on the input side and "X-Touch 1" on
+    the output side for one physical device, so the trailing number is
+    exactly what must be ignored when pairing them up.
+    """
+    return re.sub(r"\s+\d+$", "", (name or "").strip()).lower()
+
+
+def _matching_port(name: str, candidates: list) -> str:
+    """The candidate that is the same device as `name`, index aside."""
+    base = _base_name(name)
+    if not base:
+        return ""
+    for c in candidates:
+        if _base_name(c) == base:
+            return c
+    for c in candidates:                      # last resort: a prefix match
+        if base and _base_name(c).startswith(base[:8]):
+            return c
+    return ""
+
+
+def _open_pair(mido, in_name: str, out_name: str):
+    """Open input and output together, or leave nothing open.
+
+    Without the cleanup an output failure strands the input handle, and
+    since Windows MIDI ports are exclusive-access the reconnect loop
+    would make the device progressively harder to open rather than
+    recovering.
+    """
+    midi_in = mido.open_input(in_name)
+    if not out_name:
+        return midi_in, None
+    try:
+        return midi_in, mido.open_output(out_name)
+    except Exception:
+        try:
+            midi_in.close()
+        except Exception:      # noqa: BLE001
+            pass
+        raise
 
 
 def midi_available() -> bool:
@@ -153,9 +209,9 @@ class Runner:
                 if not port_name:
                     if self.state != "waiting-for-surface":
                         self.state = "waiting-for-surface"
-                        self.detail = ("no surface on USB - plug it in "
-                                       "(X-Touch: MC mode, USB) and it "
-                                       "will be picked up automatically")
+                        seen = ", ".join(names) or "none"
+                        self.detail = ("no surface on USB (X-Touch: MC mode, "
+                                       f"USB). MIDI inputs seen: {seen}")
                         self._log(self.detail)
                     if self.stop_event.wait(_RETRY_SECS):
                         break
@@ -179,20 +235,31 @@ class Runner:
         return 0
 
     def _open_surfaces(self, mido, names) -> list:
-        """(surface, midi_in, midi_out) for every configured surface whose
-        port is present. Multi-surface rigs get every match; a surface
-        that isn't plugged in yet is simply skipped and attached later."""
+        """(surface, midi_in, midi_out, name) for every surface present.
+
+        The input and output names are resolved against their OWN lists:
+        Windows hands the same device different names in each ("X-Touch 0"
+        in, "X-Touch 1" out), so opening the output with the input's name
+        fails with "unknown port". A surface that isn't plugged in yet is
+        skipped and attached later.
+        """
+        outs = _port_names(mido, "output")
         conns = []
         for surface in self.bridge.surfaces:
-            port = (self.midi_port if len(self.bridge.surfaces) == 1
-                    and self.midi_port else
-                    find_surface_port(names, surface.name))
-            if port and all(port != c[3] for c in conns):
-                try:
-                    conns.append((surface, mido.open_input(port),
-                                  mido.open_output(port), port))
-                except Exception:  # noqa: BLE001 - half-plugged: try later
-                    continue
+            want = (self.midi_port
+                    if self.midi_port and len(self.bridge.surfaces) == 1
+                    else "")
+            in_name = want or find_surface_port(names, surface.name)
+            if not in_name or any(in_name == c[3] for c in conns):
+                continue
+            out_name = (find_surface_port(outs, surface.name)
+                        or _matching_port(in_name, outs))
+            try:
+                pair = _open_pair(mido, in_name, out_name)
+            except Exception as exc:  # noqa: BLE001 - half-plugged: try later
+                self._log(f"could not open {in_name!r}: {exc}")
+                continue
+            conns.append((surface, pair[0], pair[1], in_name))
         return conns
 
     def _session(self, mido, port_name: str, sock) -> None:
@@ -209,6 +276,8 @@ class Runner:
             self._log(f"Console:  sending to {self.ma3[0]}:{self.ma3[1]}, "
                       f"listening on :{self.recv_port}")
             for surface, _mi, mout, _p in conns:
+                if mout is None:
+                    continue
                 for raw in surface.hello(
                         self.bridge.target.strip_labels(
                             self.bridge.config.page)):
@@ -230,6 +299,8 @@ class Runner:
                 if self.bridge.config.page != page:
                     page = self.bridge.config.page
                     for surface, _mi, mout, _p in conns:
+                        if mout is None:
+                            continue
                         for s, ln, text in self.bridge.target.strip_labels(page):
                             from . import targets as _t
                             for raw in surface.render(
@@ -254,6 +325,8 @@ class Runner:
                     intents = (self.bridge.target.feedback(msg)
                                if msg is not None else [])
                     for surface, _mi, mout, _p in conns:
+                        if mout is None:
+                            continue
                         for raw in self.bridge.render_for(surface, intents):
                             mout.send(mido.Message.from_bytes(raw))
                 for datagram in self.bridge.tick(time.monotonic()):
@@ -276,11 +349,12 @@ class Runner:
                     time.sleep(0.002)
         finally:
             for _s, mi, mout, _p in conns:
-                try:
-                    mi.close()
-                    mout.close()
-                except Exception:  # noqa: BLE001
-                    pass
+                for handle in (mi, mout):
+                    try:
+                        if handle is not None:
+                            handle.close()
+                    except Exception:  # noqa: BLE001
+                        pass
 
 
     # ---- grandMA2 web remote (websocket, not OSC) ------------------------

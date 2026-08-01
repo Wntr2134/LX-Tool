@@ -32,6 +32,25 @@ def api_status() -> dict:
     }
 
 
+@app.get("/api/ports")
+def api_ports() -> dict:
+    """What MIDI this machine can see - the first thing to check when a
+    surface will not connect."""
+    from . import run as xrun
+
+    if not xrun.midi_available():
+        return {"available": False, "inputs": [], "outputs": []}
+    import mido
+
+    try:
+        return {"available": True,
+                "inputs": list(mido.get_input_names()),
+                "outputs": list(mido.get_output_names())}
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False, "inputs": [], "outputs": [],
+                "error": str(exc)}
+
+
 @app.post("/api/start")
 def api_start(host: str = Form("127.0.0.1"), send_port: int = Form(0),
               recv_port: int = Form(9000), target: str = Form(""),
@@ -202,6 +221,7 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <button onclick="start()">Start bridge</button>
   <button class="ghost" onclick="stop()">Stop</button>
   <button class="ghost" onclick="toggleMap()">Remap&hellip;</button>
+  <button class="ghost" onclick="showPorts()">MIDI ports</button>
  </div>
  <div id="out"></div>
 </fieldset>
@@ -250,6 +270,16 @@ async function stop() {
   try { await post('/api/stop', new FormData()); } catch (e) {}
   setTimeout(refresh, 400);
 }
+async function showPorts() {
+  try {
+    const d = await (await fetch('/api/ports')).json();
+    if (!d.available) { $('out').innerHTML = '<span class="err">MIDI unavailable' +
+      (d.error ? ': ' + esc(d.error) : '') + '</span>'; return; }
+    $('out').innerHTML = 'IN: ' + (d.inputs.map(esc).join(' | ') || '(none)') +
+      '<br>OUT: ' + (d.outputs.map(esc).join(' | ') || '(none)');
+  } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
 async function loadCfg() {
   const d = await (await fetch('/api/config')).json();
   cfg = d.config; $('cfgpath').textContent = d.path;

@@ -37,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--midi-port", default="")
     s.add_argument("--seconds", type=float, default=30.0)
 
+    sub.add_parser("ports", help="list the MIDI ports this machine can see")
+
     c = sub.add_parser("config", help="write the default mapping to edit")
     c.add_argument("-o", "--out", help="file to write (default: print)")
 
@@ -57,6 +59,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "sniff":
         return xrun.sniff(recv_port=args.recv_port, midi_port=args.midi_port,
                           seconds=args.seconds)
+    if args.action == "ports":
+        if not xrun.midi_available():
+            print("MIDI support is not installed: pip install mido python-rtmidi")
+            return 1
+        import mido
+
+        try:
+            ins, outs = mido.get_input_names(), mido.get_output_names()
+        except Exception as exc:  # noqa: BLE001 - no MIDI system at all
+            print(f"the MIDI system is unavailable: {exc}")
+            return 1
+        print("MIDI inputs:")
+        for n in ins or ["  (none)"]:
+            print(f"  {n}")
+        print("MIDI outputs:")
+        for n in outs or ["  (none)"]:
+            print(f"  {n}")
+        for name in ("xtouch", "mpk"):
+            found = xrun.find_surface_port(ins, name)
+            if found:
+                pair = (xrun.find_surface_port(outs, name)
+                        or xrun._matching_port(found, outs))
+                print(f"\n{name}: in={found!r} out={pair or 'NONE'!r}")
+        return 0
+
     if args.action == "config":
         text = xrun.default_config_json()
         if args.out:

@@ -894,3 +894,99 @@ def test_touch_suppression_holds_across_surfaces():
     b.midi_in(bytes((0x90, 104, 127)), surface=xt)   # finger on fader 1
     fader = b.target.feedback(osc.Message("/Page1/Fader201", (99,)))
     assert b.render_for(xt, fader) == []
+
+
+# ---- MIDI port pairing (the Windows "unknown port" bug) ---------------
+
+
+class _Handle:
+    def __init__(self, name, log):
+        self.name, self.log, self.closed = name, log, False
+
+    def close(self):
+        self.closed = True
+        self.log.append(("close", self.name))
+
+
+class _FakeMido:
+    """Enough of mido to exercise port resolution, with a real Windows
+    quirk: the same device is named differently in each direction."""
+
+    def __init__(self, ins, outs, break_output=False):
+        self.ins, self.outs, self.break_output = ins, outs, break_output
+        self.log = []
+        self.open_handles = []
+
+    def get_input_names(self):
+        return list(self.ins)
+
+    def get_output_names(self):
+        return list(self.outs)
+
+    def _open(self, name, names, kind):
+        if name not in names:
+            raise OSError(f"unknown port {name!r}")
+        h = _Handle(name, self.log)
+        self.log.append((kind, name))
+        self.open_handles.append(h)
+        return h
+
+    def open_input(self, name):
+        return self._open(name, self.ins, "in")
+
+    def open_output(self, name):
+        if self.break_output:
+            raise OSError(f"unknown port {name!r}")
+        return self._open(name, self.outs, "out")
+
+
+def test_windows_names_the_same_device_differently_each_way():
+    """Input "X-Touch 0" and output "X-Touch 1" are one device - opening
+    the output with the input's name is what failed in the field."""
+    from xbridge import run as xrun
+
+    mido = _FakeMido(ins=["X-Touch 0"], outs=["X-Touch 1"])
+    runner = xrun.Runner(log=lambda *a: None)
+    conns = runner._open_surfaces(mido, mido.get_input_names())
+    assert len(conns) == 1
+    assert ("in", "X-Touch 0") in mido.log
+    assert ("out", "X-Touch 1") in mido.log
+
+
+def test_a_failed_output_open_never_strands_the_input():
+    """Windows MIDI is exclusive-access, so a leaked input handle makes
+    every later retry fail too - the reconnect loop would dig its own
+    hole instead of recovering."""
+    from xbridge import run as xrun
+
+    mido = _FakeMido(ins=["X-Touch 0"], outs=["X-Touch 1"],
+                     break_output=True)
+    runner = xrun.Runner(log=lambda *a: None)
+    conns = runner._open_surfaces(mido, mido.get_input_names())
+    assert conns == []
+    assert all(h.closed for h in mido.open_handles), "input handle leaked"
+
+
+def test_an_input_only_device_still_runs_one_way():
+    from xbridge import run as xrun
+
+    mido = _FakeMido(ins=["Some Controller 0"], outs=[])
+    midi_in, midi_out = xrun._open_pair(mido, "Some Controller 0", "")
+    assert midi_in is not None and midi_out is None
+
+
+def test_base_name_ignores_the_backend_index():
+    from xbridge import run as xrun
+
+    assert xrun._base_name("X-Touch 0") == "x-touch"
+    assert xrun._base_name("X-Touch INT 12") == "x-touch int"
+    assert xrun._base_name("MPKmini3") == "mpkmini3"
+    assert xrun._matching_port("X-Touch 0", ["Nope 0", "X-Touch 3"]) == "X-Touch 3"
+    assert xrun._matching_port("X-Touch 0", []) == ""
+
+
+def test_exact_output_match_is_preferred_over_index_pairing():
+    from xbridge import run as xrun
+
+    outs = ["X-Touch 1", "Other 0"]
+    assert xrun._matching_port("X-Touch 0", outs) == "X-Touch 1"
