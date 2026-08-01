@@ -30,6 +30,10 @@ desktop = [
     "pyobjc-core>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
     "pyobjc-framework-WebKit>=10; sys_platform == 'darwin'",
+    # Built-in OCR uses the OS engine: Vision on macOS, WinRT on Windows.
+    "pyobjc-framework-Vision>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
+    "winsdk>=1.0; sys_platform == 'win32'",
 ]
 # The X-Touch <-> grandMA3 bridge. Only the MIDI layer needs these; the
 # protocol and mapping logic are dependency-free and test without hardware.

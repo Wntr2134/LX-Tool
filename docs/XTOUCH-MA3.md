@@ -12,7 +12,9 @@ For the **full-size Behringer X-Touch**, driving either **grandMA3 onPC**
 | `magicq` | Playback wing for ChamSys MagicQ: faders ride playbacks 1–8 with motor feedback (MagicQ's own `/feedback/pb+exec` stream), SELECT = **Go**, MUTE = a true **Flash** (in on press, out on release), encoders drive execute grid 1, master fader rides playback 9, STOP = blackout on / PLAY = blackout off. Enable OSC in MagicQ: Setup → View Settings → Network, receive 8000 / transmit 9000 |
 | `x32` | Fader wing for an X32/M32: faders are channel levels (motors follow the desk), MUTE is the real mute with LED state, SELECT selects the channel, encoders are pan with ring feedback, master fader is the main stereo bus, FADER BANK pages through ch 1–8 / 9–16 / 17–24 / 25–32, and the scribble strips show the console's **own channel names** |
 | `resolume` | Media wing for Resolume Arena/Avenue: faders are **layer opacity** (banked 8 layers at a time), MUTE bypasses the layer, SELECT connects the matching column, encoders ride the layer masters, master fader is the composition master. For motor feedback enable OSC *output* in Resolume's preferences at this machine's listen port |
+| `eos` | Fader wing for the **ETC Eos family**: the bridge creates OSC fader bank 1 on connect, faders ride it as floats with motor feedback (Eos echoes an OSC-moved fader after ~3s — its behaviour, not a fault), SELECT = the fader's Fire, MUTE = its Stop, PLAY/STOP = master Go and Stop/Back. Eos setup: Setup → System → Show Control → OSC, UDP RX 8000, TX at this machine :9000 |
 | `companion` | A surface for **Bitfocus Companion** — and through it, the hundreds of things Companion controls. SELECT row presses buttons on row 0 of the current Companion page, MUTE row presses row 1, transport keys press row 2 (REW FF STOP PLAY REC = columns 0–4), all with true down/up so latch and momentary both behave. Faders write custom variables `fader1`–`fader8` and `master` as 0–100 for use in any Companion action; encoders send real rotate-left/right events on row 3; FADER BANK changes the Companion page. One-way (Companion doesn't stream OSC feedback) |
+| `generic` | **Anything that listens to OSC** — QLab, Reaper, media servers, homemade rigs. The remap editor takes address templates with `{n}` as the strip number (fader/master/SELECT/MUTE/encoder each mappable, float 0-1 or int 0-100), and feedback arriving on the fader address moves the motors |
 
 ```
 lx xtouch run                                     # grandMA3 onPC, this PC
@@ -22,8 +24,8 @@ lx xtouch run --target resolume
 lx xtouch run --target companion                  # Companion, port 12321
 ```
 
-Send ports default per target (MA3 8000, MagicQ 8000, X32 10023,
-Resolume 7000, Companion 12321). The X32 needs **no setup at all** — it
+Send ports default per target (MA3 8000, MagicQ 8000, Eos 8000, X32 10023,
+Resolume 7000, Companion 12321, generic 9001). The X32 needs **no setup at all** — it
 answers OSC out of the box; the bridge subscribes itself and keeps the
 subscription alive.
 
@@ -198,3 +200,35 @@ Whichever of those three fails (if any) pinpoints the fix immediately.
 | Test works, MA3 doesn't react | MA3 OSC line: Receive on, port 8000, destination IP correct, prefix matches (empty ↔ empty) |
 | MA3 reacts, motors don't follow | MA3 OSC line: **Send** on, port 9000, executor feedback enabled in the filter |
 | Faders move the wrong executors | Different width/user profile — edit `fader_execs` in the config to your actual executor numbers |
+
+## Real MA3 names on the scribble strips
+
+Import `data/ma3-plugin/lxtool_labels.lua` into MA3 (Show Creator →
+Import → Plugin) and run it: it pushes the executors' actual names to the
+strips every few seconds over the same OSC line. Experimental — written
+against the MA3 v2.x Lua API, not yet run on a console; the file says
+what to tweak if names don't appear.
+
+## Screenshots straight in (OCR)
+
+The chart box and the patch-sheet box each take an image: the app reads
+it with the OS's own OCR (Vision on macOS, Windows OCR on Windows — no
+internet, nothing extra to install with the packaged app). Check the
+lifted text, then hit the read button as usual. On other platforms the
+phone select-text-in-image route still works.
+
+## Sharing mappings
+
+**Export preset** in the remap editor downloads the current mapping as a
+JSON file; the import chooser applies one. Send a mate your mapping,
+they import it, done. The same file works with
+`lx xtouch run --config <file>`.
+
+## Installer signing status
+
+macOS builds are now ad-hoc signed in CI (prevents the "damaged app"
+refusal). Full no-warning installs need paid certificates — an Apple
+Developer ID (~USD 99/yr, plus notarisation) and a Windows Authenticode
+certificate — which only the project owner can purchase; the CI has a
+marked slot ready for the day the secrets exist. Until then:
+right-click → Open on macOS, "More info → Run anyway" on Windows.

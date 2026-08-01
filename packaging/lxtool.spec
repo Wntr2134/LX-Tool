@@ -39,6 +39,14 @@ hidden = [
     "mido",
     "mido.backends.rtmidi",
     "rtmidi",
+    # Built-in OCR: each platform's own engine, imported lazily. Names that
+    # don't exist on the build platform just produce a PyInstaller warning.
+    "Vision",
+    "Quartz",
+    "winsdk",
+    "winsdk.windows.media.ocr",
+    "winsdk.windows.graphics.imaging",
+    "winsdk.windows.storage",
 ]
 
 # Many lxtool submodules (_build, mylib, plan, chart, net, gdtfshare, ...) are

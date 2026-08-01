@@ -441,6 +441,68 @@ def api_xtouch_stop() -> dict:
     return {"ok": True}
 
 
+@app.get("/api/xtouch/config/export")
+def api_xtouch_config_export() -> FileResponse:
+    """The stored mapping as a downloadable preset to share."""
+    from ..xtouch import run as xrun
+
+    p = xrun.config_store_path()
+    if not p.is_file():
+        # Nothing stored yet: hand out the defaults so the file is valid.
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(xrun.default_config_json(), encoding="utf-8")
+    return FileResponse(p, filename="lxtool-xtouch-mapping.json",
+                        media_type="application/json")
+
+
+@app.post("/api/xtouch/config/import")
+async def api_xtouch_config_import(file: UploadFile = File(...)) -> dict:
+    """Apply a shared mapping preset."""
+    import json as jsonlib
+
+    from ..xtouch import run as xrun
+
+    try:
+        data = jsonlib.loads((await file.read()).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(400, f"not a mapping file: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(400, "not a mapping file: expected a JSON object")
+    cfg = xrun.store_config(data)
+    return {"ok": True, "target": cfg.target}
+
+
+@app.get("/api/ocr-available")
+def api_ocr_available() -> dict:
+    from .. import textimage
+
+    ok, detail = textimage.available()
+    return {"available": ok, "detail": detail}
+
+
+@app.post("/api/ocr")
+async def api_ocr(file: UploadFile = File(...)) -> dict:
+    """Text out of a screenshot, via the OS's own OCR engine."""
+    from pathlib import PurePath
+
+    from .. import textimage
+
+    suffix = PurePath(file.filename or "img.png").suffix.lower() or ".png"
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty image")
+    try:
+        text = textimage.read_text(data, suffix)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - a bad image must not 500
+        raise HTTPException(400, f"could not read that image: {exc}") from exc
+    if not text.strip():
+        raise HTTPException(422, "no text found in that image - try a "
+                            "sharper/closer shot")
+    return {"text": text, "backend": textimage.available()[1]}
+
+
 @app.post("/api/head-plan")
 def api_head_plan(key: str = Form(""), mode: str = Form(""),
                   chart_text: str = Form("")) -> dict:
@@ -740,7 +802,9 @@ PAGE = """<!doctype html>
     collisions, and hands every unknown straight to the head builder with its
     channel count filled in.</p>
  <textarea id="sheetbox" rows="6" style="width:100%" placeholder="1 | IP380B / BSW 380 Spot | Back Truss | 16 Ch | 1 | 1.001 | 1.016"></textarea>
- <p><button onclick="sheetRead()">Read patch sheet</button></p>
+ <p><button onclick="sheetRead()">Read patch sheet</button>
+    <label class="note">or screenshot:</label>
+    <input type="file" id="sheetimg" accept="image/*" onchange="ocrInto('sheetimg','sheetbox','sheetout')"></p>
  <div id="sheetout"></div>
 </fieldset>
 
@@ -761,7 +825,9 @@ PAGE = """<!doctype html>
     load-in with the fader test (instructions land in the plan)</span></p>
  <label for="chartbox">&hellip;or paste a DMX chart from a manual</label>
  <textarea id="chartbox" rows="4" style="width:100%" placeholder="1  Pan&#10;2  Pan fine&#10;3  Dimmer&#10;0-9  Open"></textarea>
- <p><button onclick="headChart()">Read chart into editor</button></p>
+ <p><button onclick="headChart()">Read chart into editor</button>
+    <label class="note">or screenshot:</label>
+    <input type="file" id="chartimg" accept="image/*" onchange="ocrInto('chartimg','chartbox','headout')"></p>
  <p style="margin-top:1rem"><input type="text" id="pm" placeholder="Manufacturer" style="width:32%">
     <input type="text" id="pmod" placeholder="Model" style="width:32%">
     <input type="text" id="pmode" placeholder="Mode" style="width:22%"></p>
@@ -790,8 +856,10 @@ PAGE = """<!doctype html>
       <option value="ma3">grandMA3 onPC (lighting)</option>
       <option value="magicq">ChamSys MagicQ (lighting)</option>
       <option value="x32">Behringer X32 / M32 (audio)</option>
+      <option value="eos">ETC Eos family (lighting)</option>
       <option value="resolume">Resolume Arena/Avenue (media)</option>
       <option value="companion">Bitfocus Companion (everything else)</option>
+      <option value="generic">Generic OSC (template addresses)</option>
     </select>
     <label>host</label> <input type="text" id="xthost" value="127.0.0.1" style="width:10rem">
     <label>send</label> <input type="number" id="xtsend" placeholder="auto" style="width:6rem">
@@ -1252,6 +1320,29 @@ function xtRenderMap() {
       composition master. For motor feedback enable OSC <i>output</i> in
       Resolume's preferences, aimed at this machine port 9000.</p>
       <p><label>start bank (1-4)</label> ${xtNum('xm_page', xtCfg.page)}</p>`;
+  } else if (t === 'eos') {
+    html += `<p class="note">ETC Eos: the bridge creates OSC fader bank 1 on
+      connect (/eos/fader/1/config/10) - map the bank to what you want in
+      Eos. Faders ride bank faders 1-8 with motor feedback (Eos delays
+      echoing an OSC-moved fader by ~3s - that's Eos, not a fault), SELECT
+      is the fader's Fire, MUTE is its Stop, PLAY/STOP are master Go and
+      Stop/Back. Eos setup: Setup &rarr; System &rarr; Show Control &rarr;
+      OSC - UDP RX 8000, TX aimed at this machine port 9000.</p>`;
+  } else if (t === 'generic') {
+    const g = (k, def) => xtCfg[k] !== undefined ? xtCfg[k] : def;
+    html += `<p class="note">Anything that listens to OSC. <code>{n}</code>
+      is the strip number 1-8 (+8 per page). Empty = unmapped. Buttons send
+      1 on press, 0 on release. Feedback arriving on the fader address
+      moves the motors.</p>
+      <p><label>fader</label> <input type="text" id="xm_gf" value="${esc(g('gen_fader','/fader/{n}'))}" style="width:12rem">
+      <label>master</label> <input type="text" id="xm_gm" value="${esc(g('gen_master','/master'))}" style="width:10rem"></p>
+      <p><label>SELECT</label> <input type="text" id="xm_gs" value="${esc(g('gen_select','/button/{n}'))}" style="width:12rem">
+      <label>MUTE</label> <input type="text" id="xm_gmu" value="${esc(g('gen_mute',''))}" style="width:12rem"></p>
+      <p><label>encoder</label> <input type="text" id="xm_ge" value="${esc(g('gen_encoder',''))}" style="width:12rem">
+      <label>fader value</label> <select id="xm_gsc">
+        <option value="float01" ${g('gen_scale','float01')==='float01'?'selected':''}>float 0.0-1.0</option>
+        <option value="int100" ${g('gen_scale','float01')==='int100'?'selected':''}>int 0-100</option>
+      </select></p>`;
   } else {
     html += `<p class="note">Companion: SELECT row presses buttons on row 0
       of the Companion page, MUTE row presses row 1, transport keys press
@@ -1262,8 +1353,35 @@ function xtRenderMap() {
       Companion doesn't stream OSC feedback.</p>
       <p><label>start page</label> ${xtNum('xm_page', xtCfg.page)}</p>`;
   }
-  html += '<p><button onclick="xtSaveMap()">Save mapping</button> <span id="xtmapout" class="note"></span></p>';
+  html += `<p><button onclick="xtSaveMap()">Save mapping</button>
+    <a href="/api/xtouch/config/export"><button type="button">Export preset</button></a>
+    <label class="note">import:</label>
+    <input type="file" id="xtimp" accept=".json" onchange="xtImport()">
+    <span id="xtmapout" class="note"></span></p>`;
   $('xtmap').innerHTML = html;
+}
+async function xtImport() {
+  const f = $('xtimp').files[0];
+  if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const d = await (await post('/api/xtouch/config/import', fd)).json();
+    xtCfg = (await (await fetch('/api/xtouch/config')).json()).config;
+    $('xttarget').value = d.target;
+    xtRenderMap();
+    $('xtmapout').textContent = 'preset imported (' + d.target + ')';
+  } catch (e) { $('xtmapout').innerHTML = `<span class="sev5">${esc(e.message)}</span>`; }
+}
+async function ocrInto(inputId, boxId, outId) {
+  const f = $(inputId).files[0];
+  if (!f) return;
+  $(outId).innerHTML = '<p class="note">reading image&hellip;</p>';
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const d = await (await post('/api/ocr', fd)).json();
+    $(boxId).value = d.text;
+    $(outId).innerHTML = `<p>Text lifted with ${esc(d.backend)} - check it, then hit the read button.</p>`;
+  } catch (e) { $(outId).innerHTML = `<p class="sev5">${esc(e.message)}</p>`; }
 }
 function xtCollect(key, n) {
   const out = [];
@@ -1280,6 +1398,11 @@ async function xtSaveMap() {
   if (pageEl) body.page = parseInt(pageEl.value, 10) || 1;
   const mqEl = $('xm_mqpb');
   if (mqEl) body.magicq_master_pb = parseInt(mqEl.value, 10) || 0;
+  if (t === 'generic') {
+    body.gen_fader = $('xm_gf').value; body.gen_master = $('xm_gm').value;
+    body.gen_select = $('xm_gs').value; body.gen_mute = $('xm_gmu').value;
+    body.gen_encoder = $('xm_ge').value; body.gen_scale = $('xm_gsc').value;
+  }
   if (t === 'ma3') {
     body.fader_execs = xtCollect('fader_execs', 8);
     body.select_execs = xtCollect('select_execs', 8);

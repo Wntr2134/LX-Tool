@@ -812,12 +812,14 @@ def build_parser() -> argparse.ArgumentParser:
     xtsub = xt.add_subparsers(dest="action", required=True)
     xtr = xtsub.add_parser("run", help="start the bridge")
     xtr.add_argument("--target", default="",
-                     choices=("", "ma3", "x32", "magicq", "resolume",
-                              "companion"),
+                     choices=("", "ma3", "x32", "magicq", "eos", "resolume",
+                              "companion", "generic"),
                      help="what to drive: ma3 (grandMA3 onPC, default), "
-                          "x32 (Behringer X32/M32 audio), magicq (ChamSys), "
-                          "resolume (Arena/Avenue media), companion "
-                          "(Bitfocus Companion)")
+                          "magicq (ChamSys), eos (ETC Eos family), "
+                          "x32 (Behringer X32/M32 audio), resolume "
+                          "(Arena/Avenue media), companion (Bitfocus "
+                          "Companion), generic (OSC address templates "
+                          "from the config)")
     xtr.add_argument("--host", default="127.0.0.1",
                      help="machine running the console (default: this one)")
     xtr.add_argument("--send-port", type=int, default=0,

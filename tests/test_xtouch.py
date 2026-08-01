@@ -533,6 +533,164 @@ def test_companion_bank_changes_the_companion_page():
     assert osc.decode(dn).address == "/location/2/0/0/down"
 
 
+# ---- ETC Eos -----------------------------------------------------------
+
+
+def _eos() -> Bridge:
+    return Bridge(config=Config(target="eos"))
+
+
+def test_eos_hello_configures_the_fader_bank():
+    (d,) = _eos().osc_hello()
+    msg = osc.decode(d)
+    assert msg.address == "/eos/fader/1/config/10"
+    assert msg.args == ()
+
+
+def test_eos_faders_are_bank_floats():
+    (d,) = _eos().midi_in(mcu.fader_out(2, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/eos/fader/1/3"
+    assert msg.args[0] == pytest.approx(0.5, abs=0.001)
+    assert _eos().midi_in(mcu.fader_out(8, 1.0)) == []   # no OSC grand master
+
+
+def test_eos_fire_stop_and_master_keys():
+    b = _eos()
+    (dn,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    (up,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 0)))
+    assert osc.decode(dn) == osc.Message("/eos/fader/1/1/fire", (1.0,))
+    assert osc.decode(up) == osc.Message("/eos/fader/1/1/fire", (0.0,))
+    (go,) = b.midi_in(bytes((0x90, mcu.PLAY, 127)))
+    assert osc.decode(go).address == "/eos/key/go_0"
+    (stop,) = b.midi_in(bytes((0x90, mcu.STOP, 127)))
+    assert osc.decode(stop).address == "/eos/key/stop"
+
+
+def test_eos_feedback_moves_the_motors():
+    b = _eos()
+    (motor,) = b.osc_in(osc.encode(osc.Message("/eos/out/fader/1/2", (0.4,))))
+    ev = mcu.decode(motor)
+    assert ev.strip == 1 and ev.unit == pytest.approx(0.4, abs=0.01)
+    assert b.osc_in(osc.encode(osc.Message("/eos/out/fader/2/1", (0.4,)))) == []
+
+
+# ---- generic OSC template target --------------------------------------
+
+
+def test_generic_templates_fill_the_strip_number():
+    b = Bridge(config=Config(target="generic", gen_fader="/qlab/cue/{n}/level",
+                             gen_scale="float01"))
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/qlab/cue/1/level"
+    assert msg.args[0] == pytest.approx(0.5, abs=0.001)
+    b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))     # page 2
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    assert osc.decode(d).address == "/qlab/cue/9/level"
+
+
+def test_generic_int_scale_and_buttons_and_unmapped():
+    b = Bridge(config=Config(target="generic", gen_scale="int100",
+                             gen_mute=""))
+    (d,) = b.midi_in(mcu.fader_out(1, 0.5))
+    assert osc.decode(d).args == (50,)
+    (dn,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    assert osc.decode(dn) == osc.Message("/button/1", (1,))
+    assert b.midi_in(bytes((0x90, mcu.MUTE[0], 127))) == []  # unmapped row
+
+
+def test_generic_feedback_on_the_fader_template_moves_motors():
+    b = Bridge(config=Config(target="generic", gen_fader="/fader/{n}"))
+    (motor,) = b.osc_in(osc.encode(osc.Message("/fader/3", (0.25,))))
+    assert mcu.decode(motor).strip == 2
+    assert b.osc_in(osc.encode(osc.Message("/other/3", (0.25,)))) == []
+
+
+# ---- MA3 label plugin feedback ----------------------------------------
+
+
+def test_ma3_lua_plugin_labels_reach_the_strips():
+    b = Bridge()
+    (raw,) = b.osc_in(osc.encode(
+        osc.Message("/lxtool/label/1", ("Front Wash",))))
+    assert raw == mcu.lcd_text(0, 0, "Front Wash")
+    assert b.osc_in(osc.encode(osc.Message("/lxtool/label/9", ("x",)))) == []
+
+
+def test_ma3_plugin_file_ships_and_names_the_contract():
+    from pathlib import Path
+
+    lua = Path(__file__).parent.parent / "data" / "ma3-plugin" / "lxtool_labels.lua"
+    text = lua.read_text(encoding="utf-8")
+    assert "/lxtool/label/" in text
+    assert "SendOSC" in text
+
+
+# ---- presets and OCR endpoints ----------------------------------------
+
+
+def test_preset_export_import_roundtrip(tmp_path, monkeypatch):
+    import asyncio
+    import json as jsonlib
+    from pathlib import Path
+
+    from lxtool.web import app as web
+
+    monkeypatch.setenv("LXTOOL_XTOUCH", str(tmp_path / "xtouch.json"))
+    resp = web.api_xtouch_config_export()
+    exported = jsonlib.loads(Path(resp.path).read_text(encoding="utf-8"))
+    assert exported["target"] == "ma3"
+
+    class FakeUpload:
+        filename = "preset.json"
+
+        async def read(self):
+            return jsonlib.dumps({"target": "generic",
+                                  "gen_fader": "/x/{n}"}).encode()
+
+    d = asyncio.run(web.api_xtouch_config_import(FakeUpload()))
+    assert d["target"] == "generic"
+    from lxtool.xtouch.run import load_stored_config
+    assert load_stored_config().gen_fader == "/x/{n}"
+
+
+def test_ocr_is_honest_about_availability():
+    import sys
+
+    from lxtool import textimage
+
+    ok, detail = textimage.available()
+    if sys.platform not in ("darwin", "win32"):
+        assert not ok
+        assert "phone" in detail
+        with pytest.raises(RuntimeError):
+            textimage.read_text(b"not an image")
+
+
+def test_ocr_endpoint_maps_unavailable_to_409(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from lxtool import textimage
+    from lxtool.web import app as web
+
+    monkeypatch.setattr(textimage, "available",
+                        lambda: (False, "no OCR engine here"))
+
+    class FakeUpload:
+        filename = "chart.png"
+
+        async def read(self):
+            return b"\x89PNG fake"
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(web.api_ocr(FakeUpload()))
+    assert exc.value.status_code == 409
+    assert "no OCR engine" in exc.value.detail
+
+
 # ---- the stored mapping (what the editor UI reads and writes) ---------
 
 

@@ -125,6 +125,18 @@ class MA3Target:
     def feedback(self, msg: osc.Message):
         if not msg.args:
             return []
+        # Real executor names, pushed by the optional MA3 Lua plugin
+        # (data/ma3-plugin/): /lxtool/label/<strip 1-8> "name".
+        parts = msg.address.strip("/").split("/")
+        if (len(parts) == 3 and parts[0] == "lxtool" and parts[1] == "label"
+                and isinstance(msg.args[0], str)):
+            try:
+                strip = int(parts[2])
+            except ValueError:
+                return []
+            if 1 <= strip <= 8:
+                return [LabelFB(strip - 1, 0, msg.args[0])]
+            return []
         leaf = self._leaf_of(msg.address)
         if leaf is None:
             return []
@@ -552,12 +564,176 @@ class CompanionTarget:
         return []      # Companion does not push OSC state
 
 
+class EosTarget:
+    """ETC Eos family over OSC.
+
+    Uses Eos's virtual OSC fader banks: hello() sends
+    /eos/fader/1/config/10 to create bank 1, then the strips ride faders
+    /eos/fader/1/<n> as floats 0.0-1.0. Eos streams positions back on
+    /eos/out/fader/1/<n> (delayed ~3s for faders Eos itself saw us move -
+    an Eos behaviour, not a bug here). SELECT is the fader's Fire button,
+    MUTE is its Stop, PLAY/STOP are the master Go and Stop/Back keys.
+
+    Eos setup: enable OSC RX/TX (Setup > System > Show Control > OSC),
+    UDP RX port matching the bridge's send port (default here 8000), TX
+    port + IP aimed back at the bridge's listen port.
+    """
+
+    name = "eos"
+    default_send_port = 8000
+    pages = 1
+
+    def __init__(self, config):
+        self.config = config
+
+    def fader(self, strip: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(f"/eos/fader/1/{strip + 1}", (float(unit),))]
+
+    def master(self, unit: float) -> list[osc.Message]:
+        return []          # Eos has no OSC grand master; deliberately unmapped
+
+    def button(self, row: str, idx: int, down: bool) -> list[osc.Message]:
+        n = idx + 1
+        if row == "select":
+            return [osc.Message(f"/eos/fader/1/{n}/fire", (1.0 if down else 0.0,))]
+        if row == "mute" and down:
+            return [osc.Message(f"/eos/fader/1/{n}/stop", (1.0,))]
+        return []
+
+    def encoder(self, idx: int, unit: float) -> list[osc.Message]:
+        return []          # Eos encoders are a later, careful project
+
+    def transport(self, key: str, down: bool) -> list[osc.Message]:
+        if key == "play":
+            return [osc.Message("/eos/key/go_0", (1.0 if down else 0.0,))]
+        if key == "stop":
+            return [osc.Message("/eos/key/stop", (1.0 if down else 0.0,))]
+        return []
+
+    def set_page(self, page: int) -> list[osc.Message]:
+        return []
+
+    def hello(self) -> list[osc.Message]:
+        return [osc.Message("/eos/fader/1/config/10")]
+
+    def tick(self, now: float) -> list[osc.Message]:
+        return []
+
+    def strip_labels(self, page: int) -> list[tuple[int, int, str]]:
+        return [(s, ln, txt) for s in range(8)
+                for ln, txt in ((0, f"Fdr {s + 1}"), (1, "Eos"))]
+
+    def feedback(self, msg: osc.Message):
+        parts = msg.address.strip("/").split("/")
+        if (len(parts) == 5 and parts[:3] == ["eos", "out", "fader"]
+                and parts[3] == "1" and msg.args):
+            try:
+                n = int(parts[4])
+            except ValueError:
+                return []
+            unit = _unit_float(msg.args[0])
+            if 1 <= n <= 8 and unit is not None:
+                return [FaderFB(n - 1, unit)]
+        return []
+
+
+class GenericOSCTarget:
+    """Anything that listens to OSC, described by address templates.
+
+    Config supplies templates with a {n} placeholder; {n} is the strip
+    number (1-8) plus 8 per page above the first, so paging works if the
+    receiver numbers things. An empty template leaves that control
+    unmapped. gen_scale picks the fader argument: "float01" (0.0-1.0) or
+    "int100" (0-100). Buttons send 1 on press and 0 on release.
+    Feedback: incoming messages matching gen_fader on a visible strip
+    drive the motors; everything else is ignored.
+    """
+
+    name = "generic"
+    default_send_port = 9001
+    pages = 99
+
+    def __init__(self, config):
+        self.config = config
+
+    def _n(self, strip: int) -> int:
+        return (self.config.page - 1) * 8 + strip + 1
+
+    def _fill(self, template: str, n: int) -> str:
+        return template.replace("{n}", str(n))
+
+    def _level(self, unit: float):
+        if getattr(self.config, "gen_scale", "float01") == "int100":
+            return round(unit * 100)
+        return float(unit)
+
+    def fader(self, strip: int, unit: float) -> list[osc.Message]:
+        t = getattr(self.config, "gen_fader", "")
+        if not t:
+            return []
+        return [osc.Message(self._fill(t, self._n(strip)),
+                            (self._level(unit),))]
+
+    def master(self, unit: float) -> list[osc.Message]:
+        t = getattr(self.config, "gen_master", "")
+        if not t:
+            return []
+        return [osc.Message(t, (self._level(unit),))]
+
+    def button(self, row: str, idx: int, down: bool) -> list[osc.Message]:
+        t = getattr(self.config,
+                    "gen_select" if row == "select" else "gen_mute", "")
+        if not t:
+            return []
+        return [osc.Message(self._fill(t, self._n(idx)),
+                            (1 if down else 0,))]
+
+    def encoder(self, idx: int, unit: float) -> list[osc.Message]:
+        t = getattr(self.config, "gen_encoder", "")
+        if not t:
+            return []
+        return [osc.Message(self._fill(t, self._n(idx)),
+                            (self._level(unit),))]
+
+    def transport(self, key: str, down: bool) -> list[osc.Message]:
+        return []
+
+    def set_page(self, page: int) -> list[osc.Message]:
+        return []
+
+    def hello(self) -> list[osc.Message]:
+        return []
+
+    def tick(self, now: float) -> list[osc.Message]:
+        return []
+
+    def strip_labels(self, page: int) -> list[tuple[int, int, str]]:
+        return [(s, ln, txt) for s in range(8)
+                for ln, txt in ((0, f"#{(page - 1) * 8 + s + 1}"),
+                                (1, "OSC"))]
+
+    def feedback(self, msg: osc.Message):
+        t = getattr(self.config, "gen_fader", "")
+        if not t or "{n}" not in t or not msg.args:
+            return []
+        for strip in range(8):
+            if msg.address == self._fill(t, self._n(strip)):
+                unit = _unit_float(msg.args[0])
+                if unit is not None and getattr(
+                        self.config, "gen_scale", "float01") == "int100":
+                    unit = max(0.0, min(1.0, float(msg.args[0]) / 100.0))
+                return [FaderFB(strip, unit)] if unit is not None else []
+        return []
+
+
 TARGETS = {
     "ma3": MA3Target,
     "x32": X32Target,
     "magicq": MagicQTarget,
     "resolume": ResolumeTarget,
     "companion": CompanionTarget,
+    "eos": EosTarget,
+    "generic": GenericOSCTarget,
 }
 
 

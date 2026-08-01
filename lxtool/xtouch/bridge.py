@@ -47,6 +47,13 @@ class Config:
     cmd_fastfwd: str = ""
     cmd_record: str = ""
     magicq_master_pb: int = 9          # MagicQ: playback for the master fader
+    # Generic OSC target: address templates, {n} = strip number (+8/page).
+    gen_fader: str = "/fader/{n}"
+    gen_master: str = "/master"
+    gen_select: str = "/button/{n}"
+    gen_mute: str = ""
+    gen_encoder: str = ""
+    gen_scale: str = "float01"         # "float01" | "int100"
 
 
 _BUTTON_ROWS = (("select", mcu.SELECT), ("mute", mcu.MUTE))
