@@ -33,7 +33,7 @@ desktop = [
     # Built-in OCR uses the OS engine: Vision on macOS, WinRT on Windows.
     "pyobjc-framework-Vision>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
-    "winsdk>=1.0; sys_platform == 'win32'",
+    "winsdk>=1.0.0b10; sys_platform == 'win32'",
 ]
 dev = [
     "pytest>=8",
