@@ -5,12 +5,14 @@ heard at all, and no two sources agree on what to put in them:
 
 * **Prefix.** The manual says "if a prefix is specified, only OSC messages
   beginning with the specified prefix are processed" - so a wrong prefix
-  is not an error, it is silence. MA's shipped templates use ``gma3``;
-  plenty of rigs clear it.
-* **Value type.** The manual documents an integer 0-100. MA's own Open
-  Stage Control worked example sends a float 0-100. Some builds want the
-  0-1 unit float.
+  is not an error, it is silence. A stock console has none; MA's Open
+  Stage Control walkthrough assumes one of ``gma3``.
+* **Value type.** Faders take "i f, 0 ... 100", so int and float are both
+  documented; the 0-1 unit float is what some templates send anyway.
 * **FaderRange.** Set to 255 instead of 100, the same fader wants 0-255.
+* **Address cells.** The OSC line has editable "Page", "Fader", "Key" and
+  "Encoder" address names, so /Page1/Fader201 only routes if they are
+  still at their defaults; /Fader201 (the selected page) is the fallback.
 
 Guessing costs a show. This walks every combination, one at a time, with
 a pause between, so the console can be watched: whichever step moves the
@@ -28,17 +30,21 @@ from . import osc
 from .bridge import Config
 from .targets import make_target
 
-# Every plausible reading of the documentation, worst-to-best ordered so
-# the most likely dialect (MA's own example) is tried first.
-DIALECTS: tuple[tuple[str, str], ...] = (
-    ("gma3", "float100"),   # MA's Open Stage Control example
-    ("gma3", "int100"),     # the manual's stated type
-    ("", "float100"),       # prefix cleared on the OSC page
-    ("", "int100"),
-    ("gma3", "int255"),     # FaderRange 255
-    ("", "int255"),
-    ("gma3", "float01"),    # 0-1 unit float
-    ("", "float01"),
+# Ordered most-likely first, so a stock console is usually answered in
+# the first step or two. (prefix, value form, address form)
+DIALECTS: tuple[tuple[str, str, str], ...] = (
+    ("", "int100", "page"),        # the manual's own example, stock console
+    ("", "float100", "page"),
+    ("gma3", "int100", "page"),    # MA's Open Stage Control walkthrough
+    ("gma3", "float100", "page"),
+    ("", "int100", "selected"),    # "Page" address cell renamed or cleared
+    ("gma3", "int100", "selected"),
+    ("", "int255", "page"),        # FaderRange moved off 100
+    ("gma3", "int255", "page"),
+    ("", "float01", "page"),       # 0-1 unit float
+    ("gma3", "float01", "page"),
+    ("", "int255", "selected"),
+    ("gma3", "int255", "selected"),
 )
 
 
@@ -49,13 +55,15 @@ class Step:
     index: int
     prefix: str
     value: str
+    addr_form: str = "page"
     address: str = ""
     args: tuple = ()
 
     @property
     def label(self) -> str:
         pfx = f"/{self.prefix}" if self.prefix else "(no prefix)"
-        return f"{self.index + 1}. {pfx} + {self.value}"
+        page = "" if self.addr_form == "page" else " + no /Page"
+        return f"{self.index + 1}. {pfx} + {self.value}{page}"
 
     @property
     def line(self) -> str:
@@ -63,7 +71,8 @@ class Step:
 
     def as_dict(self) -> dict:
         return {"index": self.index, "prefix": self.prefix,
-                "value": self.value, "label": self.label, "sent": self.line}
+                "value": self.value, "addr_form": self.addr_form,
+                "label": self.label, "sent": self.line}
 
 
 @dataclass
@@ -79,16 +88,18 @@ class Ma3Probe:
 
     def __post_init__(self) -> None:
         if not self.steps:
-            self.steps = [self._build(i, p, v)
-                          for i, (p, v) in enumerate(DIALECTS)]
+            self.steps = [self._build(i, *d) for i, d in enumerate(DIALECTS)]
 
-    def _build(self, index: int, prefix: str, value: str) -> Step:
+    def _build(self, index: int, prefix: str, value: str,
+               addr_form: str = "page") -> Step:
         """Ask the real target to format it - the probe must not carry a
         second, drifting copy of the addressing rules."""
         cfg = Config(target="ma3", prefix=prefix, ma3_value=value,
-                     page=self.page, fader_execs=(self.exec_,))
+                     ma3_addr=addr_form, page=self.page,
+                     fader_execs=(self.exec_,))
         out = make_target(cfg).fader(0, self.level)
-        step = Step(index=index, prefix=prefix, value=value)
+        step = Step(index=index, prefix=prefix, value=value,
+                    addr_form=addr_form)
         for m in out:
             if isinstance(m, osc.Message):
                 step.address, step.args = m.address, tuple(m.args)
@@ -99,7 +110,7 @@ class Ma3Probe:
         s = self.steps[index]
         return osc.encode(osc.Message(s.address, s.args))
 
-    def run(self, *, dwell: float = 2.0, on_step=None,
+    def run(self, *, dwell: float = 1.5, on_step=None,
             sock=None, sleep=time.sleep) -> list[Step]:
         """Send each dialect in turn, pausing so a human can watch.
 
@@ -128,4 +139,5 @@ class Ma3Probe:
         step = self.steps[index]
         config.prefix = step.prefix
         config.ma3_value = step.value
+        config.ma3_addr = step.addr_form
         return config

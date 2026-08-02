@@ -160,13 +160,14 @@ def api_probe_apply(index: int = Form(...)) -> dict:
 
     if not 0 <= index < len(DIALECTS):
         raise HTTPException(400, "no such probe step")
-    prefix, value = DIALECTS[index]
+    prefix, value, addr_form = DIALECTS[index]
     # store_config writes exactly what it is given, so the rest of the
     # mapping has to be carried over or the probe would erase it.
     body = api_config()["config"]
-    body.update({"prefix": prefix, "ma3_value": value})
+    body.update({"prefix": prefix, "ma3_value": value, "ma3_addr": addr_form})
     xrun.store_config(body)
-    return {"ok": True, "prefix": prefix, "ma3_value": value}
+    return {"ok": True, "prefix": prefix, "ma3_value": value,
+            "ma3_addr": addr_form}
 
 
 @app.get("/api/config/export")
@@ -283,11 +284,27 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
 </fieldset>
 
 <fieldset id="probebox" style="display:none"><legend>Find MA3 format</legend>
- <p class="note">MA3 silently ignores OSC whose prefix does not match its
- OSC page, so a wrong setting looks exactly like a dead bridge. Put a
- fader on an executor, watch it, and press Sweep: each step below goes out
- two seconds apart. Whichever one moves the fader is your format - click
- Keep on that row.</p>
+ <p class="note"><b>On the console first</b> (Menu &rarr; In &amp; Out &rarr;
+ OSC). Every one of these fails silently, and they all look identical
+ from here:</p>
+ <ol class="note">
+  <li><b>Enable Input</b> is on.</li>
+  <li><b>Receive</b> is <b>Yes</b> on the OSC line &mdash; it is not on by
+   default, and it is separate from Enable Input.</li>
+  <li><b>Receive Command</b> is <b>Yes</b> too, if you want the master
+   fader and the transport keys (they use <code>/cmd</code>).</li>
+  <li><b>Port</b> matches the <i>send</i> port above &mdash; 8000 by
+   default. One OSC line uses the same port to send and receive, so if
+   you want feedback as well, add a second line on the listen port.</li>
+  <li>Something is actually <b>assigned to the executor</b> you are
+   watching. A perfectly delivered message to an empty executor does
+   nothing at all.</li>
+ </ol>
+ <p class="note">Then: MA3 processes only OSC whose prefix matches the OSC
+ line's, and the "Page"/"Fader" address cells are editable too, so a wrong
+ setting looks exactly like a dead bridge. Watch your executor and press
+ Sweep &mdash; each step goes out 1.5s apart. Whichever one moves the
+ fader is your format; click Keep on that row.</p>
  <div class="row">
   <label>page</label><input type="number" id="pbpage" value="1" style="width:4rem">
   <label>exec</label><input type="number" id="pbexec" value="201" style="width:5rem">
@@ -379,7 +396,8 @@ async function probeKeep(i) {
   try {
     const d = await (await post('/api/probe/apply', fd)).json();
     $('probeout').innerHTML = `saved: prefix <b>${esc(d.prefix || '(none)')}</b>, ` +
-      `values <b>${esc(d.ma3_value)}</b>. Restart the bridge to use it.`;
+      `values <b>${esc(d.ma3_value)}</b>, address <b>${esc(d.ma3_addr)}</b>. ` +
+      'Restart the bridge to use it.';
     loadCfg();
   } catch (e) { $('probeout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }

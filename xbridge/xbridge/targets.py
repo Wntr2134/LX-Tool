@@ -59,15 +59,16 @@ class MA3Target:
 
     def __init__(self, config):
         self.config = config
+        self._enc_pos: dict = {}
 
     def _level(self, unit: float):
         """MA3's fader argument.
 
-        The manual documents int 0-100, but MA's own Open Stage Control
-        example sends float 0-100, and the OSC line's FaderRange cell can
-        move the top of the scale to 255. Which one a given console wants
-        is not knowable from here, so all four are selectable and the
-        probe (xbridge probe / "Find MA3 format") tries them in turn.
+        The Advanced Examples table gives faders the type tags "i f" over
+        0...100, so int and float are both accepted; the OSC line's
+        FaderRange cell can move the top of the scale to 255. Which one a
+        given console wants is not knowable from here, so all four are
+        selectable and the probe ("Find MA3 format") tries them in turn.
         """
         form = getattr(self.config, "ma3_value", "float100")
         if form == "int100":
@@ -107,8 +108,19 @@ class MA3Target:
         cfg = self.config
         if idx >= len(cfg.encoder_execs):
             return []
-        return [osc.Message(self._addr(f"Fader{cfg.encoder_execs[idx]}"),
-                            (self._level(unit),))]
+        if getattr(cfg, "ma3_encoder", "encoder") == "fader":
+            return [osc.Message(self._addr(f"Fader{cfg.encoder_execs[idx]}"),
+                                (self._level(unit),))]
+        # The documented path: /Encoder<x> takes a relative step in
+        # percent, so send the delta since the last position rather than
+        # the absolute level.
+        prev = self._enc_pos.get(idx, 0.0)
+        self._enc_pos[idx] = unit
+        step = round((unit - prev) * 100)
+        if not step:
+            return []
+        return [osc.Message(self._addr(f"Encoder{cfg.encoder_execs[idx]}"),
+                            (step,))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         cmd = {"play": self.config.cmd_play, "stop": self.config.cmd_stop,
@@ -155,6 +167,9 @@ class MA3Target:
             if 1 <= strip <= 8:
                 return [LabelFB(strip - 1, 0, msg.args[0])]
             return []
+        enumerated = self._playback_feedback(msg)
+        if enumerated is not None:
+            return enumerated
         leaf = self._leaf_of(msg.address)
         if leaf is None:
             return []
@@ -186,11 +201,56 @@ class MA3Target:
                                  unit > 0)]
         return []
 
+    def _playback_feedback(self, msg: osc.Message):
+        """MA3's *output* format, which is nothing like its input format.
+
+        Moving a fader on the console does not echo /Page1/Fader201 back.
+        Per "Object Playback Feedback", MA3 sends the object's enumerated
+        address with an ``sif`` payload::
+
+            /13.13.1.6.1 ,sif, "FaderMaster", 3, 63.5    (a sequence)
+            /13.12.3.1   ,sif, "FaderMaster", 3, 63.5    (a master)
+
+        The leading number is a pool index, not an executor number, so it
+        can only be tied to a strip by a table the user supplies
+        (``ma3_feedback``: {"13.13.1.6.1": 1} = that object drives strip
+        1). Without one there is nothing to map it to - but the message
+        is still recognised, so the sniffer can show what to put in the
+        table. Returns None when this is not a playback feedback message.
+        """
+        addr = msg.address.lstrip("/")
+        prefix = self.config.prefix
+        if prefix and addr.startswith(prefix + "/"):
+            addr = addr[len(prefix) + 1:]
+        if not addr or not all(p.isdigit() for p in addr.split(".")):
+            return None
+        if len(msg.args) < 2 or not isinstance(msg.args[0], str):
+            return None
+        level = next((a for a in reversed(msg.args)
+                      if isinstance(a, (int, float))
+                      and not isinstance(a, bool)), None)
+        if level is None:
+            return None
+        table = getattr(self.config, "ma3_feedback", {}) or {}
+        strip = table.get(addr)
+        if strip is None:
+            return []
+        func = msg.args[0].lower()
+        idx = int(strip) - 1
+        if "fader" in func or "master" in func:
+            unit = _unit_percent(level)
+            return [] if unit is None else [FaderFB(idx, unit)]
+        return [ButtonFB("select", idx, float(level) > 0)]
+
     # -- helpers -----------------------------------------------------------
 
     def _addr(self, leaf: str) -> str:
         cfg = self.config
         p = f"/{cfg.prefix}" if cfg.prefix else ""
+        if getattr(cfg, "ma3_addr", "page") == "selected":
+            # /Fader201 - MA3 applies it to the selected page. The escape
+            # hatch when the OSC line's "Page" address cell is renamed.
+            return f"{p}/{leaf}"
         return f"{p}/Page{cfg.page}/{leaf}"
 
     def _cmd_addr(self) -> str:

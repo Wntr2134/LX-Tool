@@ -100,17 +100,23 @@ If nothing moves: wrong mode (redo step 1) or a USB/driver issue.
 
 Menu → **In & Out → OSC** → add a line:
 
+First turn on **Enable Input** at the top of the menu (and **Enable
+Output** as well if you want feedback). Then add a line:
+
 | Setting | Value |
 |---|---|
 | Destination IP | `127.0.0.1` (same PC) or the bridge PC's IP |
-| Port (send) | **9000** |
-| Port (receive) | **8000** |
-| Send | **On** |
-| Receive | **On** |
-| Prefix | leave empty |
-| Feedback filter | enable **executor** feedback |
+| Port | **8000** — one cell, used for *both* directions on this line |
+| Receive | **Yes** — not on by default, and separate from Enable Input |
+| Receive Command | **Yes** — needed for the master fader and transport keys, which use `/cmd` |
+| Send | **Yes** if you want feedback |
+| Prefix | leave empty (the bridge's default matches) |
 | Page / Fader / Key address words | leave at their defaults ("Page", "Fader", "Key") — the bridge speaks `/Page1/Fader201`, int 0–100, exactly per the MA3 manual |
 | FaderRange | leave at the default **100** (255 would scale every level down) |
+
+Because one line's Port serves both directions, a single line on 8000
+cannot also send to the bridge's listen port (9000). For the return leg,
+add a **second line** with Port 9000 and Send = Yes.
 
 ## Step 4 — Run the bridge
 
@@ -312,12 +318,14 @@ The surface connecting (LEDs light, strips show text) only proves the
   the console can be proved on its own.
 - **Find MA3 format** is the shortcut when *sent* climbs and the desk
   ignores it. MA3 processes only messages that begin with the prefix on
-  its OSC page - a mismatch is discarded in silence, which looks exactly
-  like a dead bridge. The sweep sends all eight combinations of prefix
-  (`gma3` / none) and value type (int 0-100, float 0-100, float 0-1,
-  int 0-255) two seconds apart. Watch your executor: whichever step moves
-  it is your format, and **Keep** writes it into the mapping. Same thing
-  from a terminal: `xbridge probe --exec 201`.
+  its OSC page, and the "Page"/"Fader" address cells on that line are
+  editable too - any mismatch is discarded in silence, which looks
+  exactly like a dead bridge. The sweep walks twelve combinations of
+  prefix (none / `gma3`), value type (int 0-100, float 0-100, float 0-1,
+  int 0-255) and address shape (`/Page1/Fader201` or `/Fader201`), 1.5s
+  apart. Watch your executor: whichever step moves it is your format, and
+  **Keep** writes it into the mapping. From a terminal:
+  `xbridge probe --exec 201`.
 
 Then check, in this order:
 
@@ -332,7 +340,22 @@ Then check, in this order:
    console's "output/destination" port must be the bridge's listen port.
 3. **Destination IP.** On the same PC use `127.0.0.1`. MA3 must be
    sending to, and receiving on, an interface that actually carries it.
-4. **Prefix and value type.** These ship as MA's own documented pair -
-   prefix `gma3`, float 0-100, which is what MA's Open Stage Control
-   example sends. If your OSC page says something else, don't guess:
-   run **Find MA3 format** above.
+4. **Console-side switches.** All of these fail silently and look
+   identical from the bridge: **Enable Input** off; **Receive** not set
+   to Yes on the OSC line (it is not on by default); **Receive Command**
+   not set to Yes, which alone kills the master fader and transport keys
+   because those use `/cmd`.
+5. **Prefix, value type and address shape.** These ship matching a stock
+   console - no prefix, int 0-100, `/Page1/Fader201`, which is the
+   manual's own example. MA's Open Stage Control walkthrough instead
+   assumes you have set the prefix to `gma3`. If your OSC page differs,
+   don't guess: run **Find MA3 format**.
+6. **Feedback needs its own OSC line.** One line uses the same port to
+   send and receive, so a single line on 8000 cannot also send to the
+   bridge's listen port. Add a second line for the return leg.
+7. **Motor faders need a feedback map.** MA3 does not echo
+   `/Page1/Fader201` back; playback feedback arrives addressed by pool
+   index, e.g. `/13.13.1.6.1,sif,"FaderMaster",3,63.5`. Only you know
+   which object is on which strip, so set `ma3_feedback` in the mapping:
+   `{"13.13.1.6.1": 1}` drives strip 1. Run `xbridge sniff` with Send and
+   EchoOutput enabled on the console to see the addresses to use.

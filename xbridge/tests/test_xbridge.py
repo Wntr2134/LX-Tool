@@ -16,10 +16,9 @@ from xbridge.run import default_config_json, find_xtouch_port, load_config
 def _cfg(**kw) -> Config:
     """Config with the address shape the mapping tests assert.
 
-    The shipped defaults follow MA's documentation (prefix "gma3", float
-    levels); these tests are about the mapping, so they pin the plain
-    shape and let test_shipped_defaults_follow_ma_documentation own the
-    defaults.
+    These tests are about the mapping, so they pin the address shape
+    explicitly rather than inheriting it, and let
+    test_shipped_defaults_match_a_stock_console own the defaults.
     """
     kw.setdefault("prefix", "")
     kw.setdefault("ma3_value", "int100")
@@ -1052,9 +1051,7 @@ def test_test_send_reports_the_exact_message(monkeypatch):
 
     r = xrun.Runner(log=lambda *a: None)
     line = r.test_send(strip=0, level=0.5)
-    # The shipped defaults are MA's documented ones: prefixed, float 0-100.
-    assert line.startswith("/gma3/Page1/Fader201 ")
-    assert abs(float(line.rsplit(" ", 1)[1]) - 50.0) < 0.01
+    assert line == "/Page1/Fader201 50"
     assert r.counters["sent"] == 1
 
 
@@ -1074,16 +1071,18 @@ def test_every_ma3_fader_value_form_is_available(form, check):
     assert check(value), f"{form} produced {value!r}"
 
 
-def test_shipped_defaults_follow_ma_documentation():
-    """MA drops any message not starting with the OSC line's prefix, and
-    MA's templates and examples use "gma3" with float 0-100. Defaulting
-    to no prefix made every message silently disappear."""
+def test_shipped_defaults_match_a_stock_console():
+    """A stock MA3 OSC line has an EMPTY prefix - the manual's receive
+    example says so outright ("no prefix is defined") - and its canonical
+    input example is "/Page1/Fader201,i,100". The shipped defaults have
+    to match that, because it is the only configuration a user gets
+    without editing the console first."""
     (d,) = Bridge().midi_in(mcu.fader_out(0, 1.0))
     msg = osc.decode(d)
-    assert msg.address == "/gma3/Page1/Fader201"
+    assert msg.address == "/Page1/Fader201"
     (value,) = msg.args
-    assert isinstance(value, float)
-    assert value == pytest.approx(100.0, abs=0.01)
+    assert isinstance(value, int) and not isinstance(value, bool)
+    assert value == 100
 
 
 # ---- the MA3 format probe ---------------------------------------------
@@ -1094,11 +1093,14 @@ def test_probe_covers_every_documented_dialect():
     probe can tell a user "none of these worked" when one would have."""
     from xbridge.probe import DIALECTS, Ma3Probe
 
-    assert len(DIALECTS) == 8
-    assert len(set(DIALECTS)) == 8
-    assert {v for _, v in DIALECTS} == {"int100", "float100", "float01",
-                                        "int255"}
-    assert {p for p, _ in DIALECTS} == {"", "gma3"}
+    assert len(set(DIALECTS)) == len(DIALECTS), "a step is duplicated"
+    assert {v for _, v, _ in DIALECTS} == {"int100", "float100", "float01",
+                                           "int255"}
+    assert {p for p, _, _ in DIALECTS} == {"", "gma3"}
+    assert {a for _, _, a in DIALECTS} == {"page", "selected"}
+    # The first step must be the stock console, so the common case is
+    # answered before anyone stops watching.
+    assert DIALECTS[0] == ("", "int100", "page")
     assert all(s.address for s in Ma3Probe().steps)
 
 
@@ -1106,8 +1108,11 @@ def test_probe_addresses_the_executor_it_was_asked_about():
     from xbridge.probe import Ma3Probe
 
     p = Ma3Probe(page=3, exec_=205)
-    assert p.steps[0].address == "/gma3/Page3/Fader205"
-    assert p.steps[2].address == "/Page3/Fader205"
+    by_addr = {s.address for s in p.steps}
+    assert "/Page3/Fader205" in by_addr          # stock
+    assert "/gma3/Page3/Fader205" in by_addr     # prefixed
+    assert "/Fader205" in by_addr                # selected page
+    assert "/gma3/Fader205" in by_addr
 
 
 def test_probe_sends_each_step_once_and_pauses_between():
@@ -1127,8 +1132,8 @@ def test_probe_sends_each_step_once_and_pauses_between():
     assert len(sent) == len(p.steps)
     assert all(addr == ("10.0.0.5", 8001) for _, addr in sent)
     assert slept == [1.5] * len(p.steps)
-    forms = {(m.address.startswith("/gma3"), type(m.args[0]).__name__,
-              round(float(m.args[0]), 3)) for m, _ in sent}
+    forms = {(m.address, type(m.args[0]).__name__, round(float(m.args[0]), 3))
+             for m, _ in sent}
     assert len(forms) == len(p.steps), "two steps put the same bytes on the wire"
 
 
@@ -1136,9 +1141,10 @@ def test_probe_answer_can_be_kept():
     from xbridge.probe import DIALECTS, Ma3Probe
 
     p = Ma3Probe()
-    for i, (prefix, value) in enumerate(DIALECTS):
+    for i, (prefix, value, addr_form) in enumerate(DIALECTS):
         cfg = p.apply(Config(), i)
-        assert (cfg.prefix, cfg.ma3_value) == (prefix, value)
+        assert (cfg.prefix, cfg.ma3_value, cfg.ma3_addr) == (prefix, value,
+                                                             addr_form)
 
 
 def test_probe_apply_keeps_the_rest_of_the_mapping(tmp_path, monkeypatch):
@@ -1152,9 +1158,116 @@ def test_probe_apply_keeps_the_rest_of_the_mapping(tmp_path, monkeypatch):
     xrun.store_config({"target": "ma3", "prefix": "wrong",
                        "ma3_value": "int255", "fader_execs": [401, 402]})
 
-    out = xapp.api_probe_apply(index=1)          # gma3 + int100
+    idx = 2                                     # gma3 + int100 + page
+    out = xapp.api_probe_apply(index=idx)
 
     assert (out["prefix"], out["ma3_value"]) == ("gma3", "int100")
     kept = xrun.load_stored_config()
     assert kept.fader_execs == (401, 402)
     assert (kept.prefix, kept.ma3_value) == ("gma3", "int100")
+
+
+# ---- MA3's real output format ------------------------------------------
+
+
+def test_ma3_playback_feedback_is_not_the_input_format():
+    """The bug this covers: MA3 does NOT echo /Page1/Fader201 back.
+
+    Per "Object Playback Feedback", moving a fader on the console emits
+    the object's enumerated address with an sif payload -
+    /13.13.1.6.1,sif,"FaderMaster",3,63.5 - so a bridge that only listens
+    for its own input format has a permanently dead return leg, and the
+    motor faders never track the desk.
+    """
+    b = _plain(ma3_feedback={"13.13.1.6.1": 1})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.13.1.6.1", ("FaderMaster", 3, 63.5))))
+    assert raw, "MA3's documented feedback format was ignored"
+    ev = mcu.decode(raw[0])
+    assert isinstance(ev, mcu.FaderMoved)
+    assert ev.strip == 0
+    assert ev.unit == pytest.approx(0.635, abs=0.01)
+
+
+def test_master_playback_feedback_uses_the_same_shape():
+    """Masters report as /13.12.X.Y with the same sif payload."""
+    b = _plain(ma3_feedback={"13.12.3.1": 4})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.12.3.1", ("FaderMaster", 3, 100.0))))
+    ev = mcu.decode(raw[0])
+    assert ev.strip == 3 and ev.unit == pytest.approx(1.0, abs=0.01)
+
+
+def test_key_playback_feedback_lights_the_button():
+    b = _plain(ma3_feedback={"13.13.1.6.1": 1})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.13.1.6.1", ("Flash", 1, "Strobe 1 Cue 1"))))
+    assert raw == [mcu.button_led(mcu.SELECT[0], True)]
+
+
+def test_unmapped_playback_feedback_is_quietly_dropped():
+    """Without a table entry there is nothing to move - but it must not
+    be mistaken for a fader address either."""
+    b = _plain()
+    assert b.osc_in(osc.encode(osc.Message(
+        "/13.13.1.6.9", ("FaderMaster", 3, 50.0)))) == []
+
+
+def test_playback_feedback_survives_a_prefix():
+    b = _plain(prefix="gma3", ma3_feedback={"13.13.1.6.1": 1})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/gma3/13.13.1.6.1", ("FaderMaster", 3, 50.0))))
+    assert raw and isinstance(mcu.decode(raw[0]), mcu.FaderMoved)
+
+
+def test_documented_encoder_mode_sends_a_relative_step():
+    """MA3's /Encoder<x> takes a RELATIVE -100..100 percentage, not a
+    level. Sending an absolute value there would jump the executor."""
+    b = _plain(ma3_encoder="encoder")
+    (d,) = b.midi_in(bytes((0xB0, 16, 1)))        # one tick right
+    msg = osc.decode(d)
+    assert msg.address == "/Page1/Encoder301"
+    assert msg.args == (2,)                       # +2%, the step size
+    (d,) = b.midi_in(bytes((0xB0, 16, 65)))       # one tick left
+    assert osc.decode(d).args == (-2,)
+
+
+def test_selected_page_address_form_drops_the_page_segment():
+    """The escape hatch for an OSC line whose "Page" address cell has
+    been renamed: /Fader201 applies to the selected page."""
+    b = _plain(ma3_addr="selected", page=4)
+    (d,) = b.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).address == "/Fader201"
+    b2 = _plain(ma3_addr="selected", prefix="gma3")
+    (d,) = b2.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).address == "/gma3/Fader201"
+
+
+def test_command_line_address_is_documented_shape():
+    """MA3 takes command line syntax on /cmd with a string - and that
+    needs "Receive Command" enabled, separately from "Receive"."""
+    b = _plain()
+    (d,) = b.midi_in(mcu.fader_out(8, 1.0))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert isinstance(msg.args[0], str)
+    b2 = _plain(prefix="gma3")
+    (d,) = b2.midi_in(mcu.fader_out(8, 1.0))
+    assert osc.decode(d).address == "/gma3/cmd"
+
+
+def test_nothing_we_send_is_an_osc_bundle():
+    """MA3: "OSC Bundle messages are currently not supported." A bundle
+    would be dropped whole, silently."""
+    from xbridge.probe import Ma3Probe
+    from xbridge.targets import TARGETS, make_target
+
+    out = [Ma3Probe().datagram(i) for i in range(len(Ma3Probe().steps))]
+    b = _plain()
+    out += b.hello()
+    out += b.midi_in(mcu.fader_out(0, 0.5))
+    out += b.midi_in(mcu.fader_out(8, 0.5))
+    out += b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    for d in out:
+        if isinstance(d, bytes) and d.startswith(b"/") or isinstance(d, bytes):
+            assert not d.startswith(b"#bundle"), d[:24]

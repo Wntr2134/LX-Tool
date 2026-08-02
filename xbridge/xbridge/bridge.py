@@ -32,9 +32,13 @@ class Config:
 
     target: str = "ma3"     # ma3 | x32 | magicq | resolume | companion
     # MA3 drops any message that does not start with the OSC line's
-    # prefix, and MA's templates ship with "gma3" - a mismatch here is
-    # silent, and looks exactly like "the bridge is not sending".
-    prefix: str = "gma3"
+    # prefix, and does it silently - a mismatch here looks exactly like
+    # "the bridge is not sending". The console's own default is an EMPTY
+    # prefix (the manual's receive example notes "no prefix is defined");
+    # "gma3" appears only in MA's Open Stage Control walkthrough, which
+    # says it "assumes the OSCData line has a prefix of gma3 configured".
+    # So empty matches a stock console, and the probe finds the rest.
+    prefix: str = ""
     page: int = 1
     fader_execs: tuple = tuple(range(201, 209))   # strips 1-8 (MA3)
     master_exec: int = 0               # 0 = grand master via /cmd (MA3)
@@ -61,13 +65,27 @@ class Config:
     ma2_user: str = "remote"
     ma2_password: str = "remote"
     ma2_master_cmd: str = "SpecialMaster 2.1 At {pct}"
-    # MA3 fader argument type. The manual documents int 0-100
-    # ("/Page1/Fader201,i,100"); some versions/configs want a float, so
-    # this is switchable rather than a guess baked into the code.
-    # MA's own worked example sends float 0-100 to /gma3/Page1/Fader230,
-    # so those are the defaults. A console whose OSC line has an empty
-    # prefix needs prefix "" here - the probe finds out which.
-    ma3_value: str = "float100"   # float100 | int100 | float01 | int255
+    # MA3 fader argument type. The Advanced Examples table gives faders
+    # type tags "i f, 0 ... 100", so int and float are equally valid and
+    # the canonical example is "/Page1/Fader201,i,100". int255 is for an
+    # OSC line whose FaderRange cell has been moved off 100.
+    ma3_value: str = "int100"     # int100 | float100 | float01 | int255
+    # Address shape. "page" = /Page<n>/Fader<x>, which names the page
+    # explicitly. "selected" = /Fader<x>, which MA3 applies to whichever
+    # page is currently selected - the fallback when the OSC line's
+    # "Page" address cell has been renamed or cleared.
+    ma3_addr: str = "page"        # page | selected
+    # Encoders. "fader" drives an executor fader absolutely, which suits
+    # an absolute control like the MPK's knobs and is the default. MA3
+    # also documents /Encoder<x> taking a RELATIVE -100..100 step, which
+    # is its native mini-encoder path - better for the X-Touch's endless
+    # encoders, and what to pick if 301-308 have no fader function.
+    ma3_encoder: str = "fader"    # fader | encoder
+    # MA3's playback feedback arrives addressed by pool index, not by
+    # executor: /13.13.1.6.1 ,sif, "FaderMaster",3,63.5. Only the user
+    # knows which object sits on which strip, so map them here:
+    # {"13.13.1.6.1": 1} drives strip 1's motor from that object.
+    ma3_feedback: dict = field(default_factory=dict)
     # Which hardware is in your hands, and the MPK's factory MIDI numbers.
     surface: str = "xtouch"            # "xtouch" | "mpk"
     mpk_knob_ccs: tuple = tuple(range(70, 78))
