@@ -98,25 +98,60 @@ If nothing moves: wrong mode (redo step 1) or a USB/driver issue.
 
 ## Step 3 — Set up grandMA3 onPC
 
-Menu → **In & Out → OSC** → add a line:
+Menu → **In & Out → OSC**.
 
-First turn on **Enable Input** at the top of the menu (and **Enable
-Output** as well if you want feedback). Then add a line:
+MA3's OSC menu has **one Port cell per line, used for both sending and
+receiving** — the manual: *"the port configuration is used for sending and
+receiving OSC data"*, with the hint that *"if you want to use different
+ports for sending and receiving, you can create multiple configuration
+lines"*. Identical in 2.1, 2.2 and 2.3. So if you went looking for a send
+port and a receive port, you were looking for something that isn't there:
+a round trip takes **two lines**.
 
-| Setting | Value |
+The app writes both of them out with your actual ports filled in —
+**Console setup…** in the panel, or:
+
+```
+xbridge ma3-setup                       # same PC, defaults
+xbridge ma3-setup --bridge-ip 10.0.0.4  # bridge on another machine
+```
+
+First, at the top of the menu (neither is on by default):
+
+| Toggle | Set to |
 |---|---|
-| Destination IP | `127.0.0.1` (same PC) or the bridge PC's IP |
-| Port | **8000** — one cell, used for *both* directions on this line |
-| Receive | **Yes** — not on by default, and separate from Enable Input |
-| Receive Command | **Yes** — needed for the master fader and transport keys, which use `/cmd` |
-| Send | **Yes** if you want feedback |
-| Prefix | leave empty (the bridge's default matches) |
-| Page / Fader / Key address words | leave at their defaults ("Page", "Fader", "Key") — the bridge speaks `/Page1/Fader201`, int 0–100, exactly per the MA3 manual |
-| FaderRange | leave at the default **100** (255 would scale every level down) |
+| Enable Input | **On** — nothing is received until it is |
+| Enable Output | **On**, only if you want feedback |
 
-Because one line's Port serves both directions, a single line on 8000
-cannot also send to the bridge's listen port (9000). For the return leg,
-add a **second line** with Port 9000 and Send = Yes.
+**Line 1 — the console listens on 8000.** This is the one that makes
+faders work.
+
+| Cell | Value | Why |
+|---|---|---|
+| Mode | **UDP** | the bridge speaks UDP |
+| Port | **8000** | must equal the bridge's send port |
+| Prefix | **empty** | must match the bridge exactly; a mismatch is discarded in silence |
+| Receive | **Yes** | not on by default, and separate from Enable Input |
+| Receive Command | **Yes** | separate again — the master fader and transport keys use `/cmd` and are dead without it |
+| Send | No | line 2 does the sending |
+| Page / Fader / Key | defaults | the bridge speaks `/Page1/Fader201` |
+| FaderRange | **100** | 255 makes every level read low |
+| EchoInput | Yes while testing | shows arriving messages in the System Monitor |
+
+**Line 2 — the console sends to 9000.** Only needed for feedback.
+
+| Cell | Value | Why |
+|---|---|---|
+| Port | **9000** | must equal the bridge's listen port |
+| Destination IP | the bridge's machine | `127.0.0.1` on one PC |
+| Send | **Yes** | this is the sending line |
+| Receive | **No** | with Receive on, MA3 also *binds* 9000 — on one PC it fights the bridge for it |
+| EchoOutput | Yes while testing | shows what the console emits |
+
+The quickest proof that line 1 is right: turn on EchoInput, open **Add
+Window → More → System Monitor**, and move a fader. If nothing appears
+there, the message is not reaching MA3 at all and no bridge setting will
+help — it's Enable Input, Receive, the port, or the IP.
 
 ## Step 4 — Run the bridge
 

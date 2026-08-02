@@ -1271,3 +1271,79 @@ def test_nothing_we_send_is_an_osc_bundle():
     for d in out:
         if isinstance(d, bytes) and d.startswith(b"/") or isinstance(d, bytes):
             assert not d.startswith(b"#bundle"), d[:24]
+
+
+# ---- console-side setup ------------------------------------------------
+
+
+def test_setup_needs_two_lines_because_one_port_serves_both_directions():
+    """MA3's OSC line has a single Port cell - "the port configuration is
+    used for sending and receiving OSC data". So when the bridge sends to
+    one port and listens on another, one line cannot do both, and looking
+    for a send port and a receive port in the menu finds neither."""
+    from xbridge import ma3setup
+
+    lines = ma3setup.lines(send_port=8000, recv_port=9000)
+    assert len(lines) == 2
+    ports = [c[1] for ln in lines for c in ln.cells if c[0] == "Port"]
+    assert ports == ["8000", "9000"]
+
+
+def test_setup_collapses_to_one_line_when_no_feedback_is_wanted():
+    from xbridge import ma3setup
+
+    assert len(ma3setup.lines(send_port=8000, recv_port=0)) == 1
+
+
+def test_setup_spells_out_the_switches_that_fail_silently():
+    """Receive, Receive Command and Enable Input are three separate
+    toggles, all off by default, each of which alone makes a correct
+    bridge look dead."""
+    from xbridge import ma3setup
+
+    first = ma3setup.lines()[0]
+    cells = {c[0]: c[1] for c in first.cells}
+    assert cells["Receive"] == "Yes"
+    assert cells["Receive Command"] == "Yes"
+    assert cells["Mode"] == "UDP"
+    assert cells["FaderRange"] == "100"
+    assert any("Enable Input" == n for n, _, _ in ma3setup.GLOBAL_TOGGLES)
+
+
+def test_the_sending_line_does_not_also_bind_the_bridges_port():
+    """On one PC, a console line with Receive = Yes on the bridge's
+    listen port fights the bridge for that port."""
+    from xbridge import ma3setup
+
+    out = ma3setup.lines(send_port=8000, recv_port=9000)[1]
+    cells = {c[0]: c[1] for c in out.cells}
+    assert cells["Send"] == "Yes"
+    assert cells["Receive"] == "No"
+    assert any("same PC" in w for w in ma3setup.warnings())
+
+
+def test_setup_warns_when_both_ports_are_the_same():
+    from xbridge import ma3setup
+
+    warn = ma3setup.warnings(send_port=8000, recv_port=8000)
+    assert any("8000" in w for w in warn)
+
+
+def test_setup_carries_the_prefix_through_to_both_lines():
+    """A prefix set in the mapping and not on the console is the silent
+    failure this whole guide exists to prevent."""
+    from xbridge import ma3setup
+
+    for ln in ma3setup.lines(prefix="gma3"):
+        assert any(c[0] == "Prefix" and c[1] == "gma3" for c in ln.cells)
+
+
+def test_setup_endpoint_reflects_the_ports_it_is_given():
+    from xbridge import app as xapp
+
+    d = xapp.api_ma3_setup(host="10.0.0.9", send_port=8010, recv_port=9010,
+                           bridge_ip="10.0.0.4")
+    body = str(d)
+    assert "8010" in body and "9010" in body and "10.0.0.4" in body
+    assert d["warnings"] == []          # different machines: no port fight
+    assert "13.13.1.6.1" in d["feedback"]

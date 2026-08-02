@@ -222,8 +222,12 @@ class Runner:
             sock.bind(("0.0.0.0", self.recv_port))
         except OSError as exc:
             self.state, self.detail = "error", (
-                f"cannot listen on UDP {self.recv_port}: {exc} "
-                "(is another bridge already running?)")
+                f"cannot listen on UDP {self.recv_port}: {exc} - another "
+                "bridge may already be running, or the console is holding "
+                f"the port. On MA3, an OSC line with Receive = Yes binds "
+                f"its Port, so a line on {self.recv_port} takes it. Set "
+                "that line's Receive to No (it only needs Send), or give "
+                "the bridge a different listen port.")
             self._log(self.detail)
             return 1
         sock.setblocking(False)

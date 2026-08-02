@@ -39,6 +39,16 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("ports", help="list the MIDI ports this machine can see")
 
+    ms = sub.add_parser("ma3-setup",
+                        help="print the OSC lines to create on the console")
+    ms.add_argument("--host", default="127.0.0.1")
+    ms.add_argument("--send-port", type=int, default=8000)
+    ms.add_argument("--recv-port", type=int, default=9000)
+    ms.add_argument("--prefix", default="")
+    ms.add_argument("--bridge-ip", default="127.0.0.1",
+                    help="the machine running the bridge, as the console "
+                         "should address it")
+
     pb = sub.add_parser("probe", help="find the OSC format your MA3 wants")
     pb.add_argument("--host", default="127.0.0.1")
     pb.add_argument("--port", type=int, default=8000)
@@ -90,6 +100,34 @@ def main(argv: list[str] | None = None) -> int:
                 pair = (xrun.find_surface_port(outs, name)
                         or xrun._matching_port(found, outs))
                 print(f"\n{name}: in={found!r} out={pair or 'NONE'!r}")
+        return 0
+
+    if args.action == "ma3-setup":
+        from . import ma3setup
+
+        print("grandMA3: Menu - In & Out - OSC\n")
+        print("An OSC line has ONE Port cell, used for both directions.")
+        print("There is no separate send and receive port - which is why a")
+        print("round trip needs two lines.\n")
+        print("Top of the menu:")
+        for name, value, note in ma3setup.GLOBAL_TOGGLES:
+            print(f"  {name:<20} {value}")
+            if note:
+                print(f"  {'':<20} ({note})")
+        for ln in ma3setup.lines(host=args.host, send_port=args.send_port,
+                                 recv_port=args.recv_port,
+                                 prefix=args.prefix,
+                                 bridge_ip=args.bridge_ip):
+            print(f"\n{ln.title}\n  {ln.why}")
+            for name, value, note in ln.cells:
+                print(f"  {name:<20} {value}")
+                if note:
+                    print(f"  {'':<20} ({note})")
+        warn = ma3setup.warnings(host=args.host, send_port=args.send_port,
+                                 recv_port=args.recv_port)
+        for w in warn:
+            print(f"\nWatch out: {w}")
+        print(f"\n{ma3setup.feedback_note()}")
         return 0
 
     if args.action == "probe":

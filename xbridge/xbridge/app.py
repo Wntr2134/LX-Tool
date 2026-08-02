@@ -170,6 +170,31 @@ def api_probe_apply(index: int = Form(...)) -> dict:
             "ma3_addr": addr_form}
 
 
+@app.get("/api/ma3-setup")
+def api_ma3_setup(host: str = "127.0.0.1", send_port: int = 8000,
+                  recv_port: int = 9000, prefix: str = "",
+                  bridge_ip: str = "127.0.0.1") -> dict:
+    """The console-side OSC lines to create, with these ports filled in.
+
+    An MA3 OSC line has a single Port cell used for both directions, so
+    "which box is the send port" has no answer - it takes two lines. That
+    trips up everyone, so the app spells out the rows rather than
+    describing the rule.
+    """
+    from . import ma3setup
+
+    kw = dict(host=host, send_port=send_port, recv_port=recv_port)
+    return {
+        "toggles": [{"name": n, "value": v, "note": note}
+                    for n, v, note in ma3setup.GLOBAL_TOGGLES],
+        "lines": [ln.as_dict()
+                  for ln in ma3setup.lines(prefix=prefix,
+                                           bridge_ip=bridge_ip, **kw)],
+        "warnings": ma3setup.warnings(**kw),
+        "feedback": ma3setup.feedback_note(),
+    }
+
+
 @app.get("/api/config/export")
 def api_config_export() -> FileResponse:
     from . import run as xrun
@@ -241,6 +266,11 @@ PAGE = """<!doctype html>
  th{color:var(--dim);font-weight:500}
  td input{width:3.6rem;text-align:center;padding:.2rem .2rem}
  .note{color:var(--dim);font-size:.78rem}
+ table.setup{width:100%;font-family:inherit;font-size:.82rem}
+ table.setup td{text-align:left}
+ table.setup td:first-child{color:var(--dim);white-space:nowrap;width:11rem}
+ table.setup th{text-align:left;color:var(--amber);padding-top:.5rem}
+ table.setup .note{font-size:.72rem;margin-top:.1rem}
  code{color:var(--blue)}
  :focus-visible{outline:2px solid var(--amber);outline-offset:1px}
 </style></head><body><div class="wrap">
@@ -279,8 +309,13 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <button class="ghost" onclick="showPorts()">MIDI ports</button>
   <button class="ghost" onclick="testSend()">Test fader 1</button>
   <button class="ghost" onclick="probe()">Find MA3 format</button>
+  <button class="ghost" onclick="setupGuide()">Console setup&hellip;</button>
  </div>
  <div id="out"></div>
+</fieldset>
+
+<fieldset id="setupbox" style="display:none"><legend>grandMA3 OSC setup</legend>
+ <div id="setupout"></div>
 </fieldset>
 
 <fieldset id="probebox" style="display:none"><legend>Find MA3 format</legend>
@@ -369,6 +404,41 @@ async function testSend() {
     $('out').innerHTML = `sent <b>${esc(d.sent)}</b> to ${esc(d.to)}` +
       '<br>if the console did not move, the address or port is wrong - not the surface.';
   } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+async function setupGuide() {
+  const box = $('setupbox');
+  if (box.style.display === '') { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const q = new URLSearchParams({
+    host: $('host').value || '127.0.0.1',
+    send_port: $('send').value || '8000',
+    recv_port: $('recv').value || '9000',
+    prefix: (cfg && cfg.prefix) || ''});
+  try {
+    const d = await (await fetch('/api/ma3-setup?' + q)).json();
+    let h = '<p class="note">Menu &rarr; In &amp; Out &rarr; OSC. ' +
+      'An MA3 OSC line has <b>one Port cell used for both directions</b> ' +
+      '&mdash; there is no separate send and receive port, which is why ' +
+      'a round trip takes two lines.</p><table class="setup">';
+    h += '<tr><th colspan="2">Top of the menu</th></tr>';
+    for (const t of d.toggles)
+      h += `<tr><td>${esc(t.name)}</td><td><b>${esc(t.value)}</b>` +
+           `<div class="note">${esc(t.note)}</div></td></tr>`;
+    for (const ln of d.lines) {
+      h += `<tr><th colspan="2">${esc(ln.title)}</th></tr>` +
+           `<tr><td colspan="2" class="note">${esc(ln.why)}</td></tr>`;
+      for (const c of ln.cells)
+        h += `<tr><td>${esc(c.name)}</td><td><b>${esc(c.value)}</b>` +
+             (c.note ? `<div class="note">${esc(c.note)}</div>` : '') +
+             '</td></tr>';
+    }
+    h += '</table>';
+    for (const w of d.warnings)
+      h += `<p class="note"><b>Watch out:</b> ${esc(w)}</p>`;
+    h += `<p class="note">${esc(d.feedback)}</p>`;
+    $('setupout').innerHTML = h;
+  } catch (e) { $('setupout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 function probe() {
