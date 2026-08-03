@@ -2449,3 +2449,26 @@ def test_learning_a_fader_says_how_to_get_the_motor_back():
 
     assert "the motor " in PAGE and "learns to follow it" in PAGE
     assert "act === 'fader' || act === 'master'" in PAGE
+
+
+def test_the_first_run_guide_covers_the_whole_path():
+    """Someone opening this for the first time should not have to find
+    the README to know what to do."""
+    from xbridge.app import PAGE
+
+    guide = PAGE[PAGE.index('id="s_first"'):PAGE.index('id="state"')]
+    for step in ("MC mode", "DAW REMOTE", "Start bridge", "Console setup",
+                 "Move each fader once", "Learn a control",
+                 "Find MA3 format"):
+        assert step in guide, f"the first-run guide never mentions {step!r}"
+    # prose must not inherit the monospace feeds' newline handling
+    assert "white-space:normal" in guide
+
+
+def test_the_first_run_guide_gets_out_of_the_way():
+    from xbridge.app import PAGE
+
+    assert "function hideFirst()" in PAGE
+    assert "xbridge_first_done" in PAGE
+    # anyone with a mapping has plainly been here before
+    assert "Object.keys(cfg.ma3_feedback" in PAGE

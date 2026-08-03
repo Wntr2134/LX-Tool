@@ -597,6 +597,33 @@ Motors follow the console both ways. Stream Decks reach the bridge through
 Companion at <code>/xbridge/...</code> on the listen port.</p>
 
 <fieldset><legend>Bridge</legend>
+ <details class="sect" id="s_first" open>
+  <summary><b>First time?</b> &mdash; five steps, then it runs itself</summary>
+  <div class="sectbody" style="font-family:inherit;font-size:.82rem;
+       white-space:normal;line-height:1.45">
+   <ol style="margin:.2rem 0 .5rem 1.1rem;padding:0">
+    <li>Put the surface in <b>MC mode</b>. X-Touch: power on holding
+     channel-1 SELECT, choose MC + USB. X32/M32: Setup &rarr; Remote
+     &rarr; Mackie MCU, Card MIDI, REMOTE BUTTON enabled &mdash; then
+     press <b>DAW REMOTE</b> on the console's top panel.</li>
+    <li>Pick your <b>Target</b> and <b>Surface</b> in Settings, then
+     <b>Start bridge</b>. The pill above goes green.</li>
+    <li><b>Console setup&hellip;</b> prints the exact OSC lines to create,
+     with your ports already filled in.</li>
+    <li><b>Move each fader once.</b> That is the whole feedback setup
+     &mdash; each one learns which console object drives its motor.</li>
+    <li><b>Learn a control&hellip;</b> for anything else: press it, say
+     what it does, Save. Move it once if it is a fader.</li>
+   </ol>
+   Stuck? <b>Find MA3 format</b> sweeps every OSC dialect and keeps the
+   one that works. Nothing arriving at all is a console switch, not a
+   format &mdash; <b>Console setup&hellip;</b> lists them.
+   <div style="margin-top:.4rem">
+    <button class="ghost" onclick="hideFirst()">Got it, hide this</button>
+   </div>
+  </div>
+ </details>
+
  <div class="status">
   <span class="pill" id="state">stopped</span>
   <span class="statusline" id="stateline">not started</span>
@@ -933,6 +960,18 @@ async function refresh() {
 
 async function toggleRun() { running ? stop() : start(); }
 
+function hideFirst() {
+  $('s_first').style.display = 'none';
+  try { localStorage.setItem('xbridge_first_done', '1'); } catch (e) {}
+}
+// Anyone with a saved mapping has been here before.
+function firstRunCheck() {
+  let done = false;
+  try { done = localStorage.getItem('xbridge_first_done') === '1'; } catch (e) {}
+  if (done || (cfg && Object.keys(cfg.ma3_feedback || {}).length))
+    $('s_first').style.display = 'none';
+}
+
 function toggleSettings() {
   const box = $('settings');
   box.style.display = box.style.display === 'none' ? '' : 'none';
@@ -1113,6 +1152,7 @@ async function loadCfg() {
   cfg = d.config; $('cfgpath').textContent = d.path;
   if (cfg.target) $('target').value = cfg.target;
   if (cfg.surface) $('surface').value = cfg.surface;
+  firstRunCheck();
   loadPorts();
 }
 async function loadPorts() {
