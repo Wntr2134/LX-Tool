@@ -7,6 +7,8 @@ receives - and back from MA3's feedback to the motor-fader message.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from xbridge import mcu, osc
@@ -1733,3 +1735,52 @@ def test_what_is_learned_is_saved(tmp_path, monkeypatch):
     assert kept.ma3_feedback == {"14.14.1.6.1": 1}
     assert kept.fader_execs == (401, 402)     # nothing else disturbed
     assert r.bridge.target.learned == []      # drained, not re-saved forever
+
+
+# ---- the panel itself ---------------------------------------------------
+
+
+def test_the_panel_script_has_no_broken_string_literals():
+    """PAGE is a plain Python string, so a lone \\n written for JavaScript
+    is eaten by Python and reaches the browser as a real newline. That
+    terminates the JS string, the whole script fails to parse, and every
+    button silently does nothing - with no error anywhere except the
+    browser console nobody opens."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):PAGE.index("</script>")]
+    for n, line in enumerate(script.split("\n"), 1):
+        if "`" in line or line.lstrip().startswith("//"):
+            continue      # template literals span lines; comments hold prose
+        for quote in ("'", '"'):
+            unescaped = len(re.findall(r"(?<!\\)" + quote, line))
+            assert unescaped % 2 == 0, (
+                f"line {n} of the panel script leaves a {quote} string "
+                f"open: {line.strip()!r}")
+
+
+def test_every_panel_element_the_script_touches_exists():
+    """A renamed id turns a working control into a silent no-op.
+
+    Some elements are built by the script itself (the mapping grid), so
+    the whole page is searched rather than only the static body.
+    """
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    for ident in sorted(set(re.findall(r"\$\('([A-Za-z_][\w]*)'\)", script))):
+        # Either written into the markup, or built by the script - some
+        # ids are passed to a helper that emits the element. Both leave a
+        # second mention; a typo leaves only the lookup itself.
+        assert f'id="{ident}"' in PAGE or PAGE.count(f"'{ident}'") > 1, (
+            f"the script uses #{ident}; nothing in the page creates it")
+
+
+def test_every_button_calls_something_that_exists():
+    from xbridge.app import PAGE
+
+    body, script = PAGE.split("<script>", 1)
+    for call in sorted(set(re.findall(r'onclick="(\w+)\(', body))):
+        assert (f"function {call}(" in script
+                or f"async function {call}(" in script), \
+            f"a button calls {call}() which the script does not define"

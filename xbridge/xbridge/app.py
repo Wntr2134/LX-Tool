@@ -333,7 +333,8 @@ PAGE = """<!doctype html>
     small screen the last controls sat off to the right, invisible. */
  #out{font-family:ui-monospace,Menlo,monospace;font-size:.76rem;
    background:var(--card2);border-radius:6px;padding:.5rem .6rem;margin-top:.6rem;
-   min-height:1.2rem;white-space:pre-wrap;overflow-wrap:anywhere}
+   white-space:pre-wrap;overflow-wrap:anywhere}
+ #out:empty{display:none}
  #out .ok{color:var(--good)} #out .err{color:var(--bad)}
  .gridwrap{overflow-x:auto;margin-top:.5rem}
  table{border-collapse:collapse;font-size:.74rem;
@@ -350,6 +351,51 @@ PAGE = """<!doctype html>
  table.setup .note{font-size:.72rem;margin-top:.1rem}
  code{color:var(--blue)}
  :focus-visible{outline:2px solid var(--amber);outline-offset:1px}
+
+ /* Status: the one thing worth seeing without reading. */
+ .status{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+ .pill{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;
+   font-weight:700;border-radius:999px;padding:.22rem .7rem;
+   background:var(--card2);color:var(--dim);border:1px solid var(--line)}
+ .pill.on{background:rgba(88,192,138,.16);color:var(--good);
+   border-color:rgba(88,192,138,.45)}
+ .pill.wait{background:rgba(255,180,84,.14);color:var(--amber);
+   border-color:rgba(255,180,84,.4)}
+ .pill.err{background:rgba(224,112,90,.16);color:var(--bad);
+   border-color:rgba(224,112,90,.45)}
+ .statusline{font-size:.82rem;color:var(--dim);overflow-wrap:anywhere}
+
+ /* Where the data is, and is not. */
+ .flow{display:flex;gap:.5rem;margin:.7rem 0 0;flex-wrap:wrap}
+ .tile{flex:1 1 8rem;background:var(--card2);border:1px solid var(--line);
+   border-radius:8px;padding:.5rem .6rem}
+ .tile b{display:block;font-size:1.25rem;line-height:1.2;
+   font-variant-numeric:tabular-nums}
+ .tile span{font-size:.7rem;color:var(--dim);letter-spacing:.04em}
+ .tile.zero b{color:var(--dim)}
+ .tile.live b{color:var(--good)}
+
+ details.sect{border:1px solid var(--line);border-radius:8px;
+   background:var(--card2);margin:.5rem 0 0}
+ details.sect>summary{cursor:pointer;padding:.42rem .6rem;font-size:.78rem;
+   color:var(--dim);list-style:none}
+ details.sect>summary::-webkit-details-marker{display:none}
+ details.sect>summary::before{content:"\u25b8\u00a0";color:var(--dim)}
+ details.sect[open]>summary::before{content:"\u25be\u00a0"}
+ details.sect>summary b{color:var(--ink);font-weight:600}
+ .sectbody{padding:0 .6rem .55rem;font-family:ui-monospace,Menlo,monospace;
+   font-size:.74rem;white-space:pre-wrap;overflow-wrap:anywhere}
+ .sectbody .lit{color:var(--good)}
+ .sectbody .idle{color:var(--dim)}
+ .maprow{display:flex;gap:.35rem;align-items:center;flex-wrap:wrap;
+   padding:.2rem 0;font-family:ui-monospace,Menlo,monospace;font-size:.74rem}
+ .maprow button{padding:.12rem .42rem;font-size:.72rem}
+ .warn{background:rgba(224,112,90,.12);border:1px solid rgba(224,112,90,.4);
+   border-radius:8px;padding:.5rem .6rem;margin-top:.6rem;font-size:.8rem;
+   color:var(--ink)}
+ .tools{margin-top:.2rem}
+ .tools .lbl{font-size:.7rem;color:var(--dim);letter-spacing:.1em;
+   text-transform:uppercase;width:100%;margin:.55rem 0 -.1rem}
 </style></head><body><div class="wrap">
 <h1>XBridge <small>X-Touch &rarr; anything with faders</small></h1>
 <p class="tag">grandMA3 &middot; grandMA2 &middot; MagicQ &middot; Eos &middot; X32/M32 &middot; Resolume &middot; Companion &middot; any OSC.
@@ -357,50 +403,89 @@ Motors follow the console both ways. Stream Decks reach the bridge through
 Companion at <code>/xbridge/...</code> on the listen port.</p>
 
 <fieldset><legend>Bridge</legend>
- <div class="row">
-  <label>Target</label>
-  <select id="target" onchange="renderMap()">
-    <option value="ma3">grandMA3 onPC</option>
-    <option value="ma2">grandMA2 onPC (web remote)</option>
-    <option value="magicq">ChamSys MagicQ</option>
-    <option value="eos">ETC Eos family</option>
-    <option value="x32">Behringer X32 / M32</option>
-    <option value="resolume">Resolume Arena/Avenue</option>
-    <option value="companion">Bitfocus Companion</option>
-    <option value="generic">Generic OSC templates</option>
-  </select>
-  <label>Surface</label>
-  <select id="surface">
-    <option value="xtouch">X-Touch (full size)</option>
-    <option value="mpk">Akai MPK Mini (knobs + pads)</option>
-    <option value="x32mc">X32 / M32 (Setup &rarr; Remote &rarr; Mackie Control)</option>
-    <option value="xtouch,mpk">X-Touch + MPK Mini (both at once)</option>
-    <option value="xtouch,x32mc">X-Touch + X32 (both at once)</option>
-  </select>
-  <label>host</label><input type="text" id="host" value="127.0.0.1" style="width:9rem">
-  <label>send</label><input type="number" id="send" placeholder="auto">
-  <label>listen</label><input type="number" id="recv" value="9000">
-  <label>MIDI in</label>
-  <select id="midiport" title="auto = find the surface by name">
-   <option value="">auto-detect</option>
-  </select>
-  <label>MIDI out</label>
-  <select id="midioutport"
-          title="the port the bridge sends motors, LEDs and labels to">
-   <option value="">auto-detect</option>
-  </select>
+ <div class="status">
+  <span class="pill" id="state">stopped</span>
+  <span class="statusline" id="stateline">not started</span>
  </div>
- <div class="row">
-  <button onclick="start()">Start bridge</button>
-  <button class="ghost" onclick="stop()">Stop</button>
+ <div class="flow" id="flow" style="display:none">
+  <div class="tile" id="t_midi"><b>0</b><span>FROM SURFACE</span></div>
+  <div class="tile" id="t_sent"><b>0</b><span>TO CONSOLE</span></div>
+  <div class="tile" id="t_osc"><b>0</b><span>FROM CONSOLE</span></div>
+ </div>
+ <div id="warn"></div>
+
+ <div class="row" style="margin-top:.7rem">
+  <button id="go" onclick="toggleRun()">Start bridge</button>
+  <button class="ghost" onclick="toggleSettings()" id="setbtn">Settings&hellip;</button>
+ </div>
+
+ <div id="settings">
+  <div class="row">
+   <label>Target</label>
+   <select id="target" onchange="renderMap()">
+     <option value="ma3">grandMA3 onPC</option>
+     <option value="ma2">grandMA2 onPC (web remote)</option>
+     <option value="magicq">ChamSys MagicQ</option>
+     <option value="eos">ETC Eos family</option>
+     <option value="x32">Behringer X32 / M32</option>
+     <option value="resolume">Resolume Arena/Avenue</option>
+     <option value="companion">Bitfocus Companion</option>
+     <option value="generic">Generic OSC templates</option>
+   </select>
+   <label>Surface</label>
+   <select id="surface">
+     <option value="xtouch">X-Touch (full size)</option>
+     <option value="mpk">Akai MPK Mini (knobs + pads)</option>
+     <option value="x32mc">X32 / M32 (Setup &rarr; Remote &rarr; Mackie Control)</option>
+     <option value="xtouch,mpk">X-Touch + MPK Mini (both at once)</option>
+     <option value="xtouch,x32mc">X-Touch + X32 (both at once)</option>
+   </select>
+  </div>
+  <div class="row">
+   <label>host</label><input type="text" id="host" value="127.0.0.1" style="width:9rem">
+   <label>send</label><input type="number" id="send" placeholder="auto">
+   <label>listen</label><input type="number" id="recv" value="9000">
+  </div>
+  <div class="row">
+   <label>MIDI in</label>
+   <select id="midiport" title="auto = find the surface by name">
+    <option value="">auto-detect</option>
+   </select>
+   <label>MIDI out</label>
+   <select id="midioutport"
+           title="the port the bridge sends motors, LEDs and labels to">
+    <option value="">auto-detect</option>
+   </select>
+   <button class="ghost" onclick="showPorts()">Refresh ports</button>
+  </div>
+ </div>
+
+ <div class="row tools">
+  <div class="lbl">Check the surface</div>
+  <button class="ghost" onclick="wiggle()">Sweep the surface</button>
   <button class="ghost" onclick="toggleMap()">Remap&hellip;</button>
-  <button class="ghost" onclick="showPorts()">MIDI ports</button>
-  <button class="ghost" onclick="testSend()">Test fader 1</button>
-  <button class="ghost" onclick="wiggle()">Test surface</button>
-  <button class="ghost" onclick="probe()">Find MA3 format</button>
-  <button class="ghost" onclick="setupGuide()">Console setup&hellip;</button>
  </div>
+ <div class="row tools">
+  <div class="lbl">Check the console</div>
+  <button class="ghost" onclick="testSend()">Send a test fader</button>
+  <button class="ghost" onclick="setupGuide()">Console setup&hellip;</button>
+  <button class="ghost" onclick="probe()">Find MA3 format&hellip;</button>
+ </div>
+
  <div id="out"></div>
+
+ <details class="sect" id="s_surface" style="display:none">
+  <summary><b>Surface activity</b> &mdash; what the hardware is sending</summary>
+  <div class="sectbody" id="feed_surface"></div>
+ </details>
+ <details class="sect" id="s_console" style="display:none">
+  <summary><b>Console activity</b> &mdash; both directions on the wire</summary>
+  <div class="sectbody" id="feed_console"></div>
+ </details>
+ <details class="sect" id="s_maps" style="display:none" open>
+  <summary><b>Motor feedback</b> &mdash; which strip follows what</summary>
+  <div class="sectbody" id="feed_maps"></div>
+ </details>
 </fieldset>
 
 <fieldset id="setupbox" style="display:none"><legend>grandMA3 OSC setup</legend>
@@ -462,47 +547,112 @@ async function post(url, fd) {
   return r;
 }
 let timer = null, cfg = null;
+let running = false;
+
+function sect(id, on) { $(id).style.display = on ? '' : 'none'; }
+
+function tile(id, n) {
+  const el = $(id);
+  el.querySelector('b').textContent = n;
+  el.className = 'tile ' + (n > 0 ? 'live' : 'zero');
+}
+
+function renderMaps(d) {
+  const fm = d.feedback_map || {}, keys = Object.keys(fm);
+  const un = d.unmapped || [];
+  if (!keys.length && !un.length) { sect('s_maps', false); return; }
+  sect('s_maps', true);
+  let h = '';
+  for (const a of keys)
+    h += `<div class="maprow">strip <b>${esc(fm[a])}</b> &larr; ` +
+         `<code>/${esc(a)}</code> ` +
+         `<button class="ghost" onclick="learnFb('${esc(a)}',0)">forget</button></div>`;
+  if (!keys.length)
+    h += '<div class="idle">Nothing mapped yet. With the bridge running, ' +
+         'move each surface fader once and it learns itself.</div>';
+  for (const u of un)
+    h += `<div class="maprow"><code>/${esc(u.addr)}</code> ${esc(u.func)} ` +
+         `${Number(u.level).toFixed(1)}% &rarr; strip ` +
+         [1,2,3,4,5,6,7,8].map(n =>
+           `<button class="ghost" onclick="learnFb('${esc(u.addr)}',${n})">${n}</button>`
+         ).join(' ') + '</div>';
+  $('feed_maps').innerHTML = h;
+}
+
+function renderFeeds(d) {
+  const midi = d.midi || [];
+  sect('s_surface', midi.length > 0);
+  if (midi.length)
+    $('feed_surface').innerHTML =
+      midi.slice(-8).map(m => esc(m)).join('\\n');
+
+  const osc = d.osc || [], sent = d.sent || [];
+  sect('s_console', osc.length > 0 || sent.length > 0);
+  let h = '';
+  if (sent.length)
+    h += '<span class="idle">sent</span>\\n' +
+         sent.slice(-4).map(m => '  ' + esc(m)).join('\\n') + '\\n';
+  if (osc.length)
+    h += '<span class="idle">received</span>\\n' +
+         osc.slice(-6).map(m => '  ' + esc(m)).join('\\n');
+  $('feed_console').innerHTML = h;
+}
+
+function setState(cls, text, detail) {
+  const p = $('state');
+  p.className = 'pill' + (cls ? ' ' + cls : '');
+  p.textContent = text;
+  $('stateline').innerHTML = detail;
+}
+
 async function refresh() {
   try {
     const d = await (await fetch('/api/status')).json();
-    let line;
-    if (d.running) {
-      line = `<span class="ok"><b>${esc(d.state)}</b></span> ${esc(d.detail)}`
-        + `<br>MIDI in: ${d.counters.midi_in||0} · sent to console: ${d.counters.sent||0}`
-        + ` · console in: ${d.counters.osc_in||0}`;
-      if (d.sent && d.sent.length)
-        line += '<br>last sent: ' + d.sent.slice(-4).map(esc).join(' , ');
-      if (d.midi && d.midi.length)
-        line += '<br><b>surface says:</b><br>' +
-          d.midi.slice(-6).map(m => '<code>' + esc(m) + '</code>').join('<br>');
-      if (d.osc && d.osc.length)
-        line += '<br><b>console says:</b><br>' +
-          d.osc.slice(-6).map(m => '<code>' + esc(m) + '</code>').join('<br>');
-      const fm = d.feedback_map || {};
-      const fmKeys = Object.keys(fm);
-      if (fmKeys.length)
-        line += '<br><b>strips following the console:</b><br>' +
-          fmKeys.map(a =>
-            `strip <b>${esc(fm[a])}</b> &larr; <code>/${esc(a)}</code> ` +
-            `<button class="ghost" onclick="learnFb('${esc(a)}',0)">forget</button>`
-          ).join('<br>');
-      if (d.unmapped && d.unmapped.length) {
-        line += '<br><b>console reported (not mapped to a strip yet):</b><br>' +
-          d.unmapped.map(u =>
-            `<code>/${esc(u.addr)}</code> ${esc(u.func)} ` +
-            `${Number(u.level).toFixed(1)}% &rarr; drive strip ` +
-            [1,2,3,4,5,6,7,8].map(n =>
-              `<button class="ghost" onclick="learnFb('${esc(u.addr)}',${n})">${n}</button>`
-            ).join(' ')).join('<br>');
-      }
+    const was = running;
+    running = !!d.running;
+    $('go').textContent = running ? 'Stop bridge' : 'Start bridge';
+    sect('flow', running);
+    // Settings matter until it works; after that they are clutter.
+    if (running !== was) $('settings').style.display = running ? 'none' : '';
+
+    if (running) {
+      const c = d.counters || {};
+      tile('t_midi', c.midi_in || 0);
+      tile('t_sent', c.sent || 0);
+      tile('t_osc', c.osc_in || 0);
+      const waiting = d.state !== 'running';
+      setState(waiting ? 'wait' : 'on', waiting ? d.state : 'running',
+               esc(d.detail || ''));
+      renderFeeds(d);
+      renderMaps(d);
+    } else if (d.state === 'error') {
+      setState('err', 'error', esc(d.detail || ''));
+    } else if (!d.available) {
+      setState('err', 'no MIDI',
+               'MIDI support is not installed &mdash; ' +
+               '<code>pip install mido python-rtmidi</code>');
+    } else {
+      setState('', 'stopped', 'press Start bridge');
     }
-    else if (d.state === 'error') line = `<span class="err">${esc(d.detail)}</span>`;
-    else if (d.available) line = 'stopped';
-    else line = '<span class="err">MIDI support not installed - pip install mido python-rtmidi</span>';
-    $('out').innerHTML = line;
+
+    $('warn').innerHTML = (d.no_output && d.no_output.length)
+      ? '<div class="warn"><b>One-way surface.</b> No MIDI output for ' +
+        esc(d.no_output.join(', ')) + ', so motor faders, LEDs and displays ' +
+        'cannot be driven. Pick the right <b>MIDI out</b> in Settings, or ' +
+        'check the device driver.</div>'
+      : '';
+
     if (!d.running && timer) { clearInterval(timer); timer = null; }
-  } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  } catch (e) { setState('err', 'error', esc(e.message)); }
 }
+
+async function toggleRun() { running ? stop() : start(); }
+
+function toggleSettings() {
+  const box = $('settings');
+  box.style.display = box.style.display === 'none' ? '' : 'none';
+}
+
 async function start() {
   const fd = new FormData();
   fd.append('host', $('host').value); fd.append('send_port', $('send').value || '0');
@@ -632,6 +782,7 @@ async function loadCfg() {
   const d = await (await fetch('/api/config')).json();
   cfg = d.config; $('cfgpath').textContent = d.path;
   if (cfg.target) $('target').value = cfg.target;
+  if (cfg.surface) $('surface').value = cfg.surface;
   loadPorts();
 }
 async function loadPorts() {
