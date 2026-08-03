@@ -444,3 +444,68 @@ def test_a_broken_surface_decoder_cannot_stop_the_monitor():
     r = xrun.Runner(log=lambda *a: None)
     r._note_midi(Exploding(), b"\x90\x10\x7f")
     assert r.last_midi and "(unmapped)" in r.last_midi[-1]
+
+
+def test_a_named_midi_port_wins_over_auto_detection(monkeypatch, console):
+    """An X32 over DIN MIDI arrives under the interface's name, and over
+    RTPMIDI under the session's - neither is guessable, so naming the
+    port has to work even when the name matches no known surface."""
+    from xbridge import run as xrun
+
+    name = "Steinberg UR22  1"          # nothing an X32 hint would match
+    ins = {name: FakePort(name)}
+    outs = {name: FakePort(name)}
+    mido = FakeMido(ins, outs)
+
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", midi_port=name,
+                    log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", f"named port not used: {r.detail}"
+        _recv_all(console, settle=0.3)
+        ins[name].feed(mcu.fader_out(0, 1.0))
+        got = _recv_all(console, settle=0.6)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+    assert [m for m in got if "Fader201" in m.address], f"saw {got}"
+
+
+def test_the_app_passes_the_named_port_through(monkeypatch):
+    """The panel's picker has to reach the Runner, or choosing a port
+    silently does nothing."""
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    seen = {}
+
+    class FakeRunner:
+        state, detail, midi_name = "running", "", ""
+        counters, last_sent, last_midi = {}, [], []
+
+        def __init__(self, **kw):
+            seen.update(kw)
+
+        def run(self):
+            return 0
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(xrun, "Runner", FakeRunner)
+    monkeypatch.setattr(xrun, "midi_available", lambda: True)
+    xapp._thread = None
+    try:
+        xapp.api_start(surface="x32mc", midi_port="X-USB 1")
+    finally:
+        if xapp._thread is not None:
+            xapp._thread.join(timeout=2)
+        xapp._runner, xapp._thread = None, None
+    assert seen["midi_port"] == "X-USB 1"
+    assert seen["surface"] == "x32mc"
