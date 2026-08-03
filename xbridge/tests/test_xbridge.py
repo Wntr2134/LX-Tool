@@ -1909,3 +1909,40 @@ def test_a_touched_fader_is_never_treated_as_a_motor_echo():
     b.midi_in(bytes((0x90, 104, 127)))            # finger down on strip 1
     b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
     assert b.midi_in(mcu.fader_out(0, 0.47)) != []
+
+
+def test_the_master_fader_can_learn_its_own_object():
+    """Strip 8 is the master, and it drives the console through /cmd
+    rather than an executor. Nothing recorded that it had been moved, so
+    the console's master object could never be matched to it - the
+    master was the one strip that had to be mapped by hand."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(8, 1.0))
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.13.2.1", ("FaderMaster", 3, 100.0))))
+    assert b.config.ma3_feedback == {"14.13.2.1:FaderMaster": 9}
+    assert raw and mcu.decode(raw[0]).strip == 8       # the master motor
+
+
+def test_the_master_is_offered_in_the_panel():
+    """Buttons 1-8 alone left no way to say "this one is the master"."""
+    from xbridge.app import PAGE
+
+    assert "learnFb('${esc(u.addr)}',9)" in PAGE
+    assert "MST" in PAGE
+
+
+def test_a_mapped_master_moves_the_master_motor():
+    b = _plain(ma3_feedback={"13.12.2.1:FaderMaster": 9})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.12.2.1", ("FaderMaster", 3, 50.0))))
+    ev = mcu.decode(raw[0])
+    assert ev.strip == 8
+    assert ev.unit == pytest.approx(0.5, abs=0.01)
+
+
+def test_the_master_does_not_steal_a_numbered_strip():
+    b = _plain(ma3_feedback={"14.13.2.1:FaderMaster": 9})
+    b.midi_in(mcu.fader_out(0, 1.0))       # strip 1 also at full
+    b.osc_in(osc.encode(osc.Message("/14.99", ("FaderMaster", 3, 100.0))))
+    assert b.config.ma3_feedback["14.99:FaderMaster"] == 1

@@ -110,6 +110,10 @@ class MA3Target:
 
     def master(self, unit: float) -> list[osc.Message]:
         cfg = self.config
+        # Strip 8 is the master. Recording it here is what lets the
+        # console's own master object be learned like any other strip;
+        # without it the master could only ever be mapped by hand.
+        self._note_sent(8, unit * 100.0)
         if cfg.master_exec:
             return [osc.Message(self._addr(f"Fader{cfg.master_exec}"),
                                 (self._level(unit),))]

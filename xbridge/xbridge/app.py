@@ -569,7 +569,8 @@ function renderMaps(d) {
   let h = '';
   for (const a of keys) {
     const [pool, fn] = String(a).split(':');
-    h += `<div class="maprow">strip <b>${esc(fm[a])}</b> &larr; ` +
+    const who = fm[a] === 9 ? 'master' : 'strip <b>' + esc(fm[a]) + '</b>';
+    h += `<div class="maprow">${who} &larr; ` +
          `<code>/${esc(pool)}</code> ${esc(fn || 'any function')} ` +
          `<button class="ghost" onclick="learnFb('${esc(a)}',0)">forget</button></div>`;
   }
@@ -582,7 +583,9 @@ function renderMaps(d) {
          `${Number(u.level).toFixed(1)}% &rarr; strip ` +
          [1,2,3,4,5,6,7,8].map(n =>
            `<button class="ghost" onclick="learnFb('${esc(u.addr)}',${n})">${n}</button>`
-         ).join(' ') + '</div>';
+         ).join(' ') +
+         ` <button class="ghost" title="the master fader"` +
+         ` onclick="learnFb('${esc(u.addr)}',9)">MST</button></div>`;
   $('feed_maps').innerHTML = h;
 }
 
