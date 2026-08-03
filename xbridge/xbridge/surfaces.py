@@ -98,7 +98,44 @@ class MPKSurface:
         return [bytes((0x90, n, 0)) for n in self.pads]
 
 
-_SURFACES = {"xtouch": XTouchSurface, "mpk": MPKSurface}
+class X32MCSurface(XTouchSurface):
+    """A Behringer X32 / Midas M32 in DAW-remote Mackie Control mode.
+
+    Setup -> Remote: encoder 1 enables remote control, encoder 2 picks
+    the protocol (choose **Mackie Control**, not HUI or raw CC), and the
+    interface is MIDI In/Out (DIN), Card MIDI (the X-USB card) or
+    RTPMIDI. Card MIDI is the easy one - the console then appears as an
+    ordinary USB MIDI port on the PC.
+
+    Mackie Control is Mackie Control, so this inherits the X-Touch's
+    decoding wholesale. Two things differ in practice:
+
+    * **No scribble strips.** The X32 draws its own channel names on its
+      own screen and ignores MCU's LCD SysEx. Sending it is harmless but
+      pointless, so it is skipped - which also keeps the hello burst
+      small enough not to choke a DIN-MIDI link at 31250 baud.
+    * **Fader touch is not guaranteed.** If the console never sends the
+      touch notes, nothing is ever "held", and motor feedback simply
+      applies - which is the right behaviour rather than a fault.
+
+    The console has 8 channel strips plus a main fader in this mode, the
+    same shape the bridge already speaks.
+    """
+
+    name = "x32mc"
+
+    def render(self, fb, targets_mod) -> list[bytes]:
+        if isinstance(fb, targets_mod.LabelFB):
+            return []                  # the X32 labels its own strips
+        return super().render(fb, targets_mod)
+
+    def hello(self, labels) -> list[bytes]:
+        # blank_surface() clears the LCDs too; drop those SysEx blocks.
+        return [m for m in mcu.blank_surface() if not m.startswith(b"\xf0")]
+
+
+_SURFACES = {"xtouch": XTouchSurface, "mpk": MPKSurface,
+             "x32mc": X32MCSurface}
 
 
 def make_surface(config):

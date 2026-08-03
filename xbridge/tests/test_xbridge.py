@@ -1347,3 +1347,20 @@ def test_setup_endpoint_reflects_the_ports_it_is_given():
     assert "8010" in body and "9010" in body and "10.0.0.4" in body
     assert d["warnings"] == []          # different machines: no port fight
     assert "13.13.1.6.1" in d["feedback"]
+
+
+def test_x32_surface_never_emits_scribble_strip_sysex():
+    """Not just at hello: a label arriving mid-show (the MA3 plugin
+    pushes executor names) must not be forwarded either. The X32 ignores
+    MCU LCD SysEx, and over DIN MIDI it is bandwidth that costs fader
+    resolution."""
+    from xbridge import surfaces, targets
+
+    s = surfaces.X32MCSurface(Config(surface="x32mc"))
+    assert s.render(targets.LabelFB(0, 0, "Exec 201"), targets) == []
+    assert all(not m.startswith(b"\xf0") for m in s.hello([]))
+    # everything else still works: it is a Mackie Control surface
+    assert s.render(targets.FaderFB(2, 0.5), targets) == [mcu.fader_out(2, 0.5)]
+    assert s.render(targets.ButtonFB("select", 0, True), targets) == \
+        [mcu.button_led(mcu.SELECT[0], True)]
+    assert s.decode(mcu.fader_out(1, 0.25)) == [mcu.decode(mcu.fader_out(1, 0.25))]

@@ -27,9 +27,10 @@ def api_status() -> dict:
         "running": _thread is not None and _thread.is_alive(),
         "state": r.state if r else "stopped",
         "detail": r.detail if r else "",
-        "midi": r.midi_name if r else "",
+        "port": r.midi_name if r else "",
         "counters": r.counters if r else {},
         "sent": list(r.last_sent) if r else [],
+        "midi": list(r.last_midi) if r else [],
     }
 
 
@@ -296,7 +297,9 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <select id="surface">
     <option value="xtouch">X-Touch (full size)</option>
     <option value="mpk">Akai MPK Mini (knobs + pads)</option>
+    <option value="x32mc">X32 / M32 (Setup &rarr; Remote &rarr; Mackie Control)</option>
     <option value="xtouch,mpk">X-Touch + MPK Mini (both at once)</option>
+    <option value="xtouch,x32mc">X-Touch + X32 (both at once)</option>
   </select>
   <label>host</label><input type="text" id="host" value="127.0.0.1" style="width:9rem">
   <label>send</label><input type="number" id="send" placeholder="auto">
@@ -374,6 +377,9 @@ async function refresh() {
         + ` · console in: ${d.counters.osc_in||0}`;
       if (d.sent && d.sent.length)
         line += '<br>last sent: ' + d.sent.slice(-4).map(esc).join(' , ');
+      if (d.midi && d.midi.length)
+        line += '<br><b>surface says:</b><br>' +
+          d.midi.slice(-6).map(m => '<code>' + esc(m) + '</code>').join('<br>');
     }
     else if (d.state === 'error') line = `<span class="err">${esc(d.detail)}</span>`;
     else if (d.available) line = 'stopped';

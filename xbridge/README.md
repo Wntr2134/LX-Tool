@@ -37,6 +37,7 @@ subscription alive.
 |---|---|
 | **X-Touch (full size)** — default | The whole two-way conversation: motorised faders, scribble strips, LED rings, transport |
 | **Akai MPK Mini** | The 8 **knobs** ride the target's encoder slots as absolute levels; the 8 **pads** press the SELECT row (Go / column-connect / channel-select per target) with pad-LED feedback. Defaults match the mk3 factory profile (knobs CC 70–77, pads notes 36–43) — both remappable in the config for any knobby MIDI box |
+| **Behringer X32 / Midas M32** (DAW-remote MC mode) | The console itself as a control surface. Setup → Remote: encoder 1 enables remote control, encoder 2 selects **Mackie Control** (not HUI, not raw CC), then pick the interface: **Card MIDI** (the X-USB card — easiest, it just appears as a USB MIDI port), **MIDI In/Out** (DIN, needs a MIDI interface) or **RTPMIDI** (network; on Windows you need an rtpMIDI driver, and the port takes your session's name so pick it by hand). It is Mackie Control, so faders, SELECT/MUTE, encoders and the main fader all behave as the X-Touch does. Two differences: the X32 draws its own channel names so the scribble-strip SysEx is skipped, and it may not send fader-touch — in which case nothing is ever "held" and motor feedback simply applies |
 | **Stream Deck** | Via **Bitfocus Companion**, which owns Stream Decks natively: add a *Generic OSC* connection in Companion aimed at the bridge's listen port (default 9000), and give buttons actions like `/xbridge/key/select/1` (value 1 on down, 0 on up), `/xbridge/fader/3` (0–100), `/xbridge/page` (bank number). Every deck key becomes a bridge control, and the same addresses work from TouchOSC or anything else that speaks OSC |
 
 Pick the surface in the app panel or `--surface mpk` / config —
@@ -218,6 +219,32 @@ The desktop app has the bridge as **section 7**: set the MA3 host (leave
 `127.0.0.1` on the same PC), hit **Start bridge**, and the panel shows
 live state — which MIDI port it found, how many messages each side has
 sent. Start/stop it there; no terminal needed.
+
+## Proving a surface with the MIDI monitor
+
+While the bridge is running the panel shows **surface says:** — the last
+few messages the surface sent, as raw bytes *and* as what the bridge made
+of them:
+
+```
+xtouch  e0 00 60  fader 1 -> 75%
+xtouch  90 18 7f  SELECT 1 down
+xtouch  b0 10 01  encoder 1 +1
+x32mc   b0 63 07  (unmapped)
+```
+
+This separates two failures that look identical from the console end:
+
+- **A control produces no line at all.** It never reached the bridge —
+  wrong MIDI port, wrong console mode, or the control isn't sent in that
+  mode. No mapping change will help.
+- **A control produces a line reading `(unmapped)`.** It arrived; the
+  bridge just doesn't know it yet. The hex is there so it can be told
+  what to do with it.
+
+An X32 in MC mode is a good rig for this even if the desk it drives is a
+different one: press each control and watch what the console actually
+emits.
 
 ## If something doesn't line up: the sniffer
 

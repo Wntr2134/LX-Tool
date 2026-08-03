@@ -314,3 +314,133 @@ def test_every_target_puts_something_on_the_wire(monkeypatch, console):
                 assert osc.decode(osc.encode(m)) is not None, name
                 assert m.address.startswith("/"), (name, m.address)
     assert not silent, f"these targets map a fader to nothing: {silent}"
+
+
+# ---- an X32 in DAW-remote Mackie Control mode --------------------------
+
+
+def _x32(in_name="X32 0", out_name="X32 1"):
+    ins = {in_name: FakePort(in_name)}
+    outs = {out_name: FakePort(out_name)}
+    return FakeMido(ins, outs), ins[in_name], outs[out_name]
+
+
+def test_an_x32_in_mc_mode_is_found_and_drives_the_console(monkeypatch,
+                                                           console):
+    """Setup -> Remote -> Mackie Control makes an X32 a control surface.
+    It speaks the same MCU the X-Touch does, so the same fader move must
+    come out the other side as the same OSC."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", f"X32 never connected: {r.detail}"
+        _recv_all(console, settle=0.3)
+        midi_in.feed(mcu.fader_out(2, 0.5))
+        got = _recv_all(console, settle=0.6)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+    faders = [m for m in got if "Fader" in m.address]
+    assert faders, f"nothing arrived; console saw {got}"
+    assert faders[-1].address == "/Page1/Fader203"
+
+
+def test_the_x32_is_not_sent_scribble_strip_sysex(monkeypatch, console):
+    """The X32 draws its own channel names and ignores MCU's LCD SysEx.
+    Sending it wastes a DIN-MIDI link's bandwidth at 31250 baud."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        time.sleep(0.3)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+    blob = b"".join(midi_out.sent)
+    assert blob, "the X32 was sent nothing at all"
+    assert b"\xf0\x00\x00\x66\x14\x12" not in blob, "LCD SysEx was sent"
+
+
+def test_the_monitor_names_every_control_that_arrives(monkeypatch, console):
+    """The point of a hardware test rig: wiggle a control, see what it
+    is. A control that produces no line never arrived at all - a
+    different problem from a control that is mapped wrong."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        for raw in (mcu.fader_out(0, 0.75),
+                    mcu.fader_out(8, 1.0),
+                    bytes((0x90, mcu.SELECT[1], 127)),
+                    bytes((0x90, mcu.MUTE[0], 0)),
+                    bytes((0xB0, 16, 1)),
+                    bytes((0x90, 104, 127)),
+                    bytes((0xB0, 99, 7))):        # nothing the bridge knows
+            midi_in.feed(raw)
+        end = time.monotonic() + 3
+        while time.monotonic() < end and len(r.last_midi) < 7:
+            time.sleep(0.02)
+        seen = list(r.last_midi)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    blob = " | ".join(seen)
+    assert "fader 1 -> 75%" in blob
+    assert "master -> 100%" in blob
+    assert "SELECT 2 down" in blob
+    assert "MUTE 1 up" in blob
+    assert "encoder 1 +1" in blob
+    assert "fader 1 touched" in blob
+    # the unknown control still shows its bytes, so it can be identified
+    assert "(unmapped)" in blob and "b0 63 07" in blob
+
+
+def test_the_monitor_does_not_grow_without_bound(monkeypatch, console):
+    from xbridge import run as xrun
+
+    r = xrun.Runner(log=lambda *a: None)
+    surface = r.bridge.surfaces[0]
+    for i in range(200):
+        r._note_midi(surface, mcu.fader_out(0, i / 200))
+    assert len(r.last_midi) == 12
+
+
+def test_a_broken_surface_decoder_cannot_stop_the_monitor():
+    """Diagnostics must never be the thing that takes the bridge down."""
+    from xbridge import run as xrun
+
+    class Exploding:
+        name = "boom"
+
+        def decode(self, data):
+            raise RuntimeError("nope")
+
+    r = xrun.Runner(log=lambda *a: None)
+    r._note_midi(Exploding(), b"\x90\x10\x7f")
+    assert r.last_midi and "(unmapped)" in r.last_midi[-1]

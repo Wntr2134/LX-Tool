@@ -58,7 +58,14 @@ def find_xtouch_port(names: list[str]) -> str | None:
     return find_surface_port(names, "xtouch")
 
 
-_PORT_HINTS = {"xtouch": ("x-touch", "xtouch"), "mpk": ("mpk",)}
+_PORT_HINTS = {
+    "xtouch": ("x-touch", "xtouch"),
+    "mpk": ("mpk",),
+    # An X32 in DAW-remote mode arrives as the X-USB card's MIDI port, as
+    # a plain "X32", or - over RTPMIDI - under whatever the rtpMIDI
+    # session was named, which is why the port can also be picked by hand.
+    "x32mc": ("x32", "m32", "x-usb", "xusb"),
+}
 
 
 def find_surface_port(names: list[str], surface: str) -> str | None:
@@ -126,6 +133,30 @@ def _open_pair(mido, in_name: str, out_name: str):
         raise
 
 
+def _describe_event(ev) -> str:
+    """One decoded surface event as a line a human can act on."""
+    from . import mcu
+    from .surfaces import KnobSet
+
+    if isinstance(ev, mcu.FaderMoved):
+        who = "master" if ev.strip == 8 else f"fader {ev.strip + 1}"
+        return f"{who} -> {ev.unit * 100:.0f}%"
+    if isinstance(ev, mcu.FaderTouched):
+        who = "master" if ev.strip == 8 else f"fader {ev.strip + 1}"
+        return f"{who} {'touched' if ev.touching else 'released'}"
+    if isinstance(ev, mcu.EncoderTurned):
+        return f"encoder {ev.encoder + 1} {ev.ticks:+d}"
+    if isinstance(ev, KnobSet):
+        return f"knob {ev.knob + 1} -> {ev.unit * 100:.0f}%"
+    if isinstance(ev, mcu.ButtonPressed):
+        for label, notes in (("SELECT", mcu.SELECT), ("MUTE", mcu.MUTE)):
+            if ev.note in notes:
+                return (f"{label} {notes.index(ev.note) + 1} "
+                        f"{'down' if ev.down else 'up'}")
+        return f"button note {ev.note} {'down' if ev.down else 'up'}"
+    return type(ev).__name__
+
+
 def midi_available() -> bool:
     try:
         import mido  # noqa: F401
@@ -167,6 +198,10 @@ class Runner:
         # fader does nothing" is unanswerable: it cannot be told apart
         # from "the bridge sent nothing at all".
         self.last_sent: list = []
+        # The last few things the surface said, decoded. A control that
+        # produces nothing here is not mapped wrong - it never arrived,
+        # which is a different problem with a different fix.
+        self.last_midi: list = []
         self._log = log
 
     def stop(self) -> None:
@@ -184,6 +219,22 @@ class Runner:
             line = str(datagram)
         self.last_sent.append(line)
         del self.last_sent[:-8]
+
+    def _note_midi(self, surface, raw: bytes) -> None:
+        """Record one surface message, decoded, for the MIDI monitor.
+
+        Shows the raw bytes as well as the reading, because an unmapped
+        control shows its bytes and no reading - which is exactly what
+        someone needs in order to say what it should do.
+        """
+        try:
+            events = surface.decode(raw)
+        except Exception:              # noqa: BLE001 - never break the loop
+            events = []
+        what = ", ".join(_describe_event(e) for e in events) or "(unmapped)"
+        name = getattr(surface, "name", "?")
+        self.last_midi.append(f"{name}  {raw.hex(' ')}  {what}")
+        del self.last_midi[:-12]
 
     def test_send(self, strip: int = 0, level: float = 0.5) -> str:
         """Pretend a fader moved, so the console can be tested without
@@ -332,8 +383,10 @@ class Runner:
                     for msg in mi.iter_pending():
                         worked = True
                         self.counters["midi_in"] += 1
+                        raw = bytes(msg.bytes())
+                        self._note_midi(surface, raw)
                         for datagram in self.bridge.midi_in(
-                                bytes(msg.bytes()), surface=surface):
+                                raw, surface=surface):
                             self._send(sock, datagram)
                 if self.bridge.config.page != page:
                     page = self.bridge.config.page
