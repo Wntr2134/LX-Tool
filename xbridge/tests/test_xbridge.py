@@ -1818,16 +1818,18 @@ def test_the_other_functions_are_still_offered_for_mapping():
     assert raw and mcu.decode(raw[0]).strip == 3
 
 
-def test_autolearn_only_claims_the_master_fader():
-    """Rate and speed report percentages too. Letting them claim a strip
-    would bind a motor to something nobody was looking at."""
+def test_autolearn_claims_one_function_per_strip():
+    """Whichever fader function answers first owns the strip. The others
+    keep reporting under their own keys and drive nothing, so a rate
+    change can never move a strip that master is already on."""
     b = _plain()
-    b.midi_in(mcu.fader_out(0, 0.44))
-    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderRate", 3, 44.0))))
-    assert b.config.ma3_feedback == {}
     b.midi_in(mcu.fader_out(0, 0.44))
     b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 44.0))))
     assert b.config.ma3_feedback == {"14.9:FaderMaster": 1}
+
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderRate", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.9:FaderMaster": 1}
+    assert "14.9:FaderRate" in b.target.unmapped
 
 
 def test_mappings_saved_before_the_function_key_still_work():
@@ -1850,3 +1852,60 @@ def test_a_fader_function_is_recognised_by_its_prefix_not_a_substring():
 
     (led,) = b.osc_in(osc.encode(osc.Message("/14.9", ("CrossFader", 1, 1))))
     assert led == mcu.button_led(mcu.SELECT[1], True)
+
+
+def test_a_fader_assigned_to_rate_still_learns():
+    """A sequence's fader can be assigned to Rate, Speed or XFade rather
+    than Master, and then Master is never reported at all. Insisting on
+    FaderMaster meant such a rig could never learn its own strips."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.47))
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.config.ma3_feedback == {"14.14.1.6.1:FaderRate": 1}
+    assert raw and mcu.decode(raw[0]).strip == 0
+
+
+def test_a_non_fader_function_still_never_claims_a_strip():
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.47))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("Flash", 3, 47.0))))
+    assert b.config.ma3_feedback == {}
+
+
+def test_the_surface_reporting_its_own_motor_move_is_not_sent_on():
+    """The loop: console feedback drives the motor, the surface reports
+    that movement as if a hand had done it, the bridge sends it to the
+    console, the console reports it again. It saturates the link and the
+    fader creeps on its own."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.47)) == [], "the loop is still open"
+
+
+def test_a_real_move_is_never_swallowed_by_the_loop_guard():
+    """Only a near-identical value inside the window is dropped."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.80)) != []      # moved elsewhere
+    b2 = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1},
+                motor_echo_guard=0)                     # opt out entirely
+    b2.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b2.midi_in(mcu.fader_out(0, 0.47)) != []
+
+
+def test_the_loop_guard_expires():
+    """Coming back to the same value a minute later is a real move."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    b._motor[0] = (b._motor[0][0] - 60.0, b._motor[0][1])
+    assert b.midi_in(mcu.fader_out(0, 0.47)) != []
+
+
+def test_a_touched_fader_is_never_treated_as_a_motor_echo():
+    """A hand on the fader means no motor move was made, so nothing the
+    surface says can be an echo of one."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.midi_in(bytes((0x90, 104, 127)))            # finger down on strip 1
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.47)) != []

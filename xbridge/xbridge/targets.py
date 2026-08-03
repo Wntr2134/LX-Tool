@@ -252,10 +252,12 @@ class MA3Target:
         cfg = self.config
         if not getattr(cfg, "ma3_autolearn", True):
             return None
-        # Only the master fader means "this strip's level". Rate, speed
-        # and crossfade report percentages too, and would happily claim a
-        # strip that then jumped about for reasons nobody could see.
-        if func.lower() != "fadermaster":
+        # Any fader function may be the one on this executor - a sequence
+        # can have its fader assigned to Rate, Speed or XFade rather than
+        # Master, and then Master is never reported at all. What makes a
+        # claim safe is not the name but the correlation plus the guards
+        # below; the key carries the function, so the others stay separate.
+        if not func.lower().startswith("fader"):
             return None
         at = time.monotonic() if now is None else now
         table = getattr(cfg, "ma3_feedback", None)

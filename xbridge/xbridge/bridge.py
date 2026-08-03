@@ -111,6 +111,15 @@ class Config:
     # fader back there the moment you let go. Echoing what the fader
     # itself just reported cannot fight the hand - it is already there.
     local_echo: bool = True
+    # Ignore a surface fader move that only repeats the position the
+    # bridge just drove the motor to.
+    #
+    # Console feedback moves the motor; a surface that reports its own
+    # motor movement back sends that straight to the console, which
+    # reports it again - a loop that saturates the link and makes a fader
+    # crawl on its own. Only near-identical values inside this window are
+    # dropped, so a real move is never swallowed.
+    motor_echo_guard: float = 0.35     # seconds; 0 disables
     # MA3's playback feedback arrives addressed by pool index, not by
     # executor: /13.13.1.6.1 ,sif, "FaderMaster",3,63.5. Only the user
     # knows which object sits on which strip, so map them here:
@@ -139,6 +148,7 @@ class Bridge:
     target: object = None
     _enc_levels: dict = field(default_factory=dict)
     _touched: set = field(default_factory=set)
+    _motor: dict = field(default_factory=dict)   # strip -> (when, unit)
 
     surface: object = None
     surfaces: list = None
@@ -176,6 +186,8 @@ class Bridge:
             out += self.target.encoder(ev.knob, ev.unit)
 
         elif isinstance(ev, mcu.FaderMoved):
+            if self._is_motor_echo(ev.strip, ev.unit):
+                return []
             if ev.strip == 8:
                 out += self.target.master(ev.unit)
             else:
@@ -224,6 +236,24 @@ class Bridge:
 
     # ---- console -> surface ---------------------------------------------
 
+    def _is_motor_echo(self, strip: int, unit: float) -> bool:
+        """Is this the surface reporting a motor move we just made?"""
+        import time as _time
+
+        window = getattr(self.config, "motor_echo_guard", 0.0) or 0.0
+        if window <= 0:
+            return False
+        seen = self._motor.get(strip)
+        if not seen:
+            return False
+        when, was = seen
+        return (_time.monotonic() - when) <= window and abs(was - unit) <= 0.02
+
+    def _note_motor(self, strip: int, unit: float) -> None:
+        import time as _time
+
+        self._motor[strip] = (_time.monotonic(), unit)
+
     def echo_for(self, data: bytes, surface=None) -> list[bytes]:
         """Bytes to send back to the surface that just moved a fader.
 
@@ -266,6 +296,7 @@ class Bridge:
                 # Never fight the human hand on the fader.
                 if fb.strip in self._touched:
                     continue
+                self._note_motor(fb.strip, fb.unit)
             elif isinstance(fb, targets.RingFB):
                 self._enc_levels[fb.idx] = fb.unit
             out += surface.render(fb, targets)
