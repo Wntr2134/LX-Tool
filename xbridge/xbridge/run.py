@@ -170,7 +170,10 @@ _SURFACE_ADVICE = {
     "xtouch": "X-Touch: power on holding channel-1 SELECT, set MC + USB",
     "mpk": "MPK Mini: connect it by USB",
     "x32mc": ("X32/M32: Setup - Remote - protocol Mackie MCU, interface "
-              "Card MIDI, then press ENABLE. Card MIDI runs down the "
+              "Card MIDI, REMOTE BUTTON enabled - THEN PRESS THE DAW "
+              "REMOTE BUTTON on the console's top panel, which is what "
+              "actually hands the bus/output faders to the DAW; the "
+              "setup page only arms it. Card MIDI runs down the "
               "expansion CARD's USB-B socket (X-USB or X-LIVE) - not the "
               "REMOTE USB-B one, which is for X32-Edit and carries no "
               "MIDI - and that card's driver must be installed here. The "

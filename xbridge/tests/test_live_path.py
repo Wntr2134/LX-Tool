@@ -522,7 +522,7 @@ def test_the_waiting_message_names_the_surface_that_was_chosen():
     msg = xrun._no_surface_detail(["Microsoft GS Wavetable Synth"], x32)
     assert "x32mc" in msg
     assert "X-Touch" not in msg
-    assert "Card MIDI" in msg and "ENABLE" in msg
+    assert "Card MIDI" in msg and "DAW REMOTE" in msg
     assert "Microsoft GS Wavetable Synth" in msg
     assert "pick it in the MIDI port box" in msg
 
@@ -589,3 +589,15 @@ def test_an_x_live_port_does_not_steal_the_xtouch():
     names = ["X-LIVE MIDI In 0", "X-Touch 0"]
     assert xrun.find_surface_port(names, "x32mc") == "X-LIVE MIDI In 0"
     assert xrun.find_surface_port(names, "xtouch") == "X-Touch 0"
+
+
+def test_the_x32_advice_covers_the_whole_chain():
+    """Every step that silently produces nothing: the card's socket, the
+    driver, Card MIDI, and - the one everyone misses - actually pressing
+    DAW REMOTE, since the setup page only arms the button."""
+    from xbridge import run as xrun
+
+    advice = xrun._SURFACE_ADVICE["x32mc"].upper()
+    for step in ("MACKIE MCU", "CARD MIDI", "DAW REMOTE", "DRIVER",
+                 "X-LIVE", "X-USB"):
+        assert step in advice, step
