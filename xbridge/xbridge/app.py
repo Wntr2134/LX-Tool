@@ -246,6 +246,7 @@ PAGE = """<!doctype html>
  body{background:var(--bg);color:var(--ink);margin:0;
    font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:1.2rem}
  .wrap{max-width:46rem;margin:0 auto}
+ html,body{max-width:100%;overflow-x:hidden}
  h1{font-size:1.15rem;margin:.2rem 0 .1rem}
  h1 small{color:var(--amber);font-weight:500;font-size:.75rem;
    font-family:ui-monospace,Menlo,monospace}
@@ -262,9 +263,12 @@ PAGE = """<!doctype html>
    padding:.42rem .85rem;font-weight:600;font-size:.85rem;cursor:pointer}
  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
  .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.35rem 0}
+ /* Wrapping, not nowrap: a long status line used to widen the whole
+    page, which gave the control row enough width not to wrap - so on a
+    small screen the last controls sat off to the right, invisible. */
  #out{font-family:ui-monospace,Menlo,monospace;font-size:.76rem;
    background:var(--card2);border-radius:6px;padding:.5rem .6rem;margin-top:.6rem;
-   min-height:1.2rem;overflow-x:auto;white-space:nowrap}
+   min-height:1.2rem;white-space:pre-wrap;overflow-wrap:anywhere}
  #out .ok{color:var(--good)} #out .err{color:var(--bad)}
  .gridwrap{overflow-x:auto;margin-top:.5rem}
  table{border-collapse:collapse;font-size:.74rem;

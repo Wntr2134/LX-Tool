@@ -558,3 +558,34 @@ def test_the_x32_advice_names_the_right_usb_socket():
     advice = xrun._SURFACE_ADVICE["x32mc"]
     assert "X-USB" in advice and "REMOTE" in advice
     assert "driver" in advice
+
+
+def test_an_x_live_card_is_recognised_and_its_pair_found():
+    """The X32 in the field had an X-LIVE card, not X-USB, and the port
+    is named after the card: "X-LIVE MIDI In 0". Auto-detect missed it
+    entirely, and the two directions are "In"/"Out" rather than the
+    trailing-index pair Windows uses for an X-Touch."""
+    from xbridge import run as xrun
+
+    ins = ["X-LIVE MIDI In 0"]
+    outs = ["X-LIVE MIDI Out 1"]
+    found = xrun.find_surface_port(ins, "x32mc")
+    assert found == "X-LIVE MIDI In 0"
+    assert xrun._matching_port(found, outs) == "X-LIVE MIDI Out 1"
+
+
+def test_every_x32_card_flavour_is_recognised():
+    from xbridge import run as xrun
+
+    for name in ("X-USB MIDI In 0", "X-LIVE MIDI In 0", "X32 0", "M32 1",
+                 "XUSB 0", "XLIVE 2"):
+        assert xrun.find_surface_port([name], "x32mc") == name, name
+
+
+def test_an_x_live_port_does_not_steal_the_xtouch():
+    """Both surfaces at once must not cross-assign."""
+    from xbridge import run as xrun
+
+    names = ["X-LIVE MIDI In 0", "X-Touch 0"]
+    assert xrun.find_surface_port(names, "x32mc") == "X-LIVE MIDI In 0"
+    assert xrun.find_surface_port(names, "xtouch") == "X-Touch 0"

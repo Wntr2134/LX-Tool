@@ -61,10 +61,12 @@ def find_xtouch_port(names: list[str]) -> str | None:
 _PORT_HINTS = {
     "xtouch": ("x-touch", "xtouch"),
     "mpk": ("mpk",),
-    # An X32 in DAW-remote mode arrives as the X-USB card's MIDI port, as
-    # a plain "X32", or - over RTPMIDI - under whatever the rtpMIDI
-    # session was named, which is why the port can also be picked by hand.
-    "x32mc": ("x32", "m32", "x-usb", "xusb"),
+    # An X32 in DAW-remote mode arrives under whichever expansion card is
+    # fitted - X-USB or X-LIVE, and the card names the port, not the
+    # console ("X-LIVE MIDI In 0"). Over RTPMIDI it takes the session's
+    # name instead, which no list can predict, so the port can also be
+    # picked by hand.
+    "x32mc": ("x32", "m32", "x-usb", "xusb", "x-live", "xlive"),
 }
 
 
@@ -106,6 +108,13 @@ def _matching_port(name: str, candidates: list) -> str:
     for c in candidates:
         if _base_name(c) == base:
             return c
+    # "X-LIVE MIDI In" and "X-LIVE MIDI Out" are one device under two
+    # names; pair them by the direction word rather than by luck.
+    swapped = re.sub(r"\bin\b", "out", base)
+    if swapped != base:
+        for c in candidates:
+            if _base_name(c) == swapped:
+                return c
     for c in candidates:                      # last resort: a prefix match
         if base and _base_name(c).startswith(base[:8]):
             return c
@@ -162,9 +171,10 @@ _SURFACE_ADVICE = {
     "mpk": "MPK Mini: connect it by USB",
     "x32mc": ("X32/M32: Setup - Remote - protocol Mackie MCU, interface "
               "Card MIDI, then press ENABLE. Card MIDI runs down the "
-              "X-USB CARD's USB-B socket - not the REMOTE USB-B one, "
-              "which is for X32-Edit and carries no MIDI - and the "
-              "X-USB driver must be installed on this PC"),
+              "expansion CARD's USB-B socket (X-USB or X-LIVE) - not the "
+              "REMOTE USB-B one, which is for X32-Edit and carries no "
+              "MIDI - and that card's driver must be installed here. The "
+              "port is named after the card, e.g. \"X-LIVE MIDI In\""),
 }
 
 
