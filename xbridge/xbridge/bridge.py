@@ -116,6 +116,12 @@ class Config:
     # knows which object sits on which strip, so map them here:
     # {"13.13.1.6.1": 1} drives strip 1's motor from that object.
     ma3_feedback: dict = field(default_factory=dict)
+    # Work the feedback map out instead of being told it. When the bridge
+    # drives an executor and, moments later, an unclaimed pool address
+    # reports back that same level, that address is that strip's object.
+    # Moving each fader once teaches the lot. Ambiguous matches - two
+    # strips sitting at the same level - are declined rather than guessed.
+    ma3_autolearn: bool = True
     # Which hardware is in your hands, and the MPK's factory MIDI numbers.
     surface: str = "xtouch"            # "xtouch" | "mpk"
     mpk_knob_ccs: tuple = tuple(range(70, 78))

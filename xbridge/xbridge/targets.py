@@ -18,6 +18,7 @@ Two targets ship today:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from . import osc
@@ -64,6 +65,12 @@ class MA3Target:
         # {"13.13.1.6.1": ("FaderMaster", 63.5)}. The console names its
         # own objects, so this is the only way to learn them.
         self.unmapped: dict = {}
+        # (sent_at, strip, percent) for the last couple of seconds, so an
+        # arriving feedback level can be matched to the fader that caused
+        # it. Cleared as it ages; never grows.
+        self._recent: list = []
+        # Addresses claimed automatically, for the Runner to persist.
+        self.learned: list = []
 
     def _level(self, unit: float):
         """MA3's fader argument.
@@ -90,6 +97,7 @@ class MA3Target:
         if strip >= len(cfg.fader_execs):
             return []
         exec_no = cfg.fader_execs[strip]
+        self._note_sent(strip, unit * 100.0)
         if getattr(cfg, "ma3_fader", "osc") == "cmd":
             # The command line reaches the same fader without depending
             # on the OSC line's Fader/Page address cells at all. Needs
@@ -221,6 +229,46 @@ class MA3Target:
                                  unit > 0)]
         return []
 
+    _RECENT_SECS = 2.5
+    _MATCH_PCT = 1.5
+
+    def _note_sent(self, strip: int, pct: float, now: float | None = None) -> None:
+        at = time.monotonic() if now is None else now
+        self._recent = [r for r in self._recent
+                        if at - r[0] <= self._RECENT_SECS]
+        self._recent.append((at, strip, pct))
+
+    def _autolearn(self, addr: str, level: float,
+                   now: float | None = None) -> int | None:
+        """Which strip just asked for this level, if exactly one did.
+
+        The console names its objects by pool index and never says which
+        executor they sit on, so the only honest way to connect the two
+        is to watch: drive a fader, see which address answers with that
+        value. Two strips at the same level is genuinely ambiguous, so it
+        is declined rather than guessed - a wrong motor mapping is worse
+        than none.
+        """
+        cfg = self.config
+        if not getattr(cfg, "ma3_autolearn", True):
+            return None
+        at = time.monotonic() if now is None else now
+        table = getattr(cfg, "ma3_feedback", None)
+        if table is None:
+            table = cfg.ma3_feedback = {}
+        taken = set(table.values())
+        hits = {strip for sent_at, strip, pct in self._recent
+                if at - sent_at <= self._RECENT_SECS
+                and abs(pct - level) <= self._MATCH_PCT
+                and (strip + 1) not in taken}
+        if len(hits) != 1:
+            return None
+        strip = hits.pop()
+        table[addr] = strip + 1
+        self.learned.append((addr, strip + 1))
+        self.unmapped.pop(addr, None)
+        return strip + 1
+
     def _playback_feedback(self, msg: osc.Message):
         """MA3's *output* format, which is nothing like its input format.
 
@@ -252,7 +300,7 @@ class MA3Target:
         if level is None:
             return None
         table = getattr(self.config, "ma3_feedback", {}) or {}
-        strip = table.get(addr)
+        strip = table.get(addr) or self._autolearn(addr, level)
         if strip is None:
             # Nothing to drive yet, but this is the address a user needs
             # in order to map it, so remember it rather than dropping it

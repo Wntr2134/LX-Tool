@@ -1640,3 +1640,96 @@ def test_remapping_to_another_strip_replaces_rather_than_duplicates():
         xrun_mod.store_config = real
         xapp._runner = None
     assert out["map"] == {"14.14.1.6.1": 5}
+
+
+# ---- learning the feedback map without being told ----------------------
+
+
+def test_moving_a_fader_teaches_which_address_is_that_strip():
+    """The console names its objects by pool index and never says which
+    executor they sit on. But it does answer a fader move with that
+    move's level, so driving a fader identifies its address."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.44))            # strip 1 -> 44%
+    raw = b.osc_in(osc.encode(osc.Message("/14.14.1.6.1",
+                                          ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.14.1.6.1": 1}
+    assert raw and mcu.decode(raw[0]).strip == 0     # and it drives it
+    assert b.target.learned == [("14.14.1.6.1", 1)]
+
+
+def test_each_strip_learns_its_own_address():
+    b = _plain()
+    for strip, (unit, addr) in enumerate([(0.10, "/14.1"), (0.35, "/14.2"),
+                                          (0.80, "/14.3")]):
+        b.midi_in(mcu.fader_out(strip, unit))
+        b.osc_in(osc.encode(osc.Message(addr,
+                                        ("FaderMaster", 3, unit * 100))))
+    assert b.config.ma3_feedback == {"14.1": 1, "14.2": 2, "14.3": 3}
+
+
+def test_an_ambiguous_match_is_declined_not_guessed():
+    """Two strips sitting at the same level cannot be told apart, and a
+    wrong motor mapping is worse than none."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.50))
+    b.midi_in(mcu.fader_out(3, 0.50))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 50.0))))
+    assert b.config.ma3_feedback == {}
+    assert "14.9" in b.target.unmapped        # still offered by hand
+
+
+def test_a_stale_report_does_not_claim_a_strip():
+    """Feedback arriving long after the move it might match is not
+    evidence - the console could be reporting anything by then."""
+    b = _plain()
+    b.target._note_sent(0, 44.0, now=1000.0)
+    assert b.target._autolearn("14.9", 44.0, now=1000.0 + 30) is None
+    assert b.target._autolearn("14.9", 44.0, now=1000.0 + 1) == 1
+
+
+def test_a_level_that_does_not_match_claims_nothing():
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 80.0))))
+    assert b.config.ma3_feedback == {}
+
+
+def test_a_strip_already_spoken_for_is_not_claimed_twice():
+    """Otherwise a second object at the same level would steal a strip
+    that is already working."""
+    b = _plain(ma3_feedback={"14.1": 1})
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.2", ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.1": 1}
+    assert "14.2" in b.target.unmapped
+
+
+def test_autolearn_can_be_turned_off():
+    b = _plain(ma3_autolearn=False)
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {}
+    assert "14.9" in b.target.unmapped
+
+
+def test_what_is_learned_is_saved(tmp_path, monkeypatch):
+    """Learning that lasts until the app closes is not learning, and the
+    bridge cannot ask for a Save press mid-show."""
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402]})
+
+    r = xrun.Runner(log=lambda *a: None)
+    r.bridge.config.fader_execs = (401, 402)
+    r.bridge.midi_in(mcu.fader_out(0, 0.44))
+    r.bridge.osc_in(osc.encode(osc.Message("/14.14.1.6.1",
+                                           ("FaderMaster", 3, 44.0))))
+    r._persist_learned()
+
+    kept = xrun.load_stored_config()
+    assert kept.ma3_feedback == {"14.14.1.6.1": 1}
+    assert kept.fader_execs == (401, 402)     # nothing else disturbed
+    assert r.bridge.target.learned == []      # drained, not re-saved forever

@@ -350,6 +350,29 @@ class Runner:
                     self._inject = []
                     return
 
+    def _persist_learned(self) -> None:
+        """Write auto-learned feedback mappings to the stored mapping.
+
+        Learning that only lasts until the app closes is not learning, and
+        the bridge cannot ask the user to press Save mid-show.
+        """
+        learned = getattr(self.bridge.target, "learned", None)
+        if not learned:
+            return
+        pairs, learned[:] = list(learned), []
+        try:
+            body = {f.name: (list(v) if isinstance(v := getattr(
+                self.bridge.config, f.name), tuple) else v)
+                for f in fields(Config)}
+            table = dict(body.get("ma3_feedback") or {})
+            table.update({a: s for a, s in pairs})
+            body["ma3_feedback"] = table
+            store_config(body)
+            for addr, strip in pairs:
+                self._log(f"learned: strip {strip} follows /{addr}")
+        except Exception as exc:      # noqa: BLE001 - never break the show
+            self._log(f"could not save learned mapping: {exc}")
+
     def _note_osc(self, datagram: bytes, msg, intents) -> None:
         """Record one message from the console and its effect."""
         if msg is None:
@@ -594,6 +617,7 @@ class Runner:
                         for raw in self.bridge.render_for(surface, intents):
                             mout.send(mido.Message.from_bytes(raw))
                 self._drain_inject(mido, conns)
+                self._persist_learned()
                 for datagram in self.bridge.tick(time.monotonic()):
                     self._send(sock, datagram)
                 # A configured surface plugged in mid-session joins live.

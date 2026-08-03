@@ -970,3 +970,50 @@ def test_the_app_passes_the_named_output_through(monkeypatch):
         xapp._runner, xapp._thread = None, None
     assert seen["midi_out_port"] == "X-LIVE MIDI Out 1"
     assert seen["midi_port"] == "X-LIVE MIDI In 0"
+
+
+def test_the_live_loop_saves_what_it_learns(monkeypatch, console, tmp_path):
+    """Persisting only when something calls it by hand is not persisting."""
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3"})
+
+    mido, midi_in, midi_out = _x32()
+    listen = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listen.bind(("127.0.0.1", 0))
+    port = listen.getsockname()[1]
+    listen.close()
+
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=port, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", r.detail
+        midi_in.feed(mcu.fader_out(0, 0.44))          # strip 1 -> 44%
+        time.sleep(0.3)
+        out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        out.sendto(osc.encode(osc.Message("/14.14.1.6.1",
+                                          ("FaderMaster", 3, 44.0))),
+                   ("127.0.0.1", port))
+        out.close()
+        end = time.monotonic() + 3
+        while time.monotonic() < end and not (tmp_path / "map.json").is_file():
+            time.sleep(0.02)
+        saved = {}
+        end = time.monotonic() + 3
+        while time.monotonic() < end and not saved.get("ma3_feedback"):
+            saved = xrun.load_stored_config().__dict__
+            time.sleep(0.05)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    assert saved.get("ma3_feedback") == {"14.14.1.6.1": 1}, \
+        "the loop learned it but never wrote it down"

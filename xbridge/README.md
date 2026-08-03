@@ -455,7 +455,15 @@ Then check, in this order:
    console's **current page**, so the surface's bank buttons will not
    change which executors are hit. Set `ma3_page_cmd` (try
    `Select Page {page}`) if the console should follow the bank.
-8. **Motor faders need a feedback map — but the app learns it.** MA3
+8. **Motor faders map themselves.** Move each surface fader once with
+   the bridge running: the console answers with the level you just sent,
+   and whichever pool address answers is that strip's object. The
+   mapping is saved as it happens, so it survives a restart. Two strips
+   sitting at the same level is genuinely ambiguous, so that case is
+   declined rather than guessed and offered for a manual click instead.
+   Turn it off with `ma3_autolearn` if you would rather map by hand.
+
+   The manual path, and how to correct a mistake: MA3
    does not echo `/Page1/Fader201` back; playback feedback arrives
    addressed by pool index, e.g.
    `/13.13.1.6.1 ,sif, "FaderMaster",3,63.5`. Which object sits on which
