@@ -278,6 +278,8 @@ def api_learn_assign(key: str = Form(...), do: str = Form(...),
         if not cmd.strip():
             raise HTTPException(400, "a command line action needs a command")
         table[key] = {"do": "cmd", "cmd": cmd.strip()}
+    elif do == "master":
+        table[key] = {"do": "master"}
     elif do in ("key", "fader", "enc"):
         if exec_no <= 0:
             raise HTTPException(400, "give the executor number to drive")
@@ -661,7 +663,13 @@ function setHTML(id, html) {
   // say) would otherwise make every comparison differ and defeat this.
   if (_painted[id] === html) return;
   const el = $(id);
-  if (el.contains(document.activeElement)) return;
+  // Hold off only for something being EDITED - a dropdown mid-choice, a
+  // half-typed field. A focused button must not freeze its own panel:
+  // clicking one leaves the focus there, and the panel would then never
+  // show the result of the click.
+  const a = document.activeElement;
+  if (a && el.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))
+    return;
   el.innerHTML = html;
   _painted[id] = html;
 }
@@ -688,6 +696,7 @@ function renderLearn(d) {
          '<option value="key">press executor key</option>' +
          '<option value="fader">drive executor fader</option>' +
          '<option value="enc">turn executor encoder</option>' +
+         '<option value="master">drive the grand master</option>' +
          '<option value="cmd">run a command line</option>' +
          `</select> <input type="number" id="lk_exec" placeholder="exec" ` +
          `style="width:5rem"> <input type="text" id="lk_cmd" ` +
@@ -696,7 +705,8 @@ function renderLearn(d) {
   }
   for (const k of keys) {
     const v = lm[k] || {};
-    const what = v.do === 'cmd' ? `run <code>${esc(v.cmd)}</code>`
+    const what = v.do === 'master' ? 'drive the grand master'
+      : v.do === 'cmd' ? `run <code>${esc(v.cmd)}</code>`
       : v.do === 'key' ? `press Key${esc(v.exec)}`
       : v.do === 'enc' ? `turn Encoder${esc(v.exec)}`
       : `drive Fader${esc(v.exec)}`;

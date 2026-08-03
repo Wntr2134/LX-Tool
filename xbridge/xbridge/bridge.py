@@ -138,6 +138,7 @@ class Config:
     #   "note:24"   -> {"do": "key",  "exec": 205}
     #   "fader:2"   -> {"do": "fader","exec": 207}
     #   "enc:4"     -> {"do": "enc",  "exec": 303}
+    #   "fader:7"   -> {"do": "master"}          the console's own master
     #   "note:94"   -> {"do": "cmd",  "cmd": "Off Executor 1.201"}
     #
     # An entry here wins over the default mapping for that control; every
@@ -216,6 +217,13 @@ class Bridge:
             return None
         target, do = self.target, spec.get("do")
         exec_no = spec.get("exec")
+
+        if do == "master":
+            # The console's own master, from any fader on the surface.
+            unit = getattr(ev, "unit", None)
+            if unit is None:
+                return []
+            return target.master(float(unit))
 
         if do == "cmd":
             cmd = str(spec.get("cmd", "")).strip()

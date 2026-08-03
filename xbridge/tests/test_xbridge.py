@@ -2216,3 +2216,37 @@ def test_the_repaint_guard_compares_against_what_it_last_wrote():
     guard = guard[:guard.index("\n}")]
     assert "el.innerHTML === html" not in guard
     assert "_painted[id] === html" in guard
+
+
+def test_a_fader_can_be_learned_to_drive_the_grand_master():
+    """Mapping the console's master to a strip only makes the MOTOR
+    follow - the outbound direction still went to that strip's executor,
+    so the fader moved when the console did but could not move it back.
+    A learn action for the master closes the loop from any fader."""
+    b = _plain(learn_map={"fader:7": {"do": "master"}})
+    (d,) = b.midi_in(mcu.fader_out(7, 0.62))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert msg.args == ("Master 2.1 At 62.0",)
+
+    # paired with the feedback mapping, that same fader is two-way
+    b2 = _plain(learn_map={"fader:7": {"do": "master"}},
+                ma3_feedback={"14.13.2.1:FaderMaster": 8})
+    raw = b2.osc_in(osc.encode(osc.Message(
+        "/14.13.2.1", ("FaderMaster", 3, 62.0))))
+    assert raw and mcu.decode(raw[0]).strip == 7
+
+
+def test_a_focused_button_does_not_freeze_its_own_panel():
+    """Clicking a button leaves the focus on it. Holding off the repaint
+    for anything focused meant the panel could never show the result of
+    the click - a mapping saved, and the list still saying "nothing
+    mapped yet"."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    guard = script[script.index("function setHTML("):]
+    guard = guard[:guard.index("\n}")]
+    assert "INPUT|SELECT|TEXTAREA" in guard, (
+        "the repaint guard holds off for any focused element, so a panel "
+        "freezes as soon as a button in it is clicked")
