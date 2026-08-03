@@ -432,7 +432,21 @@ Then check, in this order:
    console's **current page**, so the surface's bank buttons will not
    change which executors are hit. Set `ma3_page_cmd` (try
    `Select Page {page}`) if the console should follow the bank.
-8. **Motor faders need a feedback map.** MA3 does not echo
+8. **Motor faders need a feedback map — but the app learns it.** MA3
+   does not echo `/Page1/Fader201` back; playback feedback arrives
+   addressed by pool index, e.g.
+   `/13.13.1.6.1 ,sif, "FaderMaster",3,63.5`. Which object sits on which
+   strip is knowledge only your show has, so the panel now *listens*:
+   move a fader on the console and any address it reports that no strip
+   claims appears under **console reported**, with buttons 1–8. Click the
+   strip you want it to drive and it is saved and live immediately. (For
+   this the console needs a **Send** line pointed at the bridge's listen
+   port — OSCData 2 in the setup above.)
+9. **Faders that spring back on release** mean the surface was never
+   told where you left them: a motorised MCU surface holds the value the
+   DAW last sent it, not the one your hand left. XBridge echoes every
+   move straight back (`local_echo`, on by default), which is what a DAW
+   does. If a surface ever fights itself, turn it off in the mapping. MA3 does not echo
    `/Page1/Fader201` back; playback feedback arrives addressed by pool
    index, e.g. `/13.13.1.6.1,sif,"FaderMaster",3,63.5`. Only you know
    which object is on which strip, so set `ma3_feedback` in the mapping:

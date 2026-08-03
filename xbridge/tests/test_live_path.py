@@ -678,3 +678,37 @@ def test_a_dead_surface_output_cannot_hang_the_loop(monkeypatch, console):
         r.stop()
         t.join(timeout=3)
     assert alive, "a failing surface output killed the run loop"
+
+
+def test_a_fader_move_is_echoed_to_the_surface_by_the_live_loop(monkeypatch,
+                                                                console):
+    """The echo has to reach the actual port, not just be computed. This
+    is the fix for "the fader springs back when I let go"."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", r.detail
+        midi_out.sent.clear()
+        midi_in.feed(mcu.fader_out(4, 0.62))
+        end = time.monotonic() + 3
+        moves = []
+        while time.monotonic() < end and not moves:
+            moves = [m for m in (mcu.decode(x) for x in list(midi_out.sent))
+                     if isinstance(m, mcu.FaderMoved)]
+            time.sleep(0.02)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    assert moves, "the surface was never told where it put the fader"
+    assert moves[-1].strip == 4
+    assert moves[-1].unit == pytest.approx(0.62, abs=0.01)

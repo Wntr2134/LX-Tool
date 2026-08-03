@@ -31,6 +31,10 @@ def api_status() -> dict:
         "counters": r.counters if r else {},
         "sent": list(r.last_sent) if r else [],
         "midi": list(r.last_midi) if r else [],
+        "unmapped": ([{"addr": a, "func": f, "level": lv}
+                      for a, (f, lv) in
+                      getattr(r.bridge.target, "unmapped", {}).items()]
+                     if r else []),
     }
 
 
@@ -191,6 +195,34 @@ def api_probe_apply(index: int = Form(...)) -> dict:
     xrun.store_config(body)
     return {"ok": True, "prefix": prefix, "ma3_value": value,
             "ma3_addr": addr_form}
+
+
+@app.post("/api/feedback/learn")
+def api_feedback_learn(addr: str = Form(...), strip: int = Form(...)) -> dict:
+    """Point one of the console's own feedback addresses at a strip.
+
+    MA3 reports playback by pool index (/13.13.1.6.1), never by executor,
+    so which object drives which motor is knowledge only the console has
+    and only the user can match up. Listening for what actually arrives
+    turns that from a hand-written table into a click.
+    """
+    from . import run as xrun
+
+    if not 1 <= strip <= 9:
+        raise HTTPException(400, "strip must be 1-9 (9 = master)")
+    clean = addr.strip().lstrip("/")
+    if not clean or not all(p.isdigit() for p in clean.split(".")):
+        raise HTTPException(400, f"not a pool address: {addr!r}")
+    body = api_config()["config"]
+    table = dict(body.get("ma3_feedback") or {})
+    table[clean] = strip
+    body["ma3_feedback"] = table
+    xrun.store_config(body)
+    if _runner is not None:
+        # Take effect now rather than at the next restart.
+        _runner.bridge.config.ma3_feedback = table
+        getattr(_runner.bridge.target, "unmapped", {}).pop(clean, None)
+    return {"ok": True, "addr": clean, "strip": strip, "map": table}
 
 
 @app.get("/api/ma3-setup")
@@ -420,6 +452,15 @@ async function refresh() {
       if (d.midi && d.midi.length)
         line += '<br><b>surface says:</b><br>' +
           d.midi.slice(-6).map(m => '<code>' + esc(m) + '</code>').join('<br>');
+      if (d.unmapped && d.unmapped.length) {
+        line += '<br><b>console reported (not mapped to a strip yet):</b><br>' +
+          d.unmapped.map(u =>
+            `<code>/${esc(u.addr)}</code> ${esc(u.func)} ` +
+            `${Number(u.level).toFixed(1)}% &rarr; drive strip ` +
+            [1,2,3,4,5,6,7,8].map(n =>
+              `<button class="ghost" onclick="learnFb('${esc(u.addr)}',${n})">${n}</button>`
+            ).join(' ')).join('<br>');
+      }
     }
     else if (d.state === 'error') line = `<span class="err">${esc(d.detail)}</span>`;
     else if (d.available) line = 'stopped';
@@ -517,6 +558,16 @@ async function probeKeep(i) {
       'Restart the bridge to use it.';
     loadCfg();
   } catch (e) { $('probeout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+async function learnFb(addr, strip) {
+  const fd = new FormData(); fd.append('addr', addr); fd.append('strip', strip);
+  try {
+    const d = await (await post('/api/feedback/learn', fd)).json();
+    $('out').innerHTML = `strip ${d.strip} now follows <code>/${esc(d.addr)}</code>` +
+      ' - move it on the console and the motor should follow.';
+    setTimeout(refresh, 1200);
+  } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 async function wiggle() {

@@ -102,6 +102,15 @@ class Config:
     # unverified one is what made the fader syntax wrong in the first
     # place - try "Select Page {page}" in the mapping editor and see.
     ma3_page_cmd: str = ""
+    # Re-assert a fader to the surface right after it moves it.
+    #
+    # A motorised MCU surface holds the position the DAW last told it,
+    # not the one your hand left it at. A DAW echoes every fader move
+    # straight back, so the two agree; a bridge that stays silent leaves
+    # the surface still believing the old value, and the motor drags the
+    # fader back there the moment you let go. Echoing what the fader
+    # itself just reported cannot fight the hand - it is already there.
+    local_echo: bool = True
     # MA3's playback feedback arrives addressed by pool index, not by
     # executor: /13.13.1.6.1 ,sif, "FaderMaster",3,63.5. Only the user
     # knows which object sits on which strip, so map them here:
@@ -208,6 +217,23 @@ class Bridge:
         return []
 
     # ---- console -> surface ---------------------------------------------
+
+    def echo_for(self, data: bytes, surface=None) -> list[bytes]:
+        """Bytes to send back to the surface that just moved a fader.
+
+        Deliberately bypasses touch suppression: this is not the console
+        arguing with a hand, it is the surface being told the value it
+        just sent, which is where the fader already is.
+        """
+        if not getattr(self.config, "local_echo", True):
+            return []
+        surface = surface or self.surface
+        out: list[bytes] = []
+        for ev in surface.decode(data):
+            if isinstance(ev, mcu.FaderMoved):
+                out += surface.render(targets.FaderFB(ev.strip, ev.unit),
+                                      targets)
+        return out
 
     def osc_in(self, datagram: bytes) -> list[bytes]:
         """One OSC datagram from the console -> MIDI for the X-Touch."""

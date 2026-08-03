@@ -60,6 +60,10 @@ class MA3Target:
     def __init__(self, config):
         self.config = config
         self._enc_pos: dict = {}
+        # Playback feedback the console sent that no strip claims yet:
+        # {"13.13.1.6.1": ("FaderMaster", 63.5)}. The console names its
+        # own objects, so this is the only way to learn them.
+        self.unmapped: dict = {}
 
     def _level(self, unit: float):
         """MA3's fader argument.
@@ -250,6 +254,13 @@ class MA3Target:
         table = getattr(self.config, "ma3_feedback", {}) or {}
         strip = table.get(addr)
         if strip is None:
+            # Nothing to drive yet, but this is the address a user needs
+            # in order to map it, so remember it rather than dropping it
+            # silently. The panel offers these for one-click assignment.
+            self.unmapped[addr] = (msg.args[0], level)
+            del_extra = len(self.unmapped) - 16
+            for k in list(self.unmapped)[:max(0, del_extra)]:
+                self.unmapped.pop(k, None)
             return []
         func = msg.args[0].lower()
         idx = int(strip) - 1

@@ -1477,3 +1477,109 @@ def test_the_command_line_route_follows_the_bank_only_when_told_how():
 
 def _wire_one(messages):
     return [osc.encode(m) for m in messages]
+
+
+# ---- holding position, and learning the console's feedback --------------
+
+
+def test_a_fader_move_is_echoed_back_so_the_motor_holds():
+    """A motorised MCU surface holds the value the DAW last told it. A
+    bridge that says nothing leaves the surface believing the old value,
+    and the motor drags the fader back the moment the hand comes off."""
+    b = _plain(surface="x32mc")
+    raw = mcu.fader_out(2, 0.6)
+    (echo,) = b.echo_for(raw)
+    ev = mcu.decode(echo)
+    assert isinstance(ev, mcu.FaderMoved)
+    assert ev.strip == 2
+    assert ev.unit == pytest.approx(0.6, abs=0.01)
+
+
+def test_the_echo_is_not_suppressed_by_touch():
+    """Touch suppression stops the CONSOLE fighting a hand. The echo is
+    the surface's own value coming back, so it cannot fight anything -
+    and suppressing it is exactly when it is needed, because a hand is
+    on the fader."""
+    b = _plain()
+    b.midi_in(bytes((0x90, 104, 127)))          # finger down on strip 1
+    assert b.echo_for(mcu.fader_out(0, 0.8)), "echo suppressed while touched"
+
+
+def test_the_echo_can_be_turned_off():
+    b = _plain(local_echo=False)
+    assert b.echo_for(mcu.fader_out(0, 0.5)) == []
+
+
+def test_only_faders_are_echoed():
+    """Buttons and encoders have their own state on the surface; echoing
+    them would fight the LED feedback the console sends."""
+    b = _plain()
+    assert b.echo_for(bytes((0x90, mcu.SELECT[0], 127))) == []
+    assert b.echo_for(bytes((0xB0, 16, 1))) == []
+
+
+def test_unmapped_console_feedback_is_remembered_for_learning():
+    """MA3 reports playback by pool index, never by executor, so which
+    object drives which motor is knowledge only the user has. Dropping
+    those messages silently left nothing to map from."""
+    b = _plain()
+    b.osc_in(osc.encode(osc.Message("/13.13.1.6.1", ("FaderMaster", 3, 63.5))))
+    b.osc_in(osc.encode(osc.Message("/13.12.3.1", ("FaderMaster", 3, 10.0))))
+    assert b.target.unmapped == {"13.13.1.6.1": ("FaderMaster", 63.5),
+                                 "13.12.3.1": ("FaderMaster", 10.0)}
+
+
+def test_learning_does_not_grow_without_bound():
+    b = _plain()
+    for i in range(60):
+        b.osc_in(osc.encode(osc.Message(f"/13.13.1.6.{i}",
+                                        ("FaderMaster", 3, 1.0))))
+    assert len(b.target.unmapped) <= 16
+
+
+def test_a_mapped_address_drives_the_motor_and_leaves_the_learn_list():
+    b = _plain(ma3_feedback={"13.13.1.6.1": 3})
+    raw = b.osc_in(osc.encode(osc.Message("/13.13.1.6.1",
+                                          ("FaderMaster", 3, 50.0))))
+    assert mcu.decode(raw[0]).strip == 2          # strip 3 is index 2
+    assert "13.13.1.6.1" not in b.target.unmapped
+
+
+def test_learning_an_address_takes_effect_without_a_restart(tmp_path,
+                                                            monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402]})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    out = xapp.api_feedback_learn(addr="/13.13.1.6.1", strip=2)
+
+    assert out["strip"] == 2 and out["addr"] == "13.13.1.6.1"
+    # persisted, without losing the rest of the mapping
+    kept = xrun.load_stored_config()
+    assert kept.ma3_feedback == {"13.13.1.6.1": 2}
+    assert kept.fader_execs == (401, 402)
+    # and live on the running bridge
+    b = xapp._runner.bridge
+    raw = b.osc_in(osc.encode(osc.Message("/13.13.1.6.1",
+                                          ("FaderMaster", 3, 100.0))))
+    assert raw and mcu.decode(raw[0]).strip == 1
+
+
+def test_learning_refuses_nonsense():
+    from xbridge import app as xapp
+
+    for bad in ("", "not.an.address", "/Page1/Fader201"):
+        try:
+            xapp.api_feedback_learn(addr=bad, strip=1)
+        except Exception as exc:
+            assert "pool address" in str(exc)
+        else:
+            raise AssertionError(f"accepted {bad!r}")

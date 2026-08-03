@@ -471,6 +471,14 @@ class Runner:
                         for datagram in self.bridge.midi_in(
                                 raw, surface=surface):
                             self._send(sock, datagram)
+                        # Tell the surface where it just put the fader,
+                        # or its motor drags it back on release.
+                        mout = next((c[2] for c in conns if c[0] is surface),
+                                    None)
+                        if mout is not None:
+                            for echo in self.bridge.echo_for(raw,
+                                                             surface=surface):
+                                mout.send(mido.Message.from_bytes(echo))
                 if self.bridge.config.page != page:
                     page = self.bridge.config.page
                     for surface, _mi, mout, _p in conns:
