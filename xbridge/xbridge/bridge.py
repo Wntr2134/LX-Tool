@@ -87,7 +87,12 @@ class Config:
     # path that needs only Receive Command, and works when the executor
     # addressing does not.
     ma3_fader: str = "osc"        # osc | cmd
-    ma3_fader_cmd: str = "FaderMaster Page {page}.{exec} At {pct}"
+    # MA's OSC page shows "FaderMaster Page 1.201 At 50", but the
+    # FaderMaster keyword page documents "FaderMaster [Object] [Number]
+    # At [Value]" with the example "FaderMaster 205 At 50" - and Page is
+    # not an object type in that slot, so the OSC page's form is
+    # rejected as IllegalProperty on 2.4. The probe sweeps the variants.
+    ma3_fader_cmd: str = "FaderMaster Executor {page}.{exec} At {pct}"
     # MA3's playback feedback arrives addressed by pool index, not by
     # executor: /13.13.1.6.1 ,sif, "FaderMaster",3,63.5. Only the user
     # knows which object sits on which strip, so map them here:

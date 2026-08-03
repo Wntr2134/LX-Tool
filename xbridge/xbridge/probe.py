@@ -51,9 +51,29 @@ DIALECTS: tuple[tuple[str, str, str], ...] = (
     ("gma3", "float01", "page"),
     ("", "int255", "selected"),
     ("gma3", "int255", "selected"),
-    ("", "cmd", "page"),           # command line, no prefix
-    ("gma3", "cmd", "page"),       # command line, prefixed
+    ("", "cmd", "page"),           # command line, Executor page.exec
+    ("", "cmd2", "page"),          # command line, bare executor number
+    ("", "cmd3", "page"),          # command line, MA's OSC-page wording
+    ("gma3", "cmd", "page"),       # the same, prefixed
 )
+
+# MA documents two different command-line spellings for the same thing:
+# the FaderMaster keyword page says "FaderMaster [Object] [Number] At
+# [Value]" (example: "FaderMaster 205 At 50"), while the OSC page writes
+# "FaderMaster Page 1.201 At 50". "Page" is not an object type, and 2.4
+# answers that form with IllegalProperty - so all three are swept rather
+# than trusting either page.
+CMD_TEMPLATES = {
+    "cmd": "FaderMaster Executor {page}.{exec} At {pct}",
+    "cmd2": "FaderMaster {exec} At {pct}",
+    "cmd3": "FaderMaster Page {page}.{exec} At {pct}",
+}
+
+CMD_NAMES = {
+    "cmd": "command line, Executor page.exec",
+    "cmd2": "command line, executor only (current page)",
+    "cmd3": "command line, Page page.exec",
+}
 
 
 @dataclass
@@ -71,8 +91,8 @@ class Step:
     @property
     def label(self) -> str:
         pfx = f"/{self.prefix}" if self.prefix else "(no prefix)"
-        if self.value == "cmd":
-            return f"{self.index + 1}. {pfx} + command line (/cmd)"
+        if self.value in CMD_TEMPLATES:
+            return f"{self.index + 1}. {pfx} + {CMD_NAMES[self.value]}"
         page = "" if self.addr_form == "page" else " + no /Page"
         return f"{self.index + 1}. {pfx} + {self.value}{page}"
 
@@ -105,10 +125,13 @@ class Ma3Probe:
                addr_form: str = "page") -> Step:
         """Ask the real target to format it - the probe must not carry a
         second, drifting copy of the addressing rules."""
+        is_cmd = value in CMD_TEMPLATES
         cfg = Config(target="ma3", prefix=prefix, ma3_addr=addr_form,
                      page=self.page, fader_execs=(self.exec_,),
-                     ma3_fader="cmd" if value == "cmd" else "osc",
-                     ma3_value="int100" if value == "cmd" else value)
+                     ma3_fader="cmd" if is_cmd else "osc",
+                     ma3_value="int100" if is_cmd else value)
+        if is_cmd:
+            cfg.ma3_fader_cmd = CMD_TEMPLATES[value]
         target = make_target(cfg)
         step = Step(index=index, prefix=prefix, value=value,
                     addr_form=addr_form)
@@ -170,8 +193,9 @@ class Ma3Probe:
         step = self.steps[index]
         config.prefix = step.prefix
         config.ma3_addr = step.addr_form
-        if step.value == "cmd":
+        if step.value in CMD_TEMPLATES:
             config.ma3_fader = "cmd"
+            config.ma3_fader_cmd = CMD_TEMPLATES[step.value]
         else:
             config.ma3_fader = "osc"
             config.ma3_value = step.value

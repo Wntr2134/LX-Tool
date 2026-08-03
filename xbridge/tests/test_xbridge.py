@@ -1094,8 +1094,10 @@ def test_probe_covers_every_documented_dialect():
     from xbridge.probe import DIALECTS, Ma3Probe
 
     assert len(set(DIALECTS)) == len(DIALECTS), "a step is duplicated"
-    assert {v for _, v, _ in DIALECTS} == {"int100", "float100", "float01",
-                                           "int255", "cmd"}
+    from xbridge.probe import CMD_TEMPLATES
+    assert {v for _, v, _ in DIALECTS} >= {"int100", "float100", "float01",
+                                           "int255"}
+    assert {v for _, v, _ in DIALECTS} & set(CMD_TEMPLATES) == set(CMD_TEMPLATES)
     assert {p for p, _, _ in DIALECTS} == {"", "gma3"}
     assert {a for _, _, a in DIALECTS} == {"page", "selected"}
     # The first step must be the stock console, so the common case is
@@ -1150,11 +1152,14 @@ def test_probe_answer_can_be_kept():
     from xbridge.probe import DIALECTS, Ma3Probe
 
     p = Ma3Probe()
+    from xbridge.probe import CMD_TEMPLATES
+
     for i, (prefix, value, addr_form) in enumerate(DIALECTS):
         cfg = p.apply(Config(), i)
         assert (cfg.prefix, cfg.ma3_addr) == (prefix, addr_form)
-        if value == "cmd":
+        if value in CMD_TEMPLATES:
             assert cfg.ma3_fader == "cmd"
+            assert cfg.ma3_fader_cmd == CMD_TEMPLATES[value]
         else:
             assert (cfg.ma3_fader, cfg.ma3_value) == ("osc", value)
 
@@ -1387,11 +1392,14 @@ def test_the_command_line_route_bypasses_executor_addressing():
     (d,) = b.midi_in(mcu.fader_out(0, 0.5))
     msg = osc.decode(d)
     assert msg.address == "/cmd"
-    assert msg.args == ("FaderMaster Page 1.201 At 50.0",)
+    # "FaderMaster Page 1.201 At 50" is what MA's OSC page prints, but the
+    # FaderMaster keyword page documents an [Object] in that slot and 2.4
+    # answers "Page" there with IllegalProperty.
+    assert msg.args == ("FaderMaster Executor 1.201 At 50.0",)
     # it follows the page and the mapped executor like the OSC route does
     b2 = _plain(ma3_fader="cmd", page=3, fader_execs=(207,))
     (d,) = b2.midi_in(mcu.fader_out(0, 1.0))
-    assert osc.decode(d).args == ("FaderMaster Page 3.207 At 100.0",)
+    assert osc.decode(d).args == ("FaderMaster Executor 3.207 At 100.0",)
 
 
 def test_the_command_line_route_honours_the_prefix():
@@ -1405,19 +1413,28 @@ def test_the_probe_offers_the_command_line_route_last():
     what a stock console uses."""
     from xbridge.probe import DIALECTS, Ma3Probe
 
-    cmd_steps = [i for i, (_, v, _) in enumerate(DIALECTS) if v == "cmd"]
-    assert cmd_steps == [len(DIALECTS) - 2, len(DIALECTS) - 1]
+    from xbridge.probe import CMD_TEMPLATES
+
+    cmd_steps = [i for i, (_, v, _) in enumerate(DIALECTS)
+                 if v in CMD_TEMPLATES]
+    # they come last: executor addressing is what a stock console uses
+    assert cmd_steps == list(range(len(DIALECTS) - len(cmd_steps),
+                                   len(DIALECTS)))
     steps = Ma3Probe(exec_=205).steps
-    lines = [steps[i].line for i in cmd_steps]
-    assert lines[0] == "/cmd FaderMaster Page 1.205 At 75.0"
-    assert lines[1] == "/gma3/cmd FaderMaster Page 1.205 At 75.0"
+    lines = {steps[i].line for i in cmd_steps}
+    assert "/cmd FaderMaster Executor 1.205 At 75.0" in lines
+    assert "/cmd FaderMaster 205 At 75.0" in lines
+    assert "/cmd FaderMaster Page 1.205 At 75.0" in lines
+    assert "/gma3/cmd FaderMaster Executor 1.205 At 75.0" in lines
     assert all(s.address for s in steps)
 
 
 def test_keeping_a_command_line_step_switches_the_route():
     from xbridge.probe import DIALECTS, Ma3Probe
 
-    idx = len(DIALECTS) - 2
+    idx = next(i for i, (p, v, _) in enumerate(DIALECTS)
+               if v == "cmd2" and p == "")
     cfg = Ma3Probe().apply(Config(), idx)
     assert cfg.ma3_fader == "cmd"
+    assert cfg.ma3_fader_cmd == "FaderMaster {exec} At {pct}"
     assert cfg.prefix == ""
