@@ -2439,3 +2439,13 @@ def test_the_pairing_warning_reaches_the_panel():
         xapp._runner = None
     assert body["pairing"] and "grand master" in body["pairing"][0]
     assert "pairing" in xapp.PAGE or "d.pairing" in xapp.PAGE
+
+
+def test_learning_a_fader_says_how_to_get_the_motor_back():
+    """Learn sets the outbound direction only; the motor follows once the
+    console has answered a move. Leaving that to be discovered is what
+    made a two-way master take four steps instead of two."""
+    from xbridge.app import PAGE
+
+    assert "the motor " in PAGE and "learns to follow it" in PAGE
+    assert "act === 'fader' || act === 'master'" in PAGE

@@ -65,6 +65,13 @@ heard of. It names what you pressed and asks what it should do:
 | turn executor encoder | `/Page<n>/Encoder<exec>`, accumulated from the ticks |
 | run a command line | `/cmd` with your text, e.g. `Off Executor 1.201` — once, on the press |
 
+**The two directions are separate, and only one needs doing by hand.**
+Learn sets what a control *sends*. What comes *back* — the motor
+following the console — is the feedback map, and that learns itself: make
+the assignment, move the fader once, and the console's answer teaches it.
+So a two-way grand master on fader 8 is: learn fader 8 → *drive the
+grand master*, then move fader 8. Two steps, not four.
+
 **Reassigning releases the old owner.** Give executor 208 to fader 3 and
 fader 8 — which had it by default — stops sending, rather than both
 driving it. The same applies between learned controls, to the grand

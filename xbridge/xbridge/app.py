@@ -1055,8 +1055,16 @@ async function learnSave(key) {
   fd.append('exec_no', $('lk_exec').value || '0');
   fd.append('cmd', $('lk_cmd').value || '');
   try {
+    const act = $('lk_do').value;
     await post('/api/learn/assign', fd);
-    $('out').innerHTML = `<code>${esc(key)}</code> assigned.`;
+    // Learning sets the outbound direction only. The motor follows once
+    // the console has answered a move, so say that rather than leaving
+    // it to be discovered.
+    const back = (act === 'fader' || act === 'master') && key.startsWith('fader:')
+      ? ' Now move that fader once: the console answers, and the motor ' +
+        'learns to follow it. Both directions then work.'
+      : '';
+    $('out').innerHTML = `<code>${esc(key)}</code> assigned.` + back;
     refresh();
   } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
