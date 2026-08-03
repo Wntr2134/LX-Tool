@@ -821,3 +821,83 @@ def test_a_failing_output_drops_the_rest_of_the_sweep():
     r.wiggle(step=0.0, now=100.0)
     r._drain_inject(Mido(), [(None, None, Port(), "p")], now=200.0)
     assert r._inject == []
+
+
+def _input_only(name="X-LIVE MIDI In 0"):
+    """A card that offers an input but no matching output."""
+    ins = {name: FakePort(name)}
+    outs = {"Microsoft GS Wavetable Synth 0":
+            FakePort("Microsoft GS Wavetable Synth 0")}
+    return FakeMido(ins, outs), ins[name]
+
+
+def test_a_surface_with_no_output_port_is_reported_not_hidden(monkeypatch,
+                                                              console):
+    """The silent failure: with no output the bridge drops every motor,
+    LED and display write and still says "running". Everything the user
+    tries then fails for a reason nothing on screen mentions."""
+    from xbridge import run as xrun
+
+    mido, midi_in = _input_only()
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running"
+        detail, deaf = r.detail, list(r.no_output)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    assert deaf == ["X-LIVE MIDI In 0"]
+    assert "no MIDI OUTPUT" in detail
+    assert "motors, LEDs and displays cannot be driven" in detail
+    assert "Microsoft GS Wavetable Synth 0" in detail   # what it did see
+
+
+def test_the_surface_test_refuses_when_there_is_no_output(monkeypatch):
+    """Rather than reporting success for frames sent into nothing."""
+    from xbridge import app as xapp
+
+    class FakeRunner:
+        state = "running"
+        no_output = ["X-LIVE MIDI In 0"]
+
+    class FakeThread:
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    monkeypatch.setattr(xapp, "_thread", FakeThread())
+    try:
+        xapp.api_wiggle()
+    except Exception as exc:
+        assert "no MIDI output port" in str(exc)
+    else:
+        raise AssertionError("wiggling a one-way surface reported success")
+
+
+def test_a_paired_output_leaves_the_warning_off(monkeypatch, console):
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32("X-LIVE MIDI In 0", "X-LIVE MIDI Out 1")
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        detail, deaf = r.detail, list(r.no_output)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+    assert deaf == []
+    assert "WARNING" not in detail

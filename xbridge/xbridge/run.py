@@ -267,6 +267,8 @@ class Runner:
         # is a different fault from nothing arriving at all, and the
         # counter alone cannot tell them apart.
         self.last_osc: list = []
+        # Surfaces opened for input only. Nothing can be sent to them.
+        self.no_output: list = []
         # Motor/LED test frames queued from the UI, each with the time it
         # is due. The session loop owns the ports exclusively - on Windows
         # nothing else can open them while it runs - so a "wiggle the
@@ -483,8 +485,18 @@ class Runner:
             except Exception as exc:  # noqa: BLE001 - half-plugged: try later
                 self._log(f"could not open {in_name!r}: {exc}")
                 continue
+            if pair[1] is None:
+                # Everything the bridge sends the surface - motors, LEDs,
+                # scribble strips - goes nowhere without an output port,
+                # and did so silently. Say it once, loudly.
+                self._log(f"{in_name!r} opened for INPUT ONLY: no matching "
+                          f"MIDI output. Outputs seen: "
+                          f"{', '.join(outs) or 'none'}")
             conns.append((surface, pair[0], pair[1], in_name))
         return conns
+
+    def surfaces_without_output(self, conns) -> list:
+        return [c[3] for c in conns if c[2] is None]
 
     def _session(self, mido, port_name: str, sock) -> None:
         """One connected stretch: from first port open until stop/error."""
@@ -496,6 +508,14 @@ class Runner:
             self.state = "running"
             self.detail = (f"{self.midi_name} <-> {self.ma3[0]}:{self.ma3[1]}"
                            f" (feedback on :{self.recv_port})")
+            deaf = self.surfaces_without_output(conns)
+            self.no_output = deaf
+            if deaf:
+                outs = ", ".join(_port_names(mido, "output")) or "none"
+                self.detail += (
+                    f"  --  WARNING: no MIDI OUTPUT for {', '.join(deaf)}, "
+                    "so motors, LEDs and displays cannot be driven at all. "
+                    f"Outputs this PC can see: {outs}")
             self._log(f"Surfaces: {self.midi_name}")
             self._log(f"Console:  sending to {self.ma3[0]}:{self.ma3[1]}, "
                       f"listening on :{self.recv_port}")

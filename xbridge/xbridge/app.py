@@ -32,6 +32,7 @@ def api_status() -> dict:
         "sent": list(r.last_sent) if r else [],
         "midi": list(r.last_midi) if r else [],
         "osc": list(r.last_osc) if r else [],
+        "no_output": list(getattr(r, "no_output", [])) if r else [],
         "unmapped": ([{"addr": a, "func": f, "level": lv}
                       for a, (f, lv) in
                       getattr(r.bridge.target, "unmapped", {}).items()]
@@ -63,6 +64,13 @@ def api_wiggle() -> dict:
         raise HTTPException(409, "start the bridge first")
     if _runner.state != "running":
         raise HTTPException(409, f"no surface connected ({_runner.state})")
+    if getattr(_runner, "no_output", None):
+        raise HTTPException(
+            409, f"{', '.join(_runner.no_output)} has no MIDI output port, "
+                 "so nothing can be sent to it - motors, LEDs and displays "
+                 "are all one-way. Check MIDI ports for an output whose "
+                 "name matches, or pick the right input in the MIDI port "
+                 "box so its output can be paired.")
     return {"ok": True, "frames": _runner.wiggle()}
 
 
