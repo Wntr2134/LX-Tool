@@ -901,3 +901,72 @@ def test_a_paired_output_leaves_the_warning_off(monkeypatch, console):
         t.join(timeout=3)
     assert deaf == []
     assert "WARNING" not in detail
+
+
+def test_an_output_port_can_be_named_when_pairing_cannot_find_it(monkeypatch,
+                                                                 console):
+    """Some cards present their two directions under unrelated names, and
+    a surface with no output is one-way: no motors, LEDs or displays. If
+    an output exists at all, it must be possible to just say which."""
+    from xbridge import run as xrun
+
+    ins = {"X-LIVE MIDI In 0": FakePort("X-LIVE MIDI In 0")}
+    outs = {"USB Audio Device 2": FakePort("USB Audio Device 2")}
+    mido = FakeMido(ins, outs)
+
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc",
+                    midi_out_port="USB Audio Device 2", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", r.detail
+        deaf = list(r.no_output)
+        end = time.monotonic() + 3
+        while time.monotonic() < end and not outs["USB Audio Device 2"].sent:
+            time.sleep(0.02)
+        got = list(outs["USB Audio Device 2"].sent)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    assert deaf == [], "a named output was still reported as missing"
+    assert got, "nothing reached the named output"
+    assert "USB Audio Device 2" in mido.opened
+
+
+def test_the_app_passes_the_named_output_through(monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    seen = {}
+
+    class FakeRunner:
+        state, detail, midi_name = "running", "", ""
+        counters, last_sent, last_midi, last_osc, no_output = {}, [], [], [], []
+
+        def __init__(self, **kw):
+            seen.update(kw)
+
+        def run(self):
+            return 0
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(xrun, "Runner", FakeRunner)
+    monkeypatch.setattr(xrun, "midi_available", lambda: True)
+    xapp._thread = None
+    try:
+        xapp.api_start(surface="x32mc", midi_port="X-LIVE MIDI In 0",
+                       midi_out_port="X-LIVE MIDI Out 1")
+    finally:
+        if xapp._thread is not None:
+            xapp._thread.join(timeout=2)
+        xapp._runner, xapp._thread = None, None
+    assert seen["midi_out_port"] == "X-LIVE MIDI Out 1"
+    assert seen["midi_port"] == "X-LIVE MIDI In 0"

@@ -220,6 +220,29 @@ The desktop app has the bridge as **section 7**: set the MA3 host (leave
 live state — which MIDI port it found, how many messages each side has
 sent. Start/stop it there; no terminal needed.
 
+## No MIDI output = a one-way surface
+
+A surface needs **two** ports: an input for what it sends, and an output
+for motors, LEDs and scribble strips. Press **MIDI ports** and read the
+`OUT:` line.
+
+If your device is missing from `OUT:`, the bridge still works — fader
+moves reach the console fine — but nothing can be sent *back*, so motor
+faders will not follow the desk, LEDs will not light, and **Test
+surface** refuses rather than pretending. The status line says so
+outright instead of leaving it to be discovered one broken feature at a
+time.
+
+If an output exists under a name the pairing does not recognise, pick it
+in **MIDI out** next to the input picker.
+
+If it is genuinely absent, it is driver-side: reinstall the card's
+driver (X-USB or X-LIVE — the manufacturer's, not class-compliant), try
+a different USB port and cable, and power-cycle the console with the
+cable attached. On an X32, `MIDI In/Out` (DIN) through any USB-MIDI
+interface is a bidirectional fallback when the card will not present an
+output.
+
 ## Proving a surface with the MIDI monitor
 
 While the bridge is running the panel shows **surface says:** — the last

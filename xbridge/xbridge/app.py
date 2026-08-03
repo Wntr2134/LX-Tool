@@ -96,7 +96,8 @@ def api_ports() -> dict:
 @app.post("/api/start")
 def api_start(host: str = Form("127.0.0.1"), send_port: int = Form(0),
               recv_port: int = Form(9000), target: str = Form(""),
-              surface: str = Form(""), midi_port: str = Form("")) -> dict:
+              surface: str = Form(""), midi_port: str = Form(""),
+              midi_out_port: str = Form("")) -> dict:
     """Start the bridge. midi_port empty = find the surface by name.
 
     Naming a port matters for anything the hints cannot recognise: an
@@ -120,6 +121,7 @@ def api_start(host: str = Form("127.0.0.1"), send_port: int = Form(0),
                           config_path=str(store) if store.is_file() else "",
                           target=target, surface=surface,
                           midi_port=midi_port,
+                          midi_out_port=midi_out_port,
                           log=lambda *a: None)
     _thread = threading.Thread(target=_runner.run, daemon=True)
     _thread.start()
@@ -371,8 +373,13 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <label>host</label><input type="text" id="host" value="127.0.0.1" style="width:9rem">
   <label>send</label><input type="number" id="send" placeholder="auto">
   <label>listen</label><input type="number" id="recv" value="9000">
-  <label>MIDI port</label>
+  <label>MIDI in</label>
   <select id="midiport" title="auto = find the surface by name">
+   <option value="">auto-detect</option>
+  </select>
+  <label>MIDI out</label>
+  <select id="midioutport"
+          title="the port the bridge sends motors, LEDs and labels to">
    <option value="">auto-detect</option>
   </select>
  </div>
@@ -487,6 +494,7 @@ async function start() {
   fd.append('recv_port', $('recv').value); fd.append('target', $('target').value);
   fd.append('surface', $('surface').value);
   fd.append('midi_port', $('midiport').value);
+  fd.append('midi_out_port', $('midioutport').value);
   try {
     await post('/api/start', fd);
     if (!timer) timer = setInterval(refresh, 2000);
@@ -614,13 +622,16 @@ async function loadPorts() {
   // (under the session's). So the list is offered to pick from.
   try {
     const d = await (await fetch('/api/ports')).json();
-    const sel = $('midiport'), keep = sel.value;
-    sel.innerHTML = '<option value="">auto-detect</option>';
-    for (const n of (d.inputs || [])) {
-      const o = document.createElement('option');
-      o.value = n; o.textContent = n; sel.appendChild(o);
+    for (const [id, names] of [['midiport', d.inputs || []],
+                               ['midioutport', d.outputs || []]]) {
+      const sel = $(id), keep = sel.value;
+      sel.innerHTML = '<option value="">auto-detect</option>';
+      for (const n of names) {
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n; sel.appendChild(o);
+      }
+      if (keep) sel.value = keep;
     }
-    if (keep) sel.value = keep;
   } catch (e) { /* the ports button reports this properly */ }
 }
 async function toggleMap() {

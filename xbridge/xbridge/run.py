@@ -235,6 +235,7 @@ class Runner:
 
     def __init__(self, *, ma3_host: str = "127.0.0.1", send_port: int = 0,
                  recv_port: int = 9000, midi_port: str = "",
+                 midi_out_port: str = "",
                  config_path: str = "", target: str = "", surface: str = "",
                  log=print):
         cfg = load_config(config_path or None)
@@ -249,6 +250,10 @@ class Runner:
         self.ma3 = (ma3_host, send_port)
         self.recv_port = recv_port
         self.midi_port = midi_port
+        # Named by hand when the output cannot be matched to the input by
+        # name - some cards present the two under unrelated names, and a
+        # surface with no output is one-way: no motors, LEDs or displays.
+        self.midi_out_port = midi_out_port
         self.stop_event = threading.Event()
         self.state = "starting"
         self.detail = ""
@@ -478,7 +483,11 @@ class Runner:
             in_name = want or find_surface_port(names, surface.name)
             if not in_name or any(in_name == c[3] for c in conns):
                 continue
-            out_name = (find_surface_port(outs, surface.name)
+            want_out = (self.midi_out_port
+                        if self.midi_out_port and len(self.bridge.surfaces) == 1
+                        else "")
+            out_name = (want_out
+                        or find_surface_port(outs, surface.name)
                         or _matching_port(in_name, outs))
             try:
                 pair = _open_pair(mido, in_name, out_name)
