@@ -31,6 +31,7 @@ def api_status() -> dict:
         "counters": r.counters if r else {},
         "sent": list(r.last_sent) if r else [],
         "midi": list(r.last_midi) if r else [],
+        "osc": list(r.last_osc) if r else [],
         "unmapped": ([{"addr": a, "func": f, "level": lv}
                       for a, (f, lv) in
                       getattr(r.bridge.target, "unmapped", {}).items()]
@@ -452,6 +453,9 @@ async function refresh() {
       if (d.midi && d.midi.length)
         line += '<br><b>surface says:</b><br>' +
           d.midi.slice(-6).map(m => '<code>' + esc(m) + '</code>').join('<br>');
+      if (d.osc && d.osc.length)
+        line += '<br><b>console says:</b><br>' +
+          d.osc.slice(-6).map(m => '<code>' + esc(m) + '</code>').join('<br>');
       if (d.unmapped && d.unmapped.length) {
         line += '<br><b>console reported (not mapped to a strip yet):</b><br>' +
           d.unmapped.map(u =>

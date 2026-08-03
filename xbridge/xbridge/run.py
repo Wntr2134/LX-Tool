@@ -201,6 +201,22 @@ def _no_surface_detail(names: list, surfaces: list) -> str:
             "under another name, pick it in the MIDI port box.")
 
 
+def _describe_intent(fb) -> str:
+    """One feedback intent as something a human can check against."""
+    from . import targets
+
+    if isinstance(fb, targets.FaderFB):
+        who = "master" if fb.strip == 8 else f"fader {fb.strip + 1}"
+        return f"move {who} to {fb.unit * 100:.0f}%"
+    if isinstance(fb, targets.ButtonFB):
+        return f"{fb.row.upper()} {fb.idx + 1} LED {'on' if fb.on else 'off'}"
+    if isinstance(fb, targets.RingFB):
+        return f"ring {fb.idx + 1} to {fb.unit * 100:.0f}%"
+    if isinstance(fb, targets.LabelFB):
+        return f"strip {fb.strip + 1} label {fb.text!r}"
+    return type(fb).__name__
+
+
 def midi_available() -> bool:
     try:
         import mido  # noqa: F401
@@ -246,6 +262,11 @@ class Runner:
         # produces nothing here is not mapped wrong - it never arrived,
         # which is a different problem with a different fix.
         self.last_midi: list = []
+        # The last few things the console said, decoded, with what the
+        # bridge made of them. "console in" climbing while nothing moves
+        # is a different fault from nothing arriving at all, and the
+        # counter alone cannot tell them apart.
+        self.last_osc: list = []
         # Motor/LED test frames queued from the UI. The session loop owns
         # the ports exclusively - on Windows nothing else can open them
         # while it runs - so a "wiggle the surface" test has to go out
@@ -303,6 +324,18 @@ class Runner:
                 except Exception as exc:      # noqa: BLE001
                     self._log(f"surface test: {exc}")
                     return
+
+    def _note_osc(self, datagram: bytes, msg, intents) -> None:
+        """Record one message from the console and its effect."""
+        if msg is None:
+            line = f"?? undecodable, {len(datagram)} bytes"
+        else:
+            args = " ".join(str(a) for a in msg.args)
+            what = (", ".join(_describe_intent(i) for i in intents)
+                    or "(nothing on the surface)")
+            line = f"{msg.address} {args}  ->  {what}".rstrip()
+        self.last_osc.append(line)
+        del self.last_osc[:-12]
 
     def _note_midi(self, surface, raw: bytes) -> None:
         """Record one surface message, decoded, for the MIDI monitor.
@@ -507,6 +540,7 @@ class Runner:
                     msg = osc.decode(datagram)
                     intents = (self.bridge.target.feedback(msg)
                                if msg is not None else [])
+                    self._note_osc(datagram, msg, intents)
                     for surface, _mi, mout, _p in conns:
                         if mout is None:
                             continue

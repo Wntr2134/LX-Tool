@@ -712,3 +712,51 @@ def test_a_fader_move_is_echoed_to_the_surface_by_the_live_loop(monkeypatch,
     assert moves, "the surface was never told where it put the fader"
     assert moves[-1].strip == 4
     assert moves[-1].unit == pytest.approx(0.62, abs=0.01)
+
+
+def test_the_console_monitor_shows_what_arrived_and_what_it_did(monkeypatch,
+                                                                console):
+    """"console in" climbing while nothing moves is a different fault
+    from nothing arriving, and a counter cannot tell them apart."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+    listen = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listen.bind(("127.0.0.1", 0))
+    port = listen.getsockname()[1]
+    listen.close()
+
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=port, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", r.detail
+        out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # one the bridge understands, one it does not
+        out.sendto(osc.encode(osc.Message("/Page1/Fader201", (50,))),
+                   ("127.0.0.1", port))
+        out.sendto(osc.encode(osc.Message("/13.13.1.6.1",
+                                          ("FaderMaster", 3, 63.5))),
+                   ("127.0.0.1", port))
+        out.close()
+        end = time.monotonic() + 3
+        while time.monotonic() < end and len(r.last_osc) < 2:
+            time.sleep(0.02)
+        seen = list(r.last_osc)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    blob = " | ".join(seen)
+    assert "/Page1/Fader201 50" in blob
+    assert "move fader 1 to 50%" in blob
+    # the pool-index form arrives but drives nothing until it is mapped,
+    # and saying so is the whole point
+    assert "/13.13.1.6.1" in blob
+    assert "(nothing on the surface)" in blob
+    assert r.counters["osc_in"] >= 2
