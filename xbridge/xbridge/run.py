@@ -267,10 +267,13 @@ class Runner:
         # is a different fault from nothing arriving at all, and the
         # counter alone cannot tell them apart.
         self.last_osc: list = []
-        # Motor/LED test frames queued from the UI. The session loop owns
-        # the ports exclusively - on Windows nothing else can open them
-        # while it runs - so a "wiggle the surface" test has to go out
-        # through the live connection rather than opening its own.
+        # Motor/LED test frames queued from the UI, each with the time it
+        # is due. The session loop owns the ports exclusively - on Windows
+        # nothing else can open them while it runs - so a "wiggle the
+        # surface" test goes out through the live connection. It has to be
+        # PACED: a motor fader needs time to travel, so a burst of levels
+        # sent at once is simply the last one, and the fader appears not
+        # to move at all.
         self._inject: list = []
         self._log = log
 
@@ -290,39 +293,54 @@ class Runner:
         self.last_sent.append(line)
         del self.last_sent[:-8]
 
-    def wiggle(self) -> int:
-        """Queue a sweep to the surface: proves the PC -> surface leg.
+    def wiggle(self, *, step: float = 0.35, now: float | None = None) -> int:
+        """Queue a paced sweep to the surface: proves the PC -> surface leg.
 
         Useful with no console at all: if the motors move and the LEDs
-        blink, output works, and anything still wrong is upstream.
+        blink, output works and anything still wrong is upstream.
+
+        The pacing is the point. A motorised fader takes a moment to
+        travel, so sending 0/25/50/75/100 in one burst leaves it at the
+        last value having appeared to do nothing - which reads exactly
+        like a dead output.
         """
+        at = time.monotonic() if now is None else now
         frames: list = []
+
+        def hold(delay: float, raws) -> None:
+            nonlocal at
+            at += delay
+            frames.extend((at, r) for r in raws)
+
         for level in (0.0, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0):
-            for strip in range(9):
-                frames.append(mcu.fader_out(strip, level))
-        for note in (*mcu.SELECT, *mcu.MUTE):
-            frames.append(mcu.button_led(note, True))
-        for note in (*mcu.SELECT, *mcu.MUTE):
-            frames.append(mcu.button_led(note, False))
-        for e in range(8):
-            frames.append(mcu.encoder_ring(e, 1.0, mode=2))
-            frames.append(mcu.encoder_ring(e, 0.0, mode=2))
+            hold(step, [mcu.fader_out(s, level) for s in range(9)])
+        hold(step, [mcu.button_led(n, True)
+                    for n in (*mcu.SELECT, *mcu.MUTE)])
+        hold(step, [mcu.button_led(n, False)
+                    for n in (*mcu.SELECT, *mcu.MUTE)])
+        hold(step, [mcu.encoder_ring(e, 1.0, mode=2) for e in range(8)])
+        hold(step, [mcu.encoder_ring(e, 0.0, mode=2) for e in range(8)])
         self._inject.extend(frames)
         return len(frames)
 
-    def _drain_inject(self, mido, conns) -> None:
-        """Push any queued test frames to every connected surface."""
+    def _drain_inject(self, mido, conns, now: float | None = None) -> None:
+        """Send the queued test frames that are due, and no more."""
         if not self._inject:
             return
-        frames, self._inject = self._inject, []
+        at = time.monotonic() if now is None else now
+        due = [raw for when, raw in self._inject if when <= at]
+        if not due:
+            return
+        self._inject = [(w, r) for w, r in self._inject if w > at]
         for _surface, _mi, mout, _p in conns:
             if mout is None:
                 continue
-            for raw in frames:
+            for raw in due:
                 try:
                     mout.send(mido.Message.from_bytes(raw))
                 except Exception as exc:      # noqa: BLE001
                     self._log(f"surface test: {exc}")
+                    self._inject = []
                     return
 
     def _note_osc(self, datagram: bytes, msg, intents) -> None:

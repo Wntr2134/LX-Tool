@@ -577,9 +577,10 @@ async function learnFb(addr, strip) {
 async function wiggle() {
   try {
     const d = await (await post('/api/wiggle', new FormData())).json();
-    $('out').innerHTML = `sent ${d.frames} frames to the surface - the ` +
-      'faders should sweep and the LEDs blink. If they do, the PC&rarr;surface ' +
-      'direction works and anything still wrong is upstream of it.';
+    $('out').innerHTML = `sweeping the surface (${d.frames} frames over ` +
+      'about 4 seconds) - watch the faders travel up and back down and the ' +
+      'LEDs blink. If they do, the PC&rarr;surface direction works and ' +
+      'anything still wrong is upstream of it.';
   } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 

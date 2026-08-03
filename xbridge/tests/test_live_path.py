@@ -622,9 +622,9 @@ def test_the_surface_test_goes_out_through_the_live_session(monkeypatch,
             time.sleep(0.02)
         assert r.state == "running", r.detail
         midi_out.sent.clear()
-        queued = r.wiggle()
+        queued = r.wiggle(step=0.01)
         assert queued > 0
-        end = time.monotonic() + 3
+        end = time.monotonic() + 5
         while time.monotonic() < end and len(midi_out.sent) < queued:
             time.sleep(0.02)
         got = list(midi_out.sent)
@@ -760,3 +760,64 @@ def test_the_console_monitor_shows_what_arrived_and_what_it_did(monkeypatch,
     assert "/13.13.1.6.1" in blob
     assert "(nothing on the surface)" in blob
     assert r.counters["osc_in"] >= 2
+
+
+def test_the_surface_sweep_is_paced_so_the_motors_can_travel():
+    """The bug this covers: every level went out in one pass, so a motor
+    fader only ever saw the last one (zero) and appeared not to move -
+    indistinguishable from an output that does not work at all."""
+    from xbridge import run as xrun
+
+    r = xrun.Runner(log=lambda *a: None)
+    r.wiggle(step=0.3, now=1000.0)
+    times = sorted({w for w, _ in r._inject})
+    assert len(times) >= 8, "the whole sweep lands at once"
+    assert times[-1] - times[0] >= 2.0, "too fast for a fader to travel"
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert min(gaps) >= 0.29
+
+
+def test_only_frames_that_are_due_are_sent():
+    from xbridge import run as xrun
+
+    sent = []
+
+    class Port:
+        def send(self, msg):
+            sent.append(bytes(msg.data))
+
+    class Mido:
+        Message = types.SimpleNamespace(
+            from_bytes=lambda raw: types.SimpleNamespace(data=raw))
+
+    conns = [(None, None, Port(), "p")]
+    r = xrun.Runner(log=lambda *a: None)
+    r.wiggle(step=1.0, now=100.0)
+    total = len(r._inject)
+
+    r._drain_inject(Mido(), conns, now=100.0)
+    assert sent == [], "frames went out before they were due"
+    r._drain_inject(Mido(), conns, now=101.5)
+    first = len(sent)
+    assert 0 < first < total, f"{first} of {total} went at once"
+    r._drain_inject(Mido(), conns, now=999.0)
+    assert len(sent) == total
+    assert r._inject == []
+
+
+def test_a_failing_output_drops_the_rest_of_the_sweep():
+    """Rather than retrying a dead port every 2ms for the next 4s."""
+    from xbridge import run as xrun
+
+    class Port:
+        def send(self, msg):
+            raise OSError("gone")
+
+    class Mido:
+        Message = types.SimpleNamespace(
+            from_bytes=lambda raw: types.SimpleNamespace(data=raw))
+
+    r = xrun.Runner(log=lambda *a: None)
+    r.wiggle(step=0.0, now=100.0)
+    r._drain_inject(Mido(), [(None, None, Port(), "p")], now=200.0)
+    assert r._inject == []
