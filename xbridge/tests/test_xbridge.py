@@ -2184,3 +2184,35 @@ def test_polled_panels_are_written_through_the_guarded_setter():
             f"{panel} is repainted directly, so the poll will clobber "
             "anything the user is in the middle of")
         assert f"setHTML('{panel}'" in script
+
+
+def test_a_live_value_does_not_rebuild_the_row_it_sits_in():
+    """The mapping buttons were unclickable: the level in each row moves
+    with every message the console sends, so baking it into the markup
+    made the row differ on every poll and the button was destroyed
+    between the press and the release. The structure is keyed on the
+    addresses; the number is written into a span afterwards."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    row = script[script.index("for (const u of un)"):]
+    row = row[:row.index("setHTML('feed_maps'")]
+    assert "Number(u.level)" not in row, (
+        "the changing level is back in the row markup, so the buttons "
+        "will be rebuilt under the pointer again")
+    assert 'id="lv_${slug(u.addr)}"' in row
+    assert "cell.textContent = Number(u.level)" in script
+
+
+def test_the_repaint_guard_compares_against_what_it_last_wrote():
+    """Comparing against the element's current innerHTML defeats itself
+    as soon as anything is written into that markup afterwards - the
+    live level made every comparison differ, so nothing was ever
+    skipped."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    guard = script[script.index("function setHTML("):]
+    guard = guard[:guard.index("\n}")]
+    assert "el.innerHTML === html" not in guard
+    assert "_painted[id] === html" in guard

@@ -649,15 +649,21 @@ let timer = null, cfg = null;
 let running = false;
 
 function sect(id, on) { $(id).style.display = on ? '' : 'none'; }
+const slug = s => String(s).replace(/[^A-Za-z0-9]/g, '_');
 
 // Repainting a panel every poll destroys whatever the user is using: an
 // open dropdown closes, half-typed text vanishes. So only write when the
 // content has actually changed, and never while the focus is inside.
+const _painted = {};
 function setHTML(id, html) {
+  // Compare against what WE last wrote, not the element's current
+  // innerHTML: values written into the markup afterwards (a live level,
+  // say) would otherwise make every comparison differ and defeat this.
+  if (_painted[id] === html) return;
   const el = $(id);
-  if (el.innerHTML === html) return;
   if (el.contains(document.activeElement)) return;
   el.innerHTML = html;
+  _painted[id] = html;
 }
 
 function tile(id, n) {
@@ -716,16 +722,25 @@ function renderMaps(d) {
   if (!keys.length)
     h += '<div class="idle">Nothing mapped yet. With the bridge running, ' +
          'move each surface fader once and it learns itself.</div>';
+  // The level moves with every message. Baking it into the markup meant
+  // the row - buttons and all - was rebuilt on every poll, so a button
+  // was destroyed between pressing it and letting go and the click never
+  // landed. The structure is keyed on the addresses only; the number is
+  // written into a span afterwards, which disturbs nothing.
   for (const u of un)
     h += `<div class="maprow"><code>/${esc(String(u.addr).split(':')[0])}</code> ` +
          `${esc(u.func)} ` +
-         `${Number(u.level).toFixed(1)}% &rarr; strip ` +
+         `<span id="lv_${slug(u.addr)}"></span> &rarr; strip ` +
          [1,2,3,4,5,6,7,8].map(n =>
            `<button class="ghost" onclick="learnFb('${esc(u.addr)}',${n})">${n}</button>`
          ).join(' ') +
          ` <button class="ghost" title="the master fader"` +
          ` onclick="learnFb('${esc(u.addr)}',9)">MST</button></div>`;
   setHTML('feed_maps', h);
+  for (const u of un) {
+    const cell = document.getElementById('lv_' + slug(u.addr));
+    if (cell) cell.textContent = Number(u.level).toFixed(1) + '%';
+  }
 }
 
 function renderFeeds(d) {
