@@ -317,6 +317,45 @@ def api_ma3_setup(host: str = "127.0.0.1", send_port: int = 8000,
     }
 
 
+@app.post("/api/config/reset")
+def api_config_reset(what: str = Form("all")) -> dict:
+    """Put settings back, in whole or in part.
+
+    Learning writes as it goes, so a session spent testing leaves entries
+    behind that are wrong for the next show. Clearing them had meant
+    finding and editing config.json by hand.
+    """
+    from dataclasses import fields as dc_fields
+
+    from . import run as xrun
+
+    fresh = xrun.Config()
+    if what == "all":
+        body = {f.name: (list(v) if isinstance(v := getattr(fresh, f.name),
+                                               tuple) else v)
+                for f in dc_fields(fresh)}
+        cleared = "every setting"
+    elif what in ("learn", "feedback"):
+        key = "learn_map" if what == "learn" else "ma3_feedback"
+        body = api_config()["config"]
+        body[key] = {}
+        cleared = ("learned controls" if what == "learn"
+                   else "motor feedback mappings")
+    else:
+        raise HTTPException(400, f"nothing called {what!r} to reset")
+
+    xrun.store_config(body)
+    if _runner is not None:
+        # Apply the parts that can change without a restart; ports and
+        # surfaces are fixed for the life of a session.
+        cfg = _runner.bridge.config
+        cfg.learn_map = dict(body.get("learn_map") or {})
+        cfg.ma3_feedback = dict(body.get("ma3_feedback") or {})
+        getattr(_runner.bridge.target, "unmapped", {}).clear()
+    return {"ok": True, "cleared": cleared,
+            "restart": what == "all"}
+
+
 @app.get("/api/config/export")
 def api_config_export() -> FileResponse:
     from . import run as xrun
@@ -506,6 +545,12 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
     <option value="">auto-detect</option>
    </select>
    <button class="ghost" onclick="showPorts()">Refresh ports</button>
+  </div>
+  <div class="row">
+   <div class="lbl">Start again</div>
+   <button class="ghost" onclick="resetCfg('learn')">Forget learned controls</button>
+   <button class="ghost" onclick="resetCfg('feedback')">Forget motor mappings</button>
+   <button class="ghost" onclick="resetCfg('all')">Reset everything</button>
   </div>
  </div>
 
@@ -838,6 +883,20 @@ async function probeKeep(i) {
       'Restart the bridge to use it.';
     loadCfg();
   } catch (e) { $('probeout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+async function resetCfg(what) {
+  const ask = {all: 'Reset every setting to defaults?',
+               learn: 'Forget all learned controls?',
+               feedback: 'Forget all motor feedback mappings?'}[what];
+  if (!confirm(ask)) return;
+  const fd = new FormData(); fd.append('what', what);
+  try {
+    const d = await (await post('/api/config/reset', fd)).json();
+    $('out').innerHTML = `Cleared ${esc(d.cleared)}.` +
+      (d.restart ? ' Stop and start the bridge for ports and surface to follow.' : '');
+    cfg = null; await loadCfg(); refresh();
+  } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 async function learnArm(on) {

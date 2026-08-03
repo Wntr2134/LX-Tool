@@ -2081,3 +2081,90 @@ def test_an_assignment_that_cannot_work_is_refused():
                 raise AssertionError(f"accepted {kw}")
     finally:
         xapp._runner = None
+
+
+# ---- starting again -----------------------------------------------------
+
+
+def test_learned_controls_can_be_cleared_without_losing_the_rest(tmp_path,
+                                                                 monkeypatch):
+    """Learning writes as it goes, so a session spent testing leaves
+    entries behind that are wrong for the next show."""
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402],
+                       "learn_map": {"note:40": {"do": "cmd", "cmd": "Go+"}},
+                       "ma3_feedback": {"14.1:FaderMaster": 1}})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(
+                learn_map={"note:40": {"do": "cmd", "cmd": "Go+"}},
+                ma3_feedback={"14.1:FaderMaster": 1}))
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    out = xapp.api_config_reset(what="learn")
+
+    kept = xrun.load_stored_config()
+    assert kept.learn_map == {}
+    assert kept.ma3_feedback == {"14.1:FaderMaster": 1}   # untouched
+    assert kept.fader_execs == (401, 402)                 # untouched
+    assert out["restart"] is False
+    # and live: the learned control goes back to doing nothing
+    assert xapp._runner.bridge.config.learn_map == {}
+
+
+def test_motor_mappings_can_be_cleared_on_their_own(tmp_path, monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3",
+                       "learn_map": {"note:40": {"do": "cmd", "cmd": "Go+"}},
+                       "ma3_feedback": {"14.1:FaderMaster": 1}})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(
+                ma3_feedback={"14.1:FaderMaster": 1}))
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    xapp.api_config_reset(what="feedback")
+
+    kept = xrun.load_stored_config()
+    assert kept.ma3_feedback == {}
+    assert kept.learn_map == {"note:40": {"do": "cmd", "cmd": "Go+"}}
+    assert xapp._runner.bridge.target.unmapped == {}
+
+
+def test_resetting_everything_restores_the_defaults(tmp_path, monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "eos", "prefix": "gma3", "page": 7,
+                       "fader_execs": [401], "ma3_value": "int255",
+                       "learn_map": {"note:40": {"do": "cmd", "cmd": "Go+"}}})
+
+    monkeypatch.setattr(xapp, "_runner", None)
+    out = xapp.api_config_reset(what="all")
+
+    kept = xrun.load_stored_config()
+    assert kept == xrun.Config(), "reset did not return to defaults"
+    assert out["restart"] is True, "the user was not told a restart is needed"
+
+
+def test_resetting_something_that_does_not_exist_is_refused():
+    from xbridge import app as xapp
+
+    try:
+        xapp.api_config_reset(what="everything-ever")
+    except Exception as exc:
+        assert "nothing called" in str(exc)
+    else:
+        raise AssertionError("accepted a reset target that does not exist")
