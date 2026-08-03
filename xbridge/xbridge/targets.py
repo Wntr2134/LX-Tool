@@ -146,6 +146,22 @@ class MA3Target:
         return [osc.Message(self._addr(f"Encoder{cfg.encoder_execs[idx]}"),
                             (step,))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         cmd = {"play": self.config.cmd_play, "stop": self.config.cmd_stop,
                "rewind": self.config.cmd_rewind,
@@ -409,6 +425,22 @@ class X32Target:
         return [osc.Message(f"/ch/{self._ch(idx):02d}/mix/pan",
                             (float(unit),))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         return []      # tape transport is possible; unmapped until asked for
 
@@ -524,6 +556,22 @@ class MagicQTarget:
         # Execute grid 1, items 1-8.
         return [osc.Message(f"/exec/1/{idx + 1}", (float(unit),))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         if key == "stop" and down:      # the one universally safe transport
             return [osc.Message("/dbo", (1,))]
@@ -621,6 +669,22 @@ class ResolumeTarget:
         return [osc.Message(f"/composition/layers/{self._layer(idx)}/master",
                             (float(unit),))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         return []
 
@@ -711,6 +775,22 @@ class CompanionTarget:
         return [osc.Message(self._loc(3, idx, verb))
                 for _ in range(min(8, abs(ticks)))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         col = {"rewind": 0, "fastfwd": 1, "stop": 2, "play": 3,
                "record": 4}.get(key)
@@ -773,6 +853,22 @@ class EosTarget:
 
     def encoder(self, idx: int, unit: float) -> list[osc.Message]:
         return []          # Eos encoders are a later, careful project
+
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         if key == "play":
@@ -865,6 +961,22 @@ class GenericOSCTarget:
             return []
         return [osc.Message(self._fill(t, self._n(idx)),
                             (self._level(unit),))]
+
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         return []

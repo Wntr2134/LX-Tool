@@ -52,6 +52,25 @@ session currently drives the primary surface only.) The OSC
 control port speaks: `/xbridge/fader/<n>`, `/xbridge/master`,
 `/xbridge/enc/<n>`, `/xbridge/key/select|mute/<n>`, `/xbridge/page`.
 
+## MIDI-learn: press a control, say what it does
+
+**Learn a control&hellip;** in the panel, then press anything on the
+surface — a fader, an encoder, a button the default mapping has never
+heard of. It names what you pressed and asks what it should do:
+
+| Action | Sends |
+|---|---|
+| press executor key | `/Page<n>/Key<exec>` — 1 on press, 0 on release |
+| drive executor fader | `/Page<n>/Fader<exec>` |
+| turn executor encoder | `/Page<n>/Encoder<exec>`, accumulated from the ticks |
+| run a command line | `/cmd` with your text, e.g. `Off Executor 1.201` — once, on the press |
+
+Learned controls are keyed by the control's own identity (`note:24`,
+`fader:2`, `enc:0`), so **any** key can be assigned, not only the rows
+the default mapping happens to cover. An entry wins over the default for
+that control and leaves everything else alone; **forget** puts it back.
+Saved as you go and live immediately — no restart.
+
 ## Remapping (the nice way)
 
 In the desktop app, section 7 → **Remap buttons & faders**: a grid of

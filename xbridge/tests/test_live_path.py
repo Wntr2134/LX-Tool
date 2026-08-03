@@ -1017,3 +1017,46 @@ def test_the_live_loop_saves_what_it_learns(monkeypatch, console, tmp_path):
 
     assert saved.get("ma3_feedback") == {"14.14.1.6.1:FaderMaster": 1}, \
         "the loop learned it but never wrote it down"
+
+
+def test_learn_catches_the_next_control_you_touch(monkeypatch, console):
+    """MIDI-learn's whole premise: arm it, press the thing, and the app
+    knows which control you meant without you counting note numbers."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", r.detail
+
+        # nothing is caught until it is armed
+        midi_in.feed(bytes((0x90, 40, 127)))
+        time.sleep(0.3)
+        assert r.learn_caught is None
+
+        r.learn_armed = True
+        midi_in.feed(bytes((0x90, mcu.MUTE[2], 127)))
+        end = time.monotonic() + 3
+        while time.monotonic() < end and r.learn_caught is None:
+            time.sleep(0.02)
+        caught = r.learn_caught
+        armed_after = r.learn_armed
+
+        # and it only catches one, so the next press is not stolen
+        midi_in.feed(bytes((0x90, mcu.SELECT[0], 127)))
+        time.sleep(0.3)
+        still = r.learn_caught
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    assert caught == {"key": f"note:{mcu.MUTE[2]}", "what": "MUTE 3 down"}
+    assert armed_after is False, "learn stayed armed and would grab the next press"
+    assert still == caught

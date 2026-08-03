@@ -274,6 +274,10 @@ class Runner:
         self.last_osc: list = []
         # Surfaces opened for input only. Nothing can be sent to them.
         self.no_output: list = []
+        # MIDI-learn: armed by the panel, filled by the next control the
+        # user touches, then read back and assigned.
+        self.learn_armed: bool = False
+        self.learn_caught: dict | None = None
         # Motor/LED test frames queued from the UI, each with the time it
         # is due. The session loop owns the ports exclusively - on Windows
         # nothing else can open them while it runs - so a "wiggle the
@@ -396,6 +400,15 @@ class Runner:
             events = surface.decode(raw)
         except Exception:              # noqa: BLE001 - never break the loop
             events = []
+        if self.learn_armed:
+            for ev in events:
+                key = self.bridge.control_key(ev)
+                if key and not key.startswith("fadertouch"):
+                    self.learn_caught = {"key": key,
+                                         "what": _describe_event(ev)}
+                    self.learn_armed = False
+                    self._log(f"learn: caught {key} ({self.learn_caught['what']})")
+                    break
         what = ", ".join(_describe_event(e) for e in events) or "(unmapped)"
         name = getattr(surface, "name", "?")
         self.last_midi.append(f"{name}  {raw.hex(' ')}  {what}")

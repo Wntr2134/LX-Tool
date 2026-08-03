@@ -131,6 +131,18 @@ class Config:
     # Moving each fader once teaches the lot. Ambiguous matches - two
     # strips sitting at the same level - are declined rather than guessed.
     ma3_autolearn: bool = True
+    # MIDI-learn: press a control, say what it should do. Keyed by the
+    # control's own identity, so ANY button can be assigned - not only
+    # the rows the default mapping happens to know about.
+    #
+    #   "note:24"   -> {"do": "key",  "exec": 205}
+    #   "fader:2"   -> {"do": "fader","exec": 207}
+    #   "enc:4"     -> {"do": "enc",  "exec": 303}
+    #   "note:94"   -> {"do": "cmd",  "cmd": "Off Executor 1.201"}
+    #
+    # An entry here wins over the default mapping for that control; every
+    # other control carries on as before.
+    learn_map: dict = field(default_factory=dict)
     # Which hardware is in your hands, and the MPK's factory MIDI numbers.
     surface: str = "xtouch"            # "xtouch" | "mpk"
     mpk_knob_ccs: tuple = tuple(range(70, 78))
@@ -178,8 +190,69 @@ class Bridge:
             out += self._event(ev)
         return _wire(out)
 
+    @staticmethod
+    def control_key(ev) -> str:
+        """One surface control's identity, stable across sessions.
+
+        Buttons are keyed by their raw note rather than by the row the
+        default mapping puts them in, so a key nothing currently uses can
+        still be assigned.
+        """
+        if isinstance(ev, surfaces.KnobSet):
+            return f"knob:{ev.knob}"
+        if isinstance(ev, mcu.FaderMoved):
+            return f"fader:{ev.strip}"
+        if isinstance(ev, mcu.EncoderTurned):
+            return f"enc:{ev.encoder}"
+        if isinstance(ev, mcu.ButtonPressed):
+            return f"note:{ev.note}"
+        return ""
+
+    def _learned(self, ev) -> list | None:
+        """Whatever the user assigned to this control, or None."""
+        table = getattr(self.config, "learn_map", None) or {}
+        spec = table.get(self.control_key(ev))
+        if not isinstance(spec, dict):
+            return None
+        target, do = self.target, spec.get("do")
+        exec_no = spec.get("exec")
+
+        if do == "cmd":
+            cmd = str(spec.get("cmd", "")).strip()
+            send = getattr(target, "command", None)
+            if not cmd or send is None:
+                return []
+            # Commands fire once, on the way down.
+            if isinstance(ev, mcu.ButtonPressed) and not ev.down:
+                return []
+            return send(cmd)
+
+        fn = {"key": "key_exec", "fader": "fader_exec",
+              "enc": "encoder_exec"}.get(do)
+        call = getattr(target, fn, None) if fn else None
+        if call is None or exec_no is None:
+            return []
+        if do == "key":
+            down = getattr(ev, "down", True)
+            return call(int(exec_no), bool(down))
+        unit = getattr(ev, "unit", None)
+        if unit is None and isinstance(ev, mcu.EncoderTurned):
+            level = self._enc_levels.get(ev.encoder, 0.0)
+            unit = max(0.0, min(1.0, level + ev.ticks * self.config.encoder_step))
+            self._enc_levels[ev.encoder] = unit
+        if unit is None:
+            return []
+        return call(int(exec_no), float(unit))
+
     def _event(self, ev) -> list:
         out: list = []
+
+        learned = self._learned(ev)
+        if learned is not None:
+            if isinstance(ev, mcu.FaderMoved):
+                if self._is_motor_echo(ev.strip, ev.unit):
+                    return []
+            return learned
 
         if isinstance(ev, surfaces.KnobSet):
             self._enc_levels[ev.knob] = ev.unit

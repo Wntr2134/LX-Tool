@@ -1946,3 +1946,138 @@ def test_the_master_does_not_steal_a_numbered_strip():
     b.midi_in(mcu.fader_out(0, 1.0))       # strip 1 also at full
     b.osc_in(osc.encode(osc.Message("/14.99", ("FaderMaster", 3, 100.0))))
     assert b.config.ma3_feedback["14.99:FaderMaster"] == 1
+
+
+# ---- MIDI-learn: press a control, say what it does ----------------------
+
+
+def test_a_learned_control_wins_over_the_default_mapping():
+    b = _plain(learn_map={f"note:{mcu.SELECT[0]}": {"do": "key", "exec": 205}})
+    (down,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    assert osc.decode(down) == osc.Message("/Page1/Key205", (1,))
+    (up,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 0)))
+    assert osc.decode(up) == osc.Message("/Page1/Key205", (0,))
+    # every other control is untouched
+    (other,) = b.midi_in(bytes((0x90, mcu.SELECT[1], 127)))
+    assert osc.decode(other) == osc.Message("/Page1/Key102", (1,))
+
+
+def test_any_button_can_be_assigned_not_just_the_mapped_rows():
+    """The point of learn: a key the default mapping ignores entirely is
+    still a key, and should be usable."""
+    # note 40 is one of the many keys the default mapping ignores; PLAY
+    # and the SELECT/MUTE rows already have jobs.
+    plain = _plain()
+    assert plain.midi_in(bytes((0x90, 40, 127))) == []      # nothing by default
+
+    b = _plain(learn_map={"note:40": {"do": "cmd",
+                                      "cmd": "Off Executor 1.201"}})
+    (d,) = b.midi_in(bytes((0x90, 40, 127)))
+    assert osc.decode(d) == osc.Message("/cmd", ("Off Executor 1.201",))
+
+
+def test_a_command_fires_once_not_on_the_release_too():
+    b = _plain(learn_map={"note:40": {"do": "cmd", "cmd": "Go+"}})
+    assert b.midi_in(bytes((0x90, 40, 127))) != []
+    assert b.midi_in(bytes((0x90, 40, 0))) == []
+
+
+def test_a_fader_can_be_learned_to_any_executor():
+    b = _plain(learn_map={"fader:2": {"do": "fader", "exec": 407}})
+    (d,) = b.midi_in(mcu.fader_out(2, 0.5))
+    assert osc.decode(d) == osc.Message("/Page1/Fader407", (50,))
+
+
+def test_the_master_can_be_learned_too():
+    b = _plain(learn_map={"fader:8": {"do": "fader", "exec": 299}})
+    (d,) = b.midi_in(mcu.fader_out(8, 1.0))
+    assert osc.decode(d) == osc.Message("/Page1/Fader299", (100,))
+
+
+def test_an_encoder_learned_to_an_executor_accumulates():
+    b = _plain(learn_map={"enc:0": {"do": "enc", "exec": 305}})
+    for _ in range(3):
+        (d,) = b.midi_in(bytes((0xB0, 16, 1)))
+    msg = osc.decode(d)
+    assert msg.address == "/Page1/Encoder305"
+    assert msg.args == (6,)              # 3 ticks x 2%
+
+
+def test_a_learned_fader_still_respects_the_loop_guard():
+    b = _plain(learn_map={"fader:0": {"do": "fader", "exec": 401}},
+               ma3_feedback={"14.1:FaderMaster": 1})
+    b.osc_in(osc.encode(osc.Message("/14.1", ("FaderMaster", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.47)) == []
+
+
+def test_a_nonsense_assignment_does_nothing_rather_than_crashing():
+    for bad in ({"do": "nope"}, {"do": "key"}, {"do": "cmd", "cmd": "  "}):
+        b = _plain(learn_map={"note:40": bad})
+        assert b.midi_in(bytes((0x90, 40, 127))) == [], bad
+    # a malformed entry falls through to the default mapping rather than
+    # swallowing the control
+    for junk in ("not a dict", None, 7):
+        b = _plain(learn_map={f"note:{mcu.SELECT[0]}": junk})
+        assert b.midi_in(bytes((0x90, mcu.SELECT[0], 127))) != [], junk
+
+
+def test_the_control_key_names_a_control_the_same_way_every_time():
+    from xbridge.bridge import Bridge
+
+    assert Bridge.control_key(mcu.decode(mcu.fader_out(3, 0.5))) == "fader:3"
+    assert Bridge.control_key(mcu.decode(mcu.fader_out(8, 0.5))) == "fader:8"
+    assert Bridge.control_key(mcu.decode(bytes((0xB0, 18, 1)))) == "enc:2"
+    assert Bridge.control_key(mcu.decode(bytes((0x90, 94, 127)))) == "note:94"
+
+
+def test_assigning_and_forgetting_a_control_round_trips(tmp_path, monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402]})
+
+    class FakeRunner:
+        state = "running"
+        learn_armed = False
+        learn_caught = {"key": "note:94", "what": "button note 94 down"}
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    out = xapp.api_learn_assign(key="note:40", do="cmd", cmd="Go+ Executor 1.201")
+    assert out["map"] == {"note:40": {"do": "cmd", "cmd": "Go+ Executor 1.201"}}
+    assert xrun.load_stored_config().fader_execs == (401, 402)   # untouched
+    # live on the running bridge, and the catch is cleared
+    b = xapp._runner.bridge
+    (d,) = b.midi_in(bytes((0x90, 40, 127)))
+    assert osc.decode(d).args == ("Go+ Executor 1.201",)
+    assert xapp._runner.learn_caught is None
+
+    xapp.api_learn_assign(key="note:40", do="clear")
+    assert xrun.load_stored_config().learn_map == {}
+
+
+def test_an_assignment_that_cannot_work_is_refused():
+    from xbridge import app as xapp
+
+    class FakeRunner:
+        state = "running"
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    xapp._runner = FakeRunner()
+    try:
+        for kw in ({"do": "cmd", "cmd": ""}, {"do": "key", "exec_no": 0},
+                   {"do": "wat"}):
+            try:
+                xapp.api_learn_assign(key="note:40", **kw)
+            except Exception:
+                pass
+            else:
+                raise AssertionError(f"accepted {kw}")
+    finally:
+        xapp._runner = None

@@ -37,6 +37,10 @@ def api_status() -> dict:
         # undone rather than being a one-way door.
         "feedback_map": (dict(getattr(r.bridge.config, "ma3_feedback", {}) or {})
                          if r else {}),
+        "learn_armed": bool(getattr(r, "learn_armed", False)) if r else False,
+        "learn_caught": getattr(r, "learn_caught", None) if r else None,
+        "learn_map": (dict(getattr(r.bridge.config, "learn_map", {}) or {})
+                      if r else {}),
         "unmapped": ([{"addr": a, "func": f, "level": lv}
                       for a, (f, lv) in
                       getattr(r.bridge.target, "unmapped", {}).items()]
@@ -245,6 +249,47 @@ def api_feedback_learn(addr: str = Form(...), strip: int = Form(...)) -> dict:
         _runner.bridge.config.ma3_feedback = table
         getattr(_runner.bridge.target, "unmapped", {}).pop(clean, None)
     return {"ok": True, "addr": clean, "strip": strip, "map": table}
+
+
+@app.post("/api/learn/arm")
+def api_learn_arm(on: int = Form(1)) -> dict:
+    """Watch for the next control the user touches, MIDI-learn style."""
+    if _runner is None or _runner.state != "running":
+        raise HTTPException(409, "start the bridge first")
+    _runner.learn_armed = bool(on)
+    _runner.learn_caught = None
+    return {"armed": _runner.learn_armed}
+
+
+@app.post("/api/learn/assign")
+def api_learn_assign(key: str = Form(...), do: str = Form(...),
+                     exec_no: int = Form(0), cmd: str = Form("")) -> dict:
+    """Give one surface control an explicit job on the console."""
+    from . import run as xrun
+
+    key = key.strip()
+    if not key:
+        raise HTTPException(400, "no control")
+    body = api_config()["config"]
+    table = dict(body.get("learn_map") or {})
+    if do == "clear":
+        table.pop(key, None)
+    elif do == "cmd":
+        if not cmd.strip():
+            raise HTTPException(400, "a command line action needs a command")
+        table[key] = {"do": "cmd", "cmd": cmd.strip()}
+    elif do in ("key", "fader", "enc"):
+        if exec_no <= 0:
+            raise HTTPException(400, "give the executor number to drive")
+        table[key] = {"do": do, "exec": int(exec_no)}
+    else:
+        raise HTTPException(400, f"unknown action {do!r}")
+    body["learn_map"] = table
+    xrun.store_config(body)
+    if _runner is not None:
+        _runner.bridge.config.learn_map = table    # live, not at next start
+        _runner.learn_caught = None
+    return {"ok": True, "key": key, "map": table}
 
 
 @app.get("/api/ma3-setup")
@@ -468,6 +513,7 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <div class="lbl">Check the surface</div>
   <button class="ghost" onclick="wiggle()">Sweep the surface</button>
   <button class="ghost" onclick="toggleMap()">Remap&hellip;</button>
+  <button class="ghost" onclick="learnArm()">Learn a control&hellip;</button>
  </div>
  <div class="row tools">
   <div class="lbl">Check the console</div>
@@ -485,6 +531,10 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
  <details class="sect" id="s_console" style="display:none">
   <summary><b>Console activity</b> &mdash; both directions on the wire</summary>
   <div class="sectbody" id="feed_console"></div>
+ </details>
+ <details class="sect" id="s_learn" style="display:none" open>
+  <summary><b>Learned controls</b> &mdash; press a control, say what it does</summary>
+  <div class="sectbody" id="feed_learn"></div>
  </details>
  <details class="sect" id="s_maps" style="display:none" open>
   <summary><b>Motor feedback</b> &mdash; which strip follows what</summary>
@@ -561,6 +611,40 @@ function tile(id, n) {
   el.className = 'tile ' + (n > 0 ? 'live' : 'zero');
 }
 
+function renderLearn(d) {
+  const lm = d.learn_map || {}, keys = Object.keys(lm);
+  const caught = d.learn_caught, armed = d.learn_armed;
+  if (!keys.length && !caught && !armed) { sect('s_learn', false); return; }
+  sect('s_learn', true);
+  let h = '';
+  if (armed)
+    h += '<div class="lit">Press a control on the surface&hellip; ' +
+         '<button class="ghost" onclick="learnArm(0)">cancel</button></div>';
+  if (caught) {
+    const k = esc(caught.key);
+    h += `<div class="maprow"><b>${esc(caught.what)}</b> <code>${k}</code>` +
+         ` &rarr; <select id="lk_do">` +
+         '<option value="key">press executor key</option>' +
+         '<option value="fader">drive executor fader</option>' +
+         '<option value="enc">turn executor encoder</option>' +
+         '<option value="cmd">run a command line</option>' +
+         `</select> <input type="number" id="lk_exec" placeholder="exec" ` +
+         `style="width:5rem"> <input type="text" id="lk_cmd" ` +
+         `placeholder="Go+ Executor 1.201" style="width:13rem"> ` +
+         `<button onclick="learnSave('${k}')">Save</button></div>`;
+  }
+  for (const k of keys) {
+    const v = lm[k] || {};
+    const what = v.do === 'cmd' ? `run <code>${esc(v.cmd)}</code>`
+      : v.do === 'key' ? `press Key${esc(v.exec)}`
+      : v.do === 'enc' ? `turn Encoder${esc(v.exec)}`
+      : `drive Fader${esc(v.exec)}`;
+    h += `<div class="maprow"><code>${esc(k)}</code> &rarr; ${what} ` +
+         `<button class="ghost" onclick="learnClear('${esc(k)}')">forget</button></div>`;
+  }
+  $('feed_learn').innerHTML = h;
+}
+
 function renderMaps(d) {
   const fm = d.feedback_map || {}, keys = Object.keys(fm);
   const un = d.unmapped || [];
@@ -634,6 +718,7 @@ async function refresh() {
       setState(waiting ? 'wait' : 'on', waiting ? d.state : 'running',
                esc(d.detail || ''));
       renderFeeds(d);
+      renderLearn(d);
       renderMaps(d);
     } else if (d.state === 'error') {
       setState('err', 'error', esc(d.detail || ''));
@@ -753,6 +838,29 @@ async function probeKeep(i) {
       'Restart the bridge to use it.';
     loadCfg();
   } catch (e) { $('probeout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+async function learnArm(on) {
+  const fd = new FormData(); fd.append('on', on === 0 ? '0' : '1');
+  try { await post('/api/learn/arm', fd); refresh(); }
+  catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+async function learnSave(key) {
+  const fd = new FormData();
+  fd.append('key', key); fd.append('do', $('lk_do').value);
+  fd.append('exec_no', $('lk_exec').value || '0');
+  fd.append('cmd', $('lk_cmd').value || '');
+  try {
+    await post('/api/learn/assign', fd);
+    $('out').innerHTML = `<code>${esc(key)}</code> assigned.`;
+    refresh();
+  } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+async function learnClear(key) {
+  const fd = new FormData();
+  fd.append('key', key); fd.append('do', 'clear');
+  try { await post('/api/learn/assign', fd); refresh(); }
+  catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 async function learnFb(addr, strip) {
