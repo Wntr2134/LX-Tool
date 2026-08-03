@@ -1583,3 +1583,60 @@ def test_learning_refuses_nonsense():
             assert "pool address" in str(exc)
         else:
             raise AssertionError(f"accepted {bad!r}")
+
+
+def test_a_mapping_can_be_seen_and_undone(tmp_path, monkeypatch):
+    """Once an address was claimed it left the "not mapped yet" list and
+    never came back, so a wrong strip was a one-way door with nothing on
+    screen to show what any strip was following."""
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3"})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+            self.state, self.detail, self.midi_name = "running", "", ""
+            self.counters, self.last_sent = {}, []
+            self.last_midi, self.last_osc, self.no_output = [], [], []
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    monkeypatch.setattr(xapp, "_thread", None)
+
+    xapp.api_feedback_learn(addr="14.14.1.6.1", strip=1)
+    assert xapp.api_status()["feedback_map"] == {"14.14.1.6.1": 1}
+
+    # forget it: strip 0
+    out = xapp.api_feedback_learn(addr="14.14.1.6.1", strip=0)
+    assert out["map"] == {}
+    assert xrun.load_stored_config().ma3_feedback == {}
+    assert xapp._runner.bridge.config.ma3_feedback == {}
+
+    # and it is offered for mapping again the next time it arrives
+    b = xapp._runner.bridge
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderMaster", 3, 5.0))))
+    assert "14.14.1.6.1" in b.target.unmapped
+
+
+def test_remapping_to_another_strip_replaces_rather_than_duplicates():
+    from xbridge import app as xapp
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    import xbridge.run as xrun_mod
+    saved = []
+    xapp._runner = FakeRunner()
+    try:
+        real = xrun_mod.store_config
+        xrun_mod.store_config = lambda body: saved.append(body) or Config()
+        xapp.api_feedback_learn(addr="14.14.1.6.1", strip=1)
+        out = xapp.api_feedback_learn(addr="14.14.1.6.1", strip=5)
+    finally:
+        xrun_mod.store_config = real
+        xapp._runner = None
+    assert out["map"] == {"14.14.1.6.1": 5}

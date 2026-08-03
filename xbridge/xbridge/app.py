@@ -33,6 +33,10 @@ def api_status() -> dict:
         "midi": list(r.last_midi) if r else [],
         "osc": list(r.last_osc) if r else [],
         "no_output": list(getattr(r, "no_output", [])) if r else [],
+        # What each strip currently follows, so a mapping can be seen and
+        # undone rather than being a one-way door.
+        "feedback_map": (dict(getattr(r.bridge.config, "ma3_feedback", {}) or {})
+                         if r else {}),
         "unmapped": ([{"addr": a, "func": f, "level": lv}
                       for a, (f, lv) in
                       getattr(r.bridge.target, "unmapped", {}).items()]
@@ -219,14 +223,17 @@ def api_feedback_learn(addr: str = Form(...), strip: int = Form(...)) -> dict:
     """
     from . import run as xrun
 
-    if not 1 <= strip <= 9:
-        raise HTTPException(400, "strip must be 1-9 (9 = master)")
+    if strip and not 1 <= strip <= 9:
+        raise HTTPException(400, "strip must be 1-9 (9 = master), or 0 to clear")
     clean = addr.strip().lstrip("/")
     if not clean or not all(p.isdigit() for p in clean.split(".")):
         raise HTTPException(400, f"not a pool address: {addr!r}")
     body = api_config()["config"]
     table = dict(body.get("ma3_feedback") or {})
-    table[clean] = strip
+    if strip:
+        table[clean] = strip
+    else:
+        table.pop(clean, None)      # strip 0 = forget this one
     body["ma3_feedback"] = table
     xrun.store_config(body)
     if _runner is not None:
@@ -471,6 +478,14 @@ async function refresh() {
       if (d.osc && d.osc.length)
         line += '<br><b>console says:</b><br>' +
           d.osc.slice(-6).map(m => '<code>' + esc(m) + '</code>').join('<br>');
+      const fm = d.feedback_map || {};
+      const fmKeys = Object.keys(fm);
+      if (fmKeys.length)
+        line += '<br><b>strips following the console:</b><br>' +
+          fmKeys.map(a =>
+            `strip <b>${esc(fm[a])}</b> &larr; <code>/${esc(a)}</code> ` +
+            `<button class="ghost" onclick="learnFb('${esc(a)}',0)">forget</button>`
+          ).join('<br>');
       if (d.unmapped && d.unmapped.length) {
         line += '<br><b>console reported (not mapped to a strip yet):</b><br>' +
           d.unmapped.map(u =>
@@ -584,8 +599,11 @@ async function learnFb(addr, strip) {
   const fd = new FormData(); fd.append('addr', addr); fd.append('strip', strip);
   try {
     const d = await (await post('/api/feedback/learn', fd)).json();
-    $('out').innerHTML = `strip ${d.strip} now follows <code>/${esc(d.addr)}</code>` +
-      ' - move it on the console and the motor should follow.';
+    $('out').innerHTML = d.strip
+      ? `strip ${d.strip} now follows <code>/${esc(d.addr)}</code>` +
+        ' - move it on the console and the motor should follow.'
+      : `<code>/${esc(d.addr)}</code> forgotten - move it on the console ` +
+        'again and it will be offered for mapping.';
     setTimeout(refresh, 1200);
   } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
