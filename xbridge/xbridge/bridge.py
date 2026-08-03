@@ -223,6 +223,12 @@ class Bridge:
             unit = getattr(ev, "unit", None)
             if unit is None:
                 return []
+            strip = getattr(ev, "strip", None)
+            if strip is not None:
+                try:
+                    return target.master(float(unit), strip=strip)
+                except TypeError:
+                    pass          # a target whose master takes only a level
             return target.master(float(unit))
 
         if do == "cmd":

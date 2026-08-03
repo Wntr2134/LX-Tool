@@ -2359,3 +2359,83 @@ def test_a_released_default_is_named_in_the_panel():
                          select_execs=(101, 102, 0, 104, 105, 106, 107, 108)))
     assert out == ["fader 2", "fader 8", "SELECT 3"]
     assert _released(_cfg()) == []
+
+
+def test_the_fader_that_drove_the_master_is_the_one_that_learns_it():
+    """A learned fader drives the console's master, so the console's
+    master belongs to THAT fader. Crediting the master fader regardless
+    bound the feedback to a fader the user was not touching: the move
+    went out, and a different motor came back."""
+    b = _plain(learn_map={"fader:7": {"do": "master"}})
+    b.midi_in(mcu.fader_out(7, 0.62))
+    b.osc_in(osc.encode(osc.Message("/14.13.2.1", ("FaderMaster", 3, 62.0))))
+    assert b.config.ma3_feedback == {"14.13.2.1:FaderMaster": 8}   # fader 8
+
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.13.2.1", ("FaderMaster", 3, 30.0))))
+    assert mcu.decode(raw[0]).strip == 7, "the wrong motor moved"
+
+
+def test_the_master_fader_itself_still_credits_the_master():
+    b = _plain()
+    b.midi_in(mcu.fader_out(8, 1.0))
+    b.osc_in(osc.encode(osc.Message("/14.13.2.1", ("FaderMaster", 3, 100.0))))
+    assert b.config.ma3_feedback == {"14.13.2.1:FaderMaster": 9}
+
+
+def test_a_target_whose_master_takes_only_a_level_still_works():
+    """Not every target's master accepts which fader moved it."""
+    from xbridge.bridge import Bridge
+
+    class OldTarget:
+        name = "old"
+
+        def master(self, unit):
+            return [osc.Message("/master", (unit,))]
+
+    b = Bridge(config=_cfg(learn_map={"fader:7": {"do": "master"}}),
+               target=OldTarget())
+    (d,) = b.midi_in(mcu.fader_out(7, 0.5))
+    assert osc.decode(d).address == "/master"
+
+
+def test_half_a_two_way_pairing_is_pointed_out():
+    """Each direction can be right on its own while together they are
+    two half-connections, and neither list looks wrong."""
+    from xbridge.app import _pairing_warnings
+
+    mismatched = _pairing_warnings(_cfg(
+        learn_map={"fader:7": {"do": "master"}},
+        ma3_feedback={"14.13.2.1:FaderMaster": 9}))
+    assert len(mismatched) == 1
+    assert "fader 8 drives the grand master" in mismatched[0]
+    assert "the master fader" in mismatched[0]
+
+    assert _pairing_warnings(_cfg(
+        learn_map={"fader:7": {"do": "master"}},
+        ma3_feedback={"14.13.2.1:FaderMaster": 8})) == []
+    assert _pairing_warnings(_cfg()) == []
+
+
+def test_the_pairing_warning_reaches_the_panel():
+    """Computing it and not surfacing it would be no better than not
+    computing it."""
+    from xbridge import app as xapp
+
+    class FakeRunner:
+        state, detail, midi_name = "running", "", ""
+        counters, last_sent, last_midi, last_osc, no_output = {}, [], [], [], []
+        learn_armed, learn_caught = False, None
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(
+                learn_map={"fader:7": {"do": "master"}},
+                ma3_feedback={"14.13.2.1:FaderMaster": 9}))
+
+    xapp._runner = FakeRunner()
+    try:
+        body = xapp.api_status()
+    finally:
+        xapp._runner = None
+    assert body["pairing"] and "grand master" in body["pairing"][0]
+    assert "pairing" in xapp.PAGE or "d.pairing" in xapp.PAGE

@@ -46,11 +46,44 @@ def api_status() -> dict:
         # Default slots emptied because something else took the
         # destination - shown so a silent control is never a mystery.
         "released": _released(r.bridge.config) if r else [],
+        "pairing": _pairing_warnings(r.bridge.config) if r else [],
         "unmapped": ([{"addr": a, "func": f, "level": lv}
                       for a, (f, lv) in
                       getattr(r.bridge.target, "unmapped", {}).items()]
                      if r else []),
     }
+
+
+def _pairing_warnings(cfg) -> list:
+    """Ways the two directions can disagree without either looking wrong.
+
+    A fader can drive the console's master while the console's master
+    drives a DIFFERENT fader's motor. Each half works; together they are
+    two half-connections, and nothing on either list says so.
+    """
+    out = []
+    learn = getattr(cfg, "learn_map", None) or {}
+    fb = getattr(cfg, "ma3_feedback", None) or {}
+
+    driver = next((k for k, v in learn.items()
+                   if isinstance(v, dict) and v.get("do") == "master"
+                   and k.startswith("fader:")), None)
+    if driver:
+        want = int(driver.split(":", 1)[1]) + 1
+        for addr, strip in fb.items():
+            if not addr.lower().endswith(":fadermaster"):
+                continue
+            if strip != want and strip in (9, want):
+                out.append(
+                    f"{_fader_name(want - 1)} drives the grand master, but "
+                    f"the console's master moves {_fader_name(strip - 1)}. "
+                    "Forget that mapping and move the fader again, or map "
+                    f"it to {_fader_name(want - 1)}.")
+    return out
+
+
+def _fader_name(idx: int) -> str:
+    return "the master fader" if idx == 8 else f"fader {idx + 1}"
 
 
 def _released(cfg) -> list:
@@ -774,6 +807,8 @@ function renderLearn(d) {
          `placeholder="Go+ Executor 1.201" style="width:13rem"> ` +
          `<button onclick="learnSave('${k}')">Save</button></div>`;
   }
+  for (const w of (d.pairing || []))
+    h += `<div class="maprow" style="color:var(--amber)">${esc(w)}</div>`;
   const freed = (d.released || []);
   if (freed.length)
     h += '<div class="idle">released by a reassignment (forget the entry ' +

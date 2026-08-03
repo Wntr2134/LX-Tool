@@ -110,12 +110,15 @@ class MA3Target:
         return [osc.Message(self._addr(f"Fader{exec_no}"),
                             (self._level(unit),))]
 
-    def master(self, unit: float) -> list[osc.Message]:
+    def master(self, unit: float, strip: int = 8) -> list[osc.Message]:
         cfg = self.config
-        # Strip 8 is the master. Recording it here is what lets the
-        # console's own master object be learned like any other strip;
-        # without it the master could only ever be mapped by hand.
-        self._note_sent(8, unit * 100.0)
+        # Recording the move is what lets the console's own master object
+        # be learned like any other strip. `strip` is which fader caused
+        # it - 8 (the master) by default, but any fader can be learned to
+        # drive the master, and then the feedback belongs to THAT fader.
+        # Crediting 8 regardless bound the console's master to the master
+        # fader while the user was moving a different one.
+        self._note_sent(strip, unit * 100.0)
         if cfg.master_exec:
             return [osc.Message(self._addr(f"Fader{cfg.master_exec}"),
                                 (self._level(unit),))]
