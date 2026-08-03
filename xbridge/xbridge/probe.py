@@ -58,6 +58,7 @@ class Step:
     addr_form: str = "page"
     address: str = ""
     args: tuple = ()
+    args_low: tuple = ()
 
     @property
     def label(self) -> str:
@@ -97,12 +98,16 @@ class Ma3Probe:
         cfg = Config(target="ma3", prefix=prefix, ma3_value=value,
                      ma3_addr=addr_form, page=self.page,
                      fader_execs=(self.exec_,))
-        out = make_target(cfg).fader(0, self.level)
+        target = make_target(cfg)
         step = Step(index=index, prefix=prefix, value=value,
                     addr_form=addr_form)
-        for m in out:
+        for m in target.fader(0, self.level):
             if isinstance(m, osc.Message):
                 step.address, step.args = m.address, tuple(m.args)
+                break
+        for m in target.fader(0, 0.0):
+            if isinstance(m, osc.Message):
+                step.args_low = tuple(m.args)
                 break
         return step
 
@@ -110,12 +115,23 @@ class Ma3Probe:
         s = self.steps[index]
         return osc.encode(osc.Message(s.address, s.args))
 
+    def datagram_low(self, index: int) -> bytes:
+        """The same dialect at zero.
+
+        Every step sends zero first: an executor already sitting near the
+        test level would not visibly move otherwise, and "whichever step
+        moves the fader" is the whole method.
+        """
+        s = self.steps[index]
+        return osc.encode(osc.Message(s.address, s.args_low))
+
     def run(self, *, dwell: float = 1.5, on_step=None,
             sock=None, sleep=time.sleep) -> list[Step]:
         """Send each dialect in turn, pausing so a human can watch.
 
-        ``on_step`` is called with each Step as it goes out, so a UI can
-        show "watch executor 201 now" in step with the wire.
+        Each step drives the fader to zero and then up, so it moves
+        whatever it was sitting at before. ``on_step`` is called as each
+        one goes out, so a UI can keep pace with the wire.
         """
         own = sock is None
         sock = sock or socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -123,6 +139,10 @@ class Ma3Probe:
             for step in self.steps:
                 if not step.address:
                     continue
+                sock.sendto(self.datagram_low(step.index),
+                            (self.host, self.port))
+                if dwell:
+                    sleep(min(dwell / 3.0, 0.5))
                 sock.sendto(self.datagram(step.index), (self.host, self.port))
                 if on_step is not None:
                     on_step(step)

@@ -1129,9 +1129,14 @@ def test_probe_sends_each_step_once_and_pauses_between():
     p = Ma3Probe(host="10.0.0.5", port=8001)
     p.run(dwell=1.5, sock=FakeSock(), sleep=slept.append)
 
-    assert len(sent) == len(p.steps)
+    # two datagrams per step: zero first, then up, so the fader visibly
+    # moves even if it was already sitting at the test level
+    assert len(sent) == 2 * len(p.steps)
     assert all(addr == ("10.0.0.5", 8001) for _, addr in sent)
-    assert slept == [1.5] * len(p.steps)
+    assert slept == [0.5, 1.5] * len(p.steps)
+    lows = [m for m, _ in sent[0::2]]
+    assert all(float(m.args[0]) == 0.0 for m in lows), "no step started at zero"
+    sent = [(m, a) for m, a in sent[1::2]]
     forms = {(m.address, type(m.args[0]).__name__, round(float(m.args[0]), 3))
              for m, _ in sent}
     assert len(forms) == len(p.steps), "two steps put the same bytes on the wire"

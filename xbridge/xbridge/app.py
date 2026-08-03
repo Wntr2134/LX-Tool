@@ -371,9 +371,18 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
  </ol>
  <p class="note">Then: MA3 processes only OSC whose prefix matches the OSC
  line's, and the "Page"/"Fader" address cells are editable too, so a wrong
- setting looks exactly like a dead bridge. Watch your executor and press
- Sweep &mdash; each step goes out 1.5s apart. Whichever one moves the
- fader is your format; click Keep on that row.</p>
+ setting looks exactly like a dead bridge. <b>Put a sequence on the
+ executor first</b> &mdash; a perfectly delivered message to an empty
+ executor does nothing at all. Then watch it and press Sweep: each step
+ drives the fader to zero and back up, 1.5s apart, so it moves even if it
+ was already at the test level. Whichever step moves it is your format;
+ click Keep on that row.</p>
+ <p class="note">If no step moves it, settle the question on the console
+ instead: set <b>EchoInput</b> to Yes on the receiving OSC line and open
+ <b>Add Window &rarr; More &rarr; System Monitor</b>. Messages appearing
+ there mean MA3 is receiving and the executor is the problem; nothing
+ there means the message is not arriving, and it is Enable Input,
+ Receive, the port or the IP &mdash; not the format.</p>
  <div class="row">
   <label>page</label><input type="number" id="pbpage" value="1" style="width:4rem">
   <label>exec</label><input type="number" id="pbexec" value="201" style="width:5rem">
