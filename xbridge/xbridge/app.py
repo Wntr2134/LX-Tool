@@ -650,6 +650,16 @@ let running = false;
 
 function sect(id, on) { $(id).style.display = on ? '' : 'none'; }
 
+// Repainting a panel every poll destroys whatever the user is using: an
+// open dropdown closes, half-typed text vanishes. So only write when the
+// content has actually changed, and never while the focus is inside.
+function setHTML(id, html) {
+  const el = $(id);
+  if (el.innerHTML === html) return;
+  if (el.contains(document.activeElement)) return;
+  el.innerHTML = html;
+}
+
 function tile(id, n) {
   const el = $(id);
   el.querySelector('b').textContent = n;
@@ -687,7 +697,7 @@ function renderLearn(d) {
     h += `<div class="maprow"><code>${esc(k)}</code> &rarr; ${what} ` +
          `<button class="ghost" onclick="learnClear('${esc(k)}')">forget</button></div>`;
   }
-  $('feed_learn').innerHTML = h;
+  setHTML('feed_learn', h);
 }
 
 function renderMaps(d) {
@@ -715,15 +725,14 @@ function renderMaps(d) {
          ).join(' ') +
          ` <button class="ghost" title="the master fader"` +
          ` onclick="learnFb('${esc(u.addr)}',9)">MST</button></div>`;
-  $('feed_maps').innerHTML = h;
+  setHTML('feed_maps', h);
 }
 
 function renderFeeds(d) {
   const midi = d.midi || [];
   sect('s_surface', midi.length > 0);
   if (midi.length)
-    $('feed_surface').innerHTML =
-      midi.slice(-8).map(m => esc(m)).join('\\n');
+    setHTML('feed_surface', midi.slice(-8).map(m => esc(m)).join('\\n'));
 
   const osc = d.osc || [], sent = d.sent || [];
   sect('s_console', osc.length > 0 || sent.length > 0);
@@ -734,7 +743,7 @@ function renderFeeds(d) {
   if (osc.length)
     h += '<span class="idle">received</span>\\n' +
          osc.slice(-6).map(m => '  ' + esc(m)).join('\\n');
-  $('feed_console').innerHTML = h;
+  setHTML('feed_console', h);
 }
 
 function setState(cls, text, detail) {

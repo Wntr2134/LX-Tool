@@ -2168,3 +2168,19 @@ def test_resetting_something_that_does_not_exist_is_refused():
         assert "nothing called" in str(exc)
     else:
         raise AssertionError("accepted a reset target that does not exist")
+
+
+def test_polled_panels_are_written_through_the_guarded_setter():
+    """The status poll repaints every two seconds. Writing innerHTML
+    directly destroys whatever the user is using at that moment: an open
+    dropdown closes, half-typed text disappears. setHTML skips the write
+    when nothing changed and when the focus is inside."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    assert "function setHTML(" in script
+    for panel in ("feed_learn", "feed_maps", "feed_surface", "feed_console"):
+        assert f"$('{panel}').innerHTML =" not in script, (
+            f"{panel} is repainted directly, so the poll will clobber "
+            "anything the user is in the middle of")
+        assert f"setHTML('{panel}'" in script
