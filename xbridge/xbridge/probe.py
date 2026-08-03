@@ -32,6 +32,12 @@ from .targets import make_target
 
 # Ordered most-likely first, so a stock console is usually answered in
 # the first step or two. (prefix, value form, address form)
+#
+# The last two are a different route entirely: command-line syntax to
+# /cmd, which does not use the OSC line's Fader or Page address cells at
+# all and needs Receive Command rather than Receive. If only those move
+# the fader, executor addressing is the problem - and "cmd" is also a
+# perfectly good way to run the show.
 DIALECTS: tuple[tuple[str, str, str], ...] = (
     ("", "int100", "page"),        # the manual's own example, stock console
     ("", "float100", "page"),
@@ -45,6 +51,8 @@ DIALECTS: tuple[tuple[str, str, str], ...] = (
     ("gma3", "float01", "page"),
     ("", "int255", "selected"),
     ("gma3", "int255", "selected"),
+    ("", "cmd", "page"),           # command line, no prefix
+    ("gma3", "cmd", "page"),       # command line, prefixed
 )
 
 
@@ -63,6 +71,8 @@ class Step:
     @property
     def label(self) -> str:
         pfx = f"/{self.prefix}" if self.prefix else "(no prefix)"
+        if self.value == "cmd":
+            return f"{self.index + 1}. {pfx} + command line (/cmd)"
         page = "" if self.addr_form == "page" else " + no /Page"
         return f"{self.index + 1}. {pfx} + {self.value}{page}"
 
@@ -95,9 +105,10 @@ class Ma3Probe:
                addr_form: str = "page") -> Step:
         """Ask the real target to format it - the probe must not carry a
         second, drifting copy of the addressing rules."""
-        cfg = Config(target="ma3", prefix=prefix, ma3_value=value,
-                     ma3_addr=addr_form, page=self.page,
-                     fader_execs=(self.exec_,))
+        cfg = Config(target="ma3", prefix=prefix, ma3_addr=addr_form,
+                     page=self.page, fader_execs=(self.exec_,),
+                     ma3_fader="cmd" if value == "cmd" else "osc",
+                     ma3_value="int100" if value == "cmd" else value)
         target = make_target(cfg)
         step = Step(index=index, prefix=prefix, value=value,
                     addr_form=addr_form)
@@ -158,6 +169,10 @@ class Ma3Probe:
         kept rather than remembered."""
         step = self.steps[index]
         config.prefix = step.prefix
-        config.ma3_value = step.value
         config.ma3_addr = step.addr_form
+        if step.value == "cmd":
+            config.ma3_fader = "cmd"
+        else:
+            config.ma3_fader = "osc"
+            config.ma3_value = step.value
         return config

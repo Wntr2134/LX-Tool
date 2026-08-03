@@ -85,7 +85,15 @@ class MA3Target:
         cfg = self.config
         if strip >= len(cfg.fader_execs):
             return []
-        return [osc.Message(self._addr(f"Fader{cfg.fader_execs[strip]}"),
+        exec_no = cfg.fader_execs[strip]
+        if getattr(cfg, "ma3_fader", "osc") == "cmd":
+            # The command line reaches the same fader without depending
+            # on the OSC line's Fader/Page address cells at all. Needs
+            # Receive Command = Yes rather than Receive.
+            body = cfg.ma3_fader_cmd.format(page=cfg.page, exec=exec_no,
+                                            pct=f"{unit * 100:.1f}")
+            return [osc.Message(self._cmd_addr(), (body,))]
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
                             (self._level(unit),))]
 
     def master(self, unit: float) -> list[osc.Message]:

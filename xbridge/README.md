@@ -415,7 +415,14 @@ Then check, in this order:
 6. **Feedback needs its own OSC line.** One line uses the same port to
    send and receive, so a single line on 8000 cannot also send to the
    bridge's listen port. Add a second line for the return leg.
-7. **Motor faders need a feedback map.** MA3 does not echo
+7. **The command line is a second route.** The last two sweep steps
+   send `/cmd` with `FaderMaster Page 1.201 At 75` instead of addressing
+   the executor. That path ignores the OSC line's Fader and Page address
+   cells entirely and needs **Receive Command** rather than Receive. If
+   only those two move the fader, executor addressing is the problem —
+   and **Keep** on one of them is a perfectly good way to run the show,
+   not just a diagnosis.
+8. **Motor faders need a feedback map.** MA3 does not echo
    `/Page1/Fader201` back; playback feedback arrives addressed by pool
    index, e.g. `/13.13.1.6.1,sif,"FaderMaster",3,63.5`. Only you know
    which object is on which strip, so set `ma3_feedback` in the mapping:

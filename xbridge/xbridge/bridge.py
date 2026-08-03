@@ -81,6 +81,13 @@ class Config:
     # is its native mini-encoder path - better for the X-Touch's endless
     # encoders, and what to pick if 301-308 have no fader function.
     ma3_encoder: str = "fader"    # fader | encoder
+    # How a fader move reaches MA3. "osc" uses /Page<n>/Fader<x>, which
+    # depends on the OSC line's Fader/Page address cells routing. "cmd"
+    # sends command-line syntax to /cmd instead - a completely separate
+    # path that needs only Receive Command, and works when the executor
+    # addressing does not.
+    ma3_fader: str = "osc"        # osc | cmd
+    ma3_fader_cmd: str = "FaderMaster Page {page}.{exec} At {pct}"
     # MA3's playback feedback arrives addressed by pool index, not by
     # executor: /13.13.1.6.1 ,sif, "FaderMaster",3,63.5. Only the user
     # knows which object sits on which strip, so map them here:

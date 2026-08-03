@@ -1095,7 +1095,7 @@ def test_probe_covers_every_documented_dialect():
 
     assert len(set(DIALECTS)) == len(DIALECTS), "a step is duplicated"
     assert {v for _, v, _ in DIALECTS} == {"int100", "float100", "float01",
-                                           "int255"}
+                                           "int255", "cmd"}
     assert {p for p, _, _ in DIALECTS} == {"", "gma3"}
     assert {a for _, _, a in DIALECTS} == {"page", "selected"}
     # The first step must be the stock console, so the common case is
@@ -1134,10 +1134,14 @@ def test_probe_sends_each_step_once_and_pauses_between():
     assert len(sent) == 2 * len(p.steps)
     assert all(addr == ("10.0.0.5", 8001) for _, addr in sent)
     assert slept == [0.5, 1.5] * len(p.steps)
+    def level(m):
+        a = m.args[0]
+        return float(a.rsplit(" ", 1)[1]) if isinstance(a, str) else float(a)
+
     lows = [m for m, _ in sent[0::2]]
-    assert all(float(m.args[0]) == 0.0 for m in lows), "no step started at zero"
+    assert all(level(m) == 0.0 for m in lows), "no step started at zero"
     sent = [(m, a) for m, a in sent[1::2]]
-    forms = {(m.address, type(m.args[0]).__name__, round(float(m.args[0]), 3))
+    forms = {(m.address, type(m.args[0]).__name__, str(m.args[0]))
              for m, _ in sent}
     assert len(forms) == len(p.steps), "two steps put the same bytes on the wire"
 
@@ -1148,8 +1152,11 @@ def test_probe_answer_can_be_kept():
     p = Ma3Probe()
     for i, (prefix, value, addr_form) in enumerate(DIALECTS):
         cfg = p.apply(Config(), i)
-        assert (cfg.prefix, cfg.ma3_value, cfg.ma3_addr) == (prefix, value,
-                                                             addr_form)
+        assert (cfg.prefix, cfg.ma3_addr) == (prefix, addr_form)
+        if value == "cmd":
+            assert cfg.ma3_fader == "cmd"
+        else:
+            assert (cfg.ma3_fader, cfg.ma3_value) == ("osc", value)
 
 
 def test_probe_apply_keeps_the_rest_of_the_mapping(tmp_path, monkeypatch):
@@ -1369,3 +1376,48 @@ def test_x32_surface_never_emits_scribble_strip_sysex():
     assert s.render(targets.ButtonFB("select", 0, True), targets) == \
         [mcu.button_led(mcu.SELECT[0], True)]
     assert s.decode(mcu.fader_out(1, 0.25)) == [mcu.decode(mcu.fader_out(1, 0.25))]
+
+
+def test_the_command_line_route_bypasses_executor_addressing():
+    """A second way to move the same fader. /cmd takes command-line
+    syntax and never touches the OSC line's Fader or Page address cells,
+    so it works when executor addressing does not - and it needs Receive
+    Command rather than Receive, which is a different switch again."""
+    b = _plain(ma3_fader="cmd")
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert msg.args == ("FaderMaster Page 1.201 At 50.0",)
+    # it follows the page and the mapped executor like the OSC route does
+    b2 = _plain(ma3_fader="cmd", page=3, fader_execs=(207,))
+    (d,) = b2.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).args == ("FaderMaster Page 3.207 At 100.0",)
+
+
+def test_the_command_line_route_honours_the_prefix():
+    b = _plain(ma3_fader="cmd", prefix="gma3")
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    assert osc.decode(d).address == "/gma3/cmd"
+
+
+def test_the_probe_offers_the_command_line_route_last():
+    """It is the fallback, not the first guess - executor addressing is
+    what a stock console uses."""
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    cmd_steps = [i for i, (_, v, _) in enumerate(DIALECTS) if v == "cmd"]
+    assert cmd_steps == [len(DIALECTS) - 2, len(DIALECTS) - 1]
+    steps = Ma3Probe(exec_=205).steps
+    lines = [steps[i].line for i in cmd_steps]
+    assert lines[0] == "/cmd FaderMaster Page 1.205 At 75.0"
+    assert lines[1] == "/gma3/cmd FaderMaster Page 1.205 At 75.0"
+    assert all(s.address for s in steps)
+
+
+def test_keeping_a_command_line_step_switches_the_route():
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    idx = len(DIALECTS) - 2
+    cfg = Ma3Probe().apply(Config(), idx)
+    assert cfg.ma3_fader == "cmd"
+    assert cfg.prefix == ""
