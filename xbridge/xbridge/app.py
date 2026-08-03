@@ -225,8 +225,12 @@ def api_feedback_learn(addr: str = Form(...), strip: int = Form(...)) -> dict:
 
     if strip and not 1 <= strip <= 9:
         raise HTTPException(400, "strip must be 1-9 (9 = master), or 0 to clear")
+    # Keys are "<pool address>" or "<pool address>:<fader function>" -
+    # one executor reports FaderMaster, FaderRate and the rest under the
+    # same address, so the function is part of the identity.
     clean = addr.strip().lstrip("/")
-    if not clean or not all(p.isdigit() for p in clean.split(".")):
+    pool = clean.split(":", 1)[0]
+    if not pool or not all(p.isdigit() for p in pool.split(".")):
         raise HTTPException(400, f"not a pool address: {addr!r}")
     body = api_config()["config"]
     table = dict(body.get("ma3_feedback") or {})
@@ -563,15 +567,18 @@ function renderMaps(d) {
   if (!keys.length && !un.length) { sect('s_maps', false); return; }
   sect('s_maps', true);
   let h = '';
-  for (const a of keys)
+  for (const a of keys) {
+    const [pool, fn] = String(a).split(':');
     h += `<div class="maprow">strip <b>${esc(fm[a])}</b> &larr; ` +
-         `<code>/${esc(a)}</code> ` +
+         `<code>/${esc(pool)}</code> ${esc(fn || 'any function')} ` +
          `<button class="ghost" onclick="learnFb('${esc(a)}',0)">forget</button></div>`;
+  }
   if (!keys.length)
     h += '<div class="idle">Nothing mapped yet. With the bridge running, ' +
          'move each surface fader once and it learns itself.</div>';
   for (const u of un)
-    h += `<div class="maprow"><code>/${esc(u.addr)}</code> ${esc(u.func)} ` +
+    h += `<div class="maprow"><code>/${esc(String(u.addr).split(':')[0])}</code> ` +
+         `${esc(u.func)} ` +
          `${Number(u.level).toFixed(1)}% &rarr; strip ` +
          [1,2,3,4,5,6,7,8].map(n =>
            `<button class="ghost" onclick="learnFb('${esc(u.addr)}',${n})">${n}</button>`

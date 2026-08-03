@@ -1198,7 +1198,7 @@ def test_ma3_playback_feedback_is_not_the_input_format():
     for its own input format has a permanently dead return leg, and the
     motor faders never track the desk.
     """
-    b = _plain(ma3_feedback={"13.13.1.6.1": 1})
+    b = _plain(ma3_feedback={"13.13.1.6.1:FaderMaster": 1})
     raw = b.osc_in(osc.encode(osc.Message(
         "/13.13.1.6.1", ("FaderMaster", 3, 63.5))))
     assert raw, "MA3's documented feedback format was ignored"
@@ -1210,7 +1210,7 @@ def test_ma3_playback_feedback_is_not_the_input_format():
 
 def test_master_playback_feedback_uses_the_same_shape():
     """Masters report as /13.12.X.Y with the same sif payload."""
-    b = _plain(ma3_feedback={"13.12.3.1": 4})
+    b = _plain(ma3_feedback={"13.12.3.1:FaderMaster": 4})
     raw = b.osc_in(osc.encode(osc.Message(
         "/13.12.3.1", ("FaderMaster", 3, 100.0))))
     ev = mcu.decode(raw[0])
@@ -1218,7 +1218,7 @@ def test_master_playback_feedback_uses_the_same_shape():
 
 
 def test_key_playback_feedback_lights_the_button():
-    b = _plain(ma3_feedback={"13.13.1.6.1": 1})
+    b = _plain(ma3_feedback={"13.13.1.6.1:Flash": 1})
     raw = b.osc_in(osc.encode(osc.Message(
         "/13.13.1.6.1", ("Flash", 1, "Strobe 1 Cue 1"))))
     assert raw == [mcu.button_led(mcu.SELECT[0], True)]
@@ -1233,7 +1233,7 @@ def test_unmapped_playback_feedback_is_quietly_dropped():
 
 
 def test_playback_feedback_survives_a_prefix():
-    b = _plain(prefix="gma3", ma3_feedback={"13.13.1.6.1": 1})
+    b = _plain(prefix="gma3", ma3_feedback={"13.13.1.6.1:FaderMaster": 1})
     raw = b.osc_in(osc.encode(osc.Message(
         "/gma3/13.13.1.6.1", ("FaderMaster", 3, 50.0))))
     assert raw and isinstance(mcu.decode(raw[0]), mcu.FaderMoved)
@@ -1527,8 +1527,9 @@ def test_unmapped_console_feedback_is_remembered_for_learning():
     b = _plain()
     b.osc_in(osc.encode(osc.Message("/13.13.1.6.1", ("FaderMaster", 3, 63.5))))
     b.osc_in(osc.encode(osc.Message("/13.12.3.1", ("FaderMaster", 3, 10.0))))
-    assert b.target.unmapped == {"13.13.1.6.1": ("FaderMaster", 63.5),
-                                 "13.12.3.1": ("FaderMaster", 10.0)}
+    assert b.target.unmapped == {
+        "13.13.1.6.1:FaderMaster": ("FaderMaster", 63.5),
+        "13.12.3.1:FaderMaster": ("FaderMaster", 10.0)}
 
 
 def test_learning_does_not_grow_without_bound():
@@ -1540,7 +1541,7 @@ def test_learning_does_not_grow_without_bound():
 
 
 def test_a_mapped_address_drives_the_motor_and_leaves_the_learn_list():
-    b = _plain(ma3_feedback={"13.13.1.6.1": 3})
+    b = _plain(ma3_feedback={"13.13.1.6.1:FaderMaster": 3})
     raw = b.osc_in(osc.encode(osc.Message("/13.13.1.6.1",
                                           ("FaderMaster", 3, 50.0))))
     assert mcu.decode(raw[0]).strip == 2          # strip 3 is index 2
@@ -1561,12 +1562,12 @@ def test_learning_an_address_takes_effect_without_a_restart(tmp_path,
             self.bridge = Bridge(config=_cfg())
 
     monkeypatch.setattr(xapp, "_runner", FakeRunner())
-    out = xapp.api_feedback_learn(addr="/13.13.1.6.1", strip=2)
+    out = xapp.api_feedback_learn(addr="/13.13.1.6.1:FaderMaster", strip=2)
 
-    assert out["strip"] == 2 and out["addr"] == "13.13.1.6.1"
+    assert out["strip"] == 2 and out["addr"] == "13.13.1.6.1:FaderMaster"
     # persisted, without losing the rest of the mapping
     kept = xrun.load_stored_config()
-    assert kept.ma3_feedback == {"13.13.1.6.1": 2}
+    assert kept.ma3_feedback == {"13.13.1.6.1:FaderMaster": 2}
     assert kept.fader_execs == (401, 402)
     # and live on the running bridge
     b = xapp._runner.bridge
@@ -1608,11 +1609,11 @@ def test_a_mapping_can_be_seen_and_undone(tmp_path, monkeypatch):
     monkeypatch.setattr(xapp, "_runner", FakeRunner())
     monkeypatch.setattr(xapp, "_thread", None)
 
-    xapp.api_feedback_learn(addr="14.14.1.6.1", strip=1)
-    assert xapp.api_status()["feedback_map"] == {"14.14.1.6.1": 1}
+    xapp.api_feedback_learn(addr="14.14.1.6.1:FaderMaster", strip=1)
+    assert xapp.api_status()["feedback_map"] == {"14.14.1.6.1:FaderMaster": 1}
 
     # forget it: strip 0
-    out = xapp.api_feedback_learn(addr="14.14.1.6.1", strip=0)
+    out = xapp.api_feedback_learn(addr="14.14.1.6.1:FaderMaster", strip=0)
     assert out["map"] == {}
     assert xrun.load_stored_config().ma3_feedback == {}
     assert xapp._runner.bridge.config.ma3_feedback == {}
@@ -1620,7 +1621,7 @@ def test_a_mapping_can_be_seen_and_undone(tmp_path, monkeypatch):
     # and it is offered for mapping again the next time it arrives
     b = xapp._runner.bridge
     b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderMaster", 3, 5.0))))
-    assert "14.14.1.6.1" in b.target.unmapped
+    assert "14.14.1.6.1:FaderMaster" in b.target.unmapped
 
 
 def test_remapping_to_another_strip_replaces_rather_than_duplicates():
@@ -1637,11 +1638,11 @@ def test_remapping_to_another_strip_replaces_rather_than_duplicates():
         real = xrun_mod.store_config
         xrun_mod.store_config = lambda body: saved.append(body) or Config()
         xapp.api_feedback_learn(addr="14.14.1.6.1", strip=1)
-        out = xapp.api_feedback_learn(addr="14.14.1.6.1", strip=5)
+        out = xapp.api_feedback_learn(addr="14.14.1.6.1:FaderMaster", strip=5)
     finally:
         xrun_mod.store_config = real
         xapp._runner = None
-    assert out["map"] == {"14.14.1.6.1": 5}
+    assert out["map"] == {"14.14.1.6.1:FaderMaster": 5}
 
 
 # ---- learning the feedback map without being told ----------------------
@@ -1655,9 +1656,9 @@ def test_moving_a_fader_teaches_which_address_is_that_strip():
     b.midi_in(mcu.fader_out(0, 0.44))            # strip 1 -> 44%
     raw = b.osc_in(osc.encode(osc.Message("/14.14.1.6.1",
                                           ("FaderMaster", 3, 44.0))))
-    assert b.config.ma3_feedback == {"14.14.1.6.1": 1}
+    assert b.config.ma3_feedback == {"14.14.1.6.1:FaderMaster": 1}
     assert raw and mcu.decode(raw[0]).strip == 0     # and it drives it
-    assert b.target.learned == [("14.14.1.6.1", 1)]
+    assert b.target.learned == [("14.14.1.6.1:FaderMaster", 1)]
 
 
 def test_each_strip_learns_its_own_address():
@@ -1667,7 +1668,9 @@ def test_each_strip_learns_its_own_address():
         b.midi_in(mcu.fader_out(strip, unit))
         b.osc_in(osc.encode(osc.Message(addr,
                                         ("FaderMaster", 3, unit * 100))))
-    assert b.config.ma3_feedback == {"14.1": 1, "14.2": 2, "14.3": 3}
+    assert b.config.ma3_feedback == {"14.1:FaderMaster": 1,
+                                     "14.2:FaderMaster": 2,
+                                     "14.3:FaderMaster": 3}
 
 
 def test_an_ambiguous_match_is_declined_not_guessed():
@@ -1678,7 +1681,7 @@ def test_an_ambiguous_match_is_declined_not_guessed():
     b.midi_in(mcu.fader_out(3, 0.50))
     b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 50.0))))
     assert b.config.ma3_feedback == {}
-    assert "14.9" in b.target.unmapped        # still offered by hand
+    assert "14.9:FaderMaster" in b.target.unmapped   # still offered by hand
 
 
 def test_a_stale_report_does_not_claim_a_strip():
@@ -1686,8 +1689,8 @@ def test_a_stale_report_does_not_claim_a_strip():
     evidence - the console could be reporting anything by then."""
     b = _plain()
     b.target._note_sent(0, 44.0, now=1000.0)
-    assert b.target._autolearn("14.9", 44.0, now=1000.0 + 30) is None
-    assert b.target._autolearn("14.9", 44.0, now=1000.0 + 1) == 1
+    assert b.target._autolearn("14.9:FaderMaster", 44.0, now=1000.0 + 30) is None
+    assert b.target._autolearn("14.9:FaderMaster", 44.0, now=1000.0 + 1) == 1
 
 
 def test_a_level_that_does_not_match_claims_nothing():
@@ -1700,11 +1703,11 @@ def test_a_level_that_does_not_match_claims_nothing():
 def test_a_strip_already_spoken_for_is_not_claimed_twice():
     """Otherwise a second object at the same level would steal a strip
     that is already working."""
-    b = _plain(ma3_feedback={"14.1": 1})
+    b = _plain(ma3_feedback={"14.1:FaderMaster": 1})
     b.midi_in(mcu.fader_out(0, 0.44))
     b.osc_in(osc.encode(osc.Message("/14.2", ("FaderMaster", 3, 44.0))))
-    assert b.config.ma3_feedback == {"14.1": 1}
-    assert "14.2" in b.target.unmapped
+    assert b.config.ma3_feedback == {"14.1:FaderMaster": 1}
+    assert "14.2:FaderMaster" in b.target.unmapped
 
 
 def test_autolearn_can_be_turned_off():
@@ -1712,7 +1715,7 @@ def test_autolearn_can_be_turned_off():
     b.midi_in(mcu.fader_out(0, 0.44))
     b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 44.0))))
     assert b.config.ma3_feedback == {}
-    assert "14.9" in b.target.unmapped
+    assert "14.9:FaderMaster" in b.target.unmapped
 
 
 def test_what_is_learned_is_saved(tmp_path, monkeypatch):
@@ -1732,7 +1735,7 @@ def test_what_is_learned_is_saved(tmp_path, monkeypatch):
     r._persist_learned()
 
     kept = xrun.load_stored_config()
-    assert kept.ma3_feedback == {"14.14.1.6.1": 1}
+    assert kept.ma3_feedback == {"14.14.1.6.1:FaderMaster": 1}
     assert kept.fader_execs == (401, 402)     # nothing else disturbed
     assert r.bridge.target.learned == []      # drained, not re-saved forever
 
@@ -1784,3 +1787,66 @@ def test_every_button_calls_something_that_exists():
         assert (f"function {call}(" in script
                 or f"async function {call}(" in script), \
             f"a button calls {call}() which the script does not define"
+
+
+def test_one_executor_reports_several_fader_functions_under_one_address():
+    """The field bug: an executor reports FaderMaster, FaderRate,
+    FaderSpeed and FaderXFade all under the same pool address. Keying on
+    the address alone meant rate, speed and crossfade each drove the
+    master's motor, so the fader jumped about whenever anything on that
+    executor changed."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderMaster": 1})
+    moved = b.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderMaster", 3, 44.0))))
+    assert moved and mcu.decode(moved[0]).strip == 0
+
+    for other in ("FaderRate", "FaderSpeed", "FaderXFade", "FaderTemp"):
+        assert b.osc_in(osc.encode(osc.Message(
+            "/14.14.1.6.1", (other, 3, 90.0)))) == [], other
+
+
+def test_the_other_functions_are_still_offered_for_mapping():
+    """Declining to drive them is not the same as hiding them - someone
+    may well want rate on a strip."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderMaster": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 90.0))))
+    assert "14.14.1.6.1:FaderRate" in b.target.unmapped
+
+    b2 = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 4})
+    raw = b2.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderRate", 3, 50.0))))
+    assert raw and mcu.decode(raw[0]).strip == 3
+
+
+def test_autolearn_only_claims_the_master_fader():
+    """Rate and speed report percentages too. Letting them claim a strip
+    would bind a motor to something nobody was looking at."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderRate", 3, 44.0))))
+    assert b.config.ma3_feedback == {}
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.9:FaderMaster": 1}
+
+
+def test_mappings_saved_before_the_function_key_still_work():
+    """Anyone who mapped a strip yesterday keeps it."""
+    b = _plain(ma3_feedback={"14.14.1.6.1": 2})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderMaster", 3, 100.0))))
+    assert raw and mcu.decode(raw[0]).strip == 1
+
+
+def test_a_fader_function_is_recognised_by_its_prefix_not_a_substring():
+    """MA3 names every fader function "Fader<something>" - FaderMaster,
+    FaderRate, FaderSpeed, FaderXFade. Matching "fader" anywhere in the
+    name instead would classify a key function that merely contains the
+    word as a motor move, and drive a fader from a button press."""
+    b = _plain(ma3_feedback={"14.9:FaderMaster": 1, "14.9:CrossFader": 2})
+    (motor,) = b.osc_in(osc.encode(osc.Message(
+        "/14.9", ("FaderMaster", 3, 50.0))))
+    assert isinstance(mcu.decode(motor), mcu.FaderMoved)
+
+    (led,) = b.osc_in(osc.encode(osc.Message("/14.9", ("CrossFader", 1, 1))))
+    assert led == mcu.button_led(mcu.SELECT[1], True)

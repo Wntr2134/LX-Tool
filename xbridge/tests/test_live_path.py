@@ -1015,5 +1015,5 @@ def test_the_live_loop_saves_what_it_learns(monkeypatch, console, tmp_path):
         r.stop()
         t.join(timeout=3)
 
-    assert saved.get("ma3_feedback") == {"14.14.1.6.1": 1}, \
+    assert saved.get("ma3_feedback") == {"14.14.1.6.1:FaderMaster": 1}, \
         "the loop learned it but never wrote it down"

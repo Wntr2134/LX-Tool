@@ -238,8 +238,8 @@ class MA3Target:
                         if at - r[0] <= self._RECENT_SECS]
         self._recent.append((at, strip, pct))
 
-    def _autolearn(self, addr: str, level: float,
-                   now: float | None = None) -> int | None:
+    def _autolearn(self, key: str, level: float, now: float | None = None,
+                   func: str = "FaderMaster") -> int | None:
         """Which strip just asked for this level, if exactly one did.
 
         The console names its objects by pool index and never says which
@@ -251,6 +251,11 @@ class MA3Target:
         """
         cfg = self.config
         if not getattr(cfg, "ma3_autolearn", True):
+            return None
+        # Only the master fader means "this strip's level". Rate, speed
+        # and crossfade report percentages too, and would happily claim a
+        # strip that then jumped about for reasons nobody could see.
+        if func.lower() != "fadermaster":
             return None
         at = time.monotonic() if now is None else now
         table = getattr(cfg, "ma3_feedback", None)
@@ -264,9 +269,9 @@ class MA3Target:
         if len(hits) != 1:
             return None
         strip = hits.pop()
-        table[addr] = strip + 1
-        self.learned.append((addr, strip + 1))
-        self.unmapped.pop(addr, None)
+        table[key] = strip + 1
+        self.learned.append((key, strip + 1))
+        self.unmapped.pop(key, None)
         return strip + 1
 
     def _playback_feedback(self, msg: osc.Message):
@@ -299,20 +304,27 @@ class MA3Target:
                       and not isinstance(a, bool)), None)
         if level is None:
             return None
+        # One executor reports several fader functions under ONE address -
+        # FaderMaster, FaderRate, FaderSpeed, FaderXFade - so the address
+        # alone does not say what moved. Keying on the address only meant
+        # rate, speed and crossfade all drove the master's strip.
+        func = msg.args[0]
+        key = f"{addr}:{func}"
         table = getattr(self.config, "ma3_feedback", {}) or {}
-        strip = table.get(addr) or self._autolearn(addr, level)
+        strip = (table.get(key)
+                 or table.get(addr)          # mappings saved before this
+                 or self._autolearn(key, level, func=func))
         if strip is None:
-            # Nothing to drive yet, but this is the address a user needs
-            # in order to map it, so remember it rather than dropping it
-            # silently. The panel offers these for one-click assignment.
-            self.unmapped[addr] = (msg.args[0], level)
+            # Nothing to drive yet, but this is what a user needs in order
+            # to map it, so remember it rather than dropping it silently.
+            # The panel offers these for one-click assignment.
+            self.unmapped[key] = (func, level)
             del_extra = len(self.unmapped) - 16
             for k in list(self.unmapped)[:max(0, del_extra)]:
                 self.unmapped.pop(k, None)
             return []
-        func = msg.args[0].lower()
         idx = int(strip) - 1
-        if "fader" in func or "master" in func:
+        if func.lower().startswith("fader"):
             unit = _unit_percent(level)
             return [] if unit is None else [FaderFB(idx, unit)]
         return [ButtonFB("select", idx, float(level) > 0)]
