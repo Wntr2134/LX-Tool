@@ -1392,13 +1392,16 @@ def test_the_command_line_route_bypasses_executor_addressing():
     (d,) = b.midi_in(mcu.fader_out(0, 0.5))
     msg = osc.decode(d)
     assert msg.address == "/cmd"
-    # "FaderMaster Page 1.201 At 50" is what MA's OSC page prints, but the
-    # FaderMaster keyword page documents an [Object] in that slot and 2.4
-    # answers "Page" there with IllegalProperty.
-    assert msg.args == ("FaderMaster Executor 1.201 At 50.0",)
-    # it follows the page and the mapped executor like the OSC route does
-    b2 = _plain(ma3_fader="cmd", page=3, fader_execs=(207,))
+    assert msg.args == ("FaderMaster 201 At 50.0",)
+    # it follows the mapped executor like the OSC route does
+    b2 = _plain(ma3_fader="cmd", fader_execs=(207,))
     (d,) = b2.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).args == ("FaderMaster 207 At 100.0",)
+    # and the template is config, so a version wanting other syntax is a
+    # setting rather than a code change
+    b3 = _plain(ma3_fader="cmd", page=3, fader_execs=(207,),
+                ma3_fader_cmd="FaderMaster Executor {page}.{exec} At {pct}")
+    (d,) = b3.midi_in(mcu.fader_out(0, 1.0))
     assert osc.decode(d).args == ("FaderMaster Executor 3.207 At 100.0",)
 
 
@@ -1422,10 +1425,12 @@ def test_the_probe_offers_the_command_line_route_last():
                                    len(DIALECTS)))
     steps = Ma3Probe(exec_=205).steps
     lines = {steps[i].line for i in cmd_steps}
-    assert "/cmd FaderMaster Executor 1.205 At 75.0" in lines
     assert "/cmd FaderMaster 205 At 75.0" in lines
+    assert "/cmd FaderMaster Executor 1.205 At 75.0" in lines
     assert "/cmd FaderMaster Page 1.205 At 75.0" in lines
-    assert "/gma3/cmd FaderMaster Executor 1.205 At 75.0" in lines
+    assert "/gma3/cmd FaderMaster 205 At 75.0" in lines
+    # the confirmed-working spelling is tried first of the command forms
+    assert steps[cmd_steps[0]].line == "/cmd FaderMaster 205 At 75.0"
     assert all(s.address for s in steps)
 
 
@@ -1438,3 +1443,37 @@ def test_keeping_a_command_line_step_switches_the_route():
     assert cfg.ma3_fader == "cmd"
     assert cfg.ma3_fader_cmd == "FaderMaster {exec} At {pct}"
     assert cfg.prefix == ""
+
+
+def test_the_default_command_line_syntax_is_the_one_that_works():
+    """Confirmed on a 2.4.2 console: "FaderMaster 201 At 50". MA's OSC
+    page prints "FaderMaster Page 1.201 At 50" instead, and that form is
+    answered with IllegalProperty."""
+    b = _plain(ma3_fader="cmd")
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert msg.args == ("FaderMaster 201 At 50.0",)
+    assert "Page" not in msg.args[0]
+
+
+def test_the_command_line_route_follows_the_bank_only_when_told_how():
+    """The bare form addresses the console's CURRENT page, so the bank
+    buttons would silently drive the wrong executors. A page command
+    fixes that - but only a spelling the user has verified ships as
+    active behaviour, since guessing syntax is what broke the fader."""
+    quiet = _plain(ma3_fader="cmd")
+    quiet.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
+    assert quiet.target.set_page(2) == []
+
+    told = _plain(ma3_fader="cmd", ma3_page_cmd="Select Page {page}")
+    (d,) = _wire_one(told.target.set_page(4))
+    assert osc.decode(d) == osc.Message("/cmd", ("Select Page 4",))
+
+    # the OSC route names the page in every address, so it sends nothing
+    osc_route = _plain(ma3_page_cmd="Select Page {page}")
+    assert osc_route.target.set_page(4) == []
+
+
+def _wire_one(messages):
+    return [osc.encode(m) for m in messages]

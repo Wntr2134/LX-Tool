@@ -51,10 +51,10 @@ DIALECTS: tuple[tuple[str, str, str], ...] = (
     ("gma3", "float01", "page"),
     ("", "int255", "selected"),
     ("gma3", "int255", "selected"),
-    ("", "cmd", "page"),           # command line, Executor page.exec
-    ("", "cmd2", "page"),          # command line, bare executor number
-    ("", "cmd3", "page"),          # command line, MA's OSC-page wording
-    ("gma3", "cmd", "page"),       # the same, prefixed
+    ("", "cmd2", "page"),          # bare executor number - confirmed on 2.4
+    ("", "cmd", "page"),           # Executor page.exec
+    ("", "cmd3", "page"),          # MA's OSC-page wording (2.4 rejects it)
+    ("gma3", "cmd2", "page"),      # the same, prefixed
 )
 
 # MA documents two different command-line spellings for the same thing:

@@ -415,13 +415,23 @@ Then check, in this order:
 6. **Feedback needs its own OSC line.** One line uses the same port to
    send and receive, so a single line on 8000 cannot also send to the
    bridge's listen port. Add a second line for the return leg.
-7. **The command line is a second route.** The last two sweep steps
-   send `/cmd` with `FaderMaster Page 1.201 At 75` instead of addressing
-   the executor. That path ignores the OSC line's Fader and Page address
-   cells entirely and needs **Receive Command** rather than Receive. If
-   only those two move the fader, executor addressing is the problem —
-   and **Keep** on one of them is a perfectly good way to run the show,
-   not just a diagnosis.
+7. **The command line is a second route — and it works.** Confirmed on
+   grandMA3 2.4.2: `FaderMaster 201 At 50` typed into the console's
+   command line moves executor 201. Note the shape — MA's *OSC* page
+   prints `FaderMaster Page 1.201 At 50`, and 2.4 answers that with
+   **IllegalProperty**, because the FaderMaster *keyword* page documents
+   `FaderMaster [Object] [Number] At [Value]` and `Page` is not an object
+   type in that slot. The two manual pages disagree; the keyword page is
+   the one that runs. The last two sweep steps
+   The last sweep steps send `/cmd` with that syntax instead of
+   addressing the executor. That path ignores the OSC line's Fader and
+   Page address cells entirely and needs **Receive Command** rather than
+   Receive. If only those steps move the fader, executor addressing is
+   the problem — and **Keep** on one is a perfectly good way to run the
+   show, not just a diagnosis. One catch: the bare form acts on the
+   console's **current page**, so the surface's bank buttons will not
+   change which executors are hit. Set `ma3_page_cmd` (try
+   `Select Page {page}`) if the console should follow the bank.
 8. **Motor faders need a feedback map.** MA3 does not echo
    `/Page1/Fader201` back; playback feedback arrives addressed by pool
    index, e.g. `/13.13.1.6.1,sif,"FaderMaster",3,63.5`. Only you know

@@ -87,12 +87,21 @@ class Config:
     # path that needs only Receive Command, and works when the executor
     # addressing does not.
     ma3_fader: str = "osc"        # osc | cmd
-    # MA's OSC page shows "FaderMaster Page 1.201 At 50", but the
-    # FaderMaster keyword page documents "FaderMaster [Object] [Number]
-    # At [Value]" with the example "FaderMaster 205 At 50" - and Page is
-    # not an object type in that slot, so the OSC page's form is
-    # rejected as IllegalProperty on 2.4. The probe sweeps the variants.
-    ma3_fader_cmd: str = "FaderMaster Executor {page}.{exec} At {pct}"
+    # MA's OSC page shows "FaderMaster Page 1.201 At 50"; a 2.4 console
+    # answers that with IllegalProperty, because the FaderMaster keyword
+    # page documents "FaderMaster [Object] [Number] At [Value]" and Page
+    # is not an object type in that slot. The default below is the
+    # keyword page's own example shape, confirmed working on 2.4.2.
+    #
+    # It addresses the executor on MA3's CURRENT page, so the surface's
+    # bank buttons do not change which executors are hit. Set
+    # ma3_page_cmd as well if the console should follow the bank.
+    ma3_fader_cmd: str = "FaderMaster {exec} At {pct}"
+    # Sent to /cmd when the surface changes bank, if set. Left empty
+    # because the right spelling varies by version and shipping an
+    # unverified one is what made the fader syntax wrong in the first
+    # place - try "Select Page {page}" in the mapping editor and see.
+    ma3_page_cmd: str = ""
     # MA3's playback feedback arrives addressed by pool index, not by
     # executor: /13.13.1.6.1 ,sif, "FaderMaster",3,63.5. Only the user
     # knows which object sits on which strip, so map them here:

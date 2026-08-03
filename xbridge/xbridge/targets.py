@@ -142,6 +142,14 @@ class MA3Target:
     # -- paging / lifecycle ------------------------------------------------
 
     def set_page(self, page: int) -> list[osc.Message]:
+        # The OSC route names the page in every address, so nothing needs
+        # sending. The command-line route addresses whatever page the
+        # console is showing, so the console has to be moved with it -
+        # but only if the user has supplied a spelling that works.
+        cmd = getattr(self.config, "ma3_page_cmd", "")
+        if cmd and getattr(self.config, "ma3_fader", "osc") == "cmd":
+            return [osc.Message(self._cmd_addr(),
+                                (cmd.format(page=page),))]
         return []      # MA3 re-broadcasts levels itself when sending is on
 
     def hello(self) -> list[osc.Message]:
