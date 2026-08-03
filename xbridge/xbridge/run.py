@@ -157,6 +157,35 @@ def _describe_event(ev) -> str:
     return type(ev).__name__
 
 
+_SURFACE_ADVICE = {
+    "xtouch": "X-Touch: power on holding channel-1 SELECT, set MC + USB",
+    "mpk": "MPK Mini: connect it by USB",
+    "x32mc": ("X32/M32: Setup - Remote - protocol Mackie MCU, interface "
+              "Card MIDI, then press ENABLE. Card MIDI needs the X-USB "
+              "card connected to this PC and its driver installed"),
+}
+
+
+def _no_surface_detail(names: list, surfaces: list) -> str:
+    """Why no surface was found, in terms of the surface actually chosen.
+
+    Naming the X-Touch when someone selected an X32 sends them to check
+    the wrong device. And an empty port list is a different fault from a
+    list that simply has no match in it: nothing is reaching Windows at
+    all, so no console setting can help until the driver does.
+    """
+    picked = [getattr(s, "name", "?") for s in surfaces] or ["xtouch"]
+    want = " + ".join(picked)
+    advice = " / ".join(_SURFACE_ADVICE.get(n, n) for n in picked)
+    if not names:
+        return (f"waiting for {want} - this PC can see NO MIDI inputs at "
+                "all, so nothing is reaching it yet: check the USB cable "
+                "and that the device's driver is installed. " + advice)
+    return (f"waiting for {want} - none of the MIDI inputs look like it. "
+            f"Seen: {', '.join(names)}. {advice}. If it is in that list "
+            "under another name, pick it in the MIDI port box.")
+
+
 def midi_available() -> bool:
     try:
         import mido  # noqa: F401
@@ -299,9 +328,8 @@ class Runner:
                 if not port_name:
                     if self.state != "waiting-for-surface":
                         self.state = "waiting-for-surface"
-                        seen = ", ".join(names) or "none"
-                        self.detail = ("no surface on USB (X-Touch: MC mode, "
-                                       f"USB). MIDI inputs seen: {seen}")
+                        self.detail = _no_surface_detail(
+                            names, self.bridge.surfaces)
                         self._log(self.detail)
                     if self.stop_event.wait(_RETRY_SECS):
                         break

@@ -290,7 +290,7 @@ def test_no_surface_says_so_instead_of_dying(monkeypatch, console):
         r.stop()
         t.join(timeout=3)
     assert state == "waiting-for-surface"
-    assert "MC mode" in detail and "none" in detail
+    assert "NO MIDI inputs at all" in detail
 
 
 def test_every_target_puts_something_on_the_wire(monkeypatch, console):
@@ -509,3 +509,41 @@ def test_the_app_passes_the_named_port_through(monkeypatch):
         xapp._runner, xapp._thread = None, None
     assert seen["midi_port"] == "X-USB 1"
     assert seen["surface"] == "x32mc"
+
+
+def test_the_waiting_message_names_the_surface_that_was_chosen():
+    """Telling someone to check the X-Touch when they selected an X32
+    sends them to the wrong device."""
+    from xbridge import run as xrun
+    from xbridge.bridge import Config
+    from xbridge.surfaces import make_surfaces
+
+    x32 = make_surfaces(Config(surface="x32mc"))
+    msg = xrun._no_surface_detail(["Microsoft GS Wavetable Synth"], x32)
+    assert "x32mc" in msg
+    assert "X-Touch" not in msg
+    assert "Card MIDI" in msg and "ENABLE" in msg
+    assert "Microsoft GS Wavetable Synth" in msg
+    assert "pick it in the MIDI port box" in msg
+
+
+def test_no_midi_ports_at_all_is_reported_as_its_own_fault():
+    """An empty port list is not "the surface is not recognised" - it is
+    "nothing is reaching Windows", which no console setting can fix."""
+    from xbridge import run as xrun
+    from xbridge.bridge import Config
+    from xbridge.surfaces import make_surfaces
+
+    msg = xrun._no_surface_detail([], make_surfaces(Config(surface="x32mc")))
+    assert "NO MIDI inputs at all" in msg
+    assert "driver" in msg and "USB cable" in msg
+
+
+def test_multiple_surfaces_are_both_named():
+    from xbridge import run as xrun
+    from xbridge.bridge import Config
+    from xbridge.surfaces import make_surfaces
+
+    msg = xrun._no_surface_detail(
+        [], make_surfaces(Config(surface="xtouch,x32mc")))
+    assert "xtouch + x32mc" in msg
