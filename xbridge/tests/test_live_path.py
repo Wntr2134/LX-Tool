@@ -601,3 +601,80 @@ def test_the_x32_advice_covers_the_whole_chain():
     for step in ("MACKIE MCU", "CARD MIDI", "DAW REMOTE", "DRIVER",
                  "X-LIVE", "X-USB"):
         assert step in advice, step
+
+
+def test_the_surface_test_goes_out_through_the_live_session(monkeypatch,
+                                                            console):
+    """Windows MIDI ports are exclusive, so a "wiggle the surface" test
+    cannot open its own port while the bridge is running. It has to ride
+    the connection that is already open."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        assert r.state == "running", r.detail
+        midi_out.sent.clear()
+        queued = r.wiggle()
+        assert queued > 0
+        end = time.monotonic() + 3
+        while time.monotonic() < end and len(midi_out.sent) < queued:
+            time.sleep(0.02)
+        got = list(midi_out.sent)
+    finally:
+        r.stop()
+        t.join(timeout=3)
+
+    assert len(got) == queued, f"only {len(got)} of {queued} frames went out"
+    moves = [mcu.decode(m) for m in got]
+    faders = [m for m in moves if isinstance(m, mcu.FaderMoved)]
+    assert {m.strip for m in faders} == set(range(9)), "not every fader swept"
+    assert max(m.unit for m in faders) > 0.99      # reaches the top
+    assert min(m.unit for m in faders) < 0.01      # and the bottom
+
+
+def test_the_surface_test_is_refused_when_nothing_is_connected():
+    from xbridge import app as xapp
+
+    xapp._runner, xapp._thread = None, None
+    try:
+        xapp.api_wiggle()
+    except Exception as exc:
+        assert "start the bridge" in str(exc)
+    else:
+        raise AssertionError("wiggling with no bridge should be refused")
+
+
+def test_a_dead_surface_output_cannot_hang_the_loop(monkeypatch, console):
+    """A test button must never be the thing that takes the bridge down."""
+    from xbridge import run as xrun
+
+    mido, midi_in, midi_out = _x32()
+
+    def boom(msg):
+        raise OSError("port went away")
+
+    r = xrun.Runner(ma3_host="127.0.0.1", send_port=console.getsockname()[1],
+                    recv_port=0, surface="x32mc", log=lambda *a: None)
+    monkeypatch.setitem(__import__("sys").modules, "mido", mido)
+    t = threading.Thread(target=r.run, daemon=True)
+    try:
+        t.start()
+        end = time.monotonic() + 5
+        while time.monotonic() < end and r.state != "running":
+            time.sleep(0.02)
+        midi_out.send = boom
+        r.wiggle()
+        time.sleep(0.4)
+        alive = t.is_alive()
+    finally:
+        r.stop()
+        t.join(timeout=3)
+    assert alive, "a failing surface output killed the run loop"

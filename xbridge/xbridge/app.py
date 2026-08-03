@@ -46,6 +46,21 @@ def api_test_send(strip: int = Form(0), level: float = Form(0.5)) -> dict:
     return {"sent": sent, "to": f"{_runner.ma3[0]}:{_runner.ma3[1]}"}
 
 
+@app.post("/api/wiggle")
+def api_wiggle() -> dict:
+    """Sweep the connected surface's motors and LEDs.
+
+    The proof that does not need a console: if the faders move, the
+    PC -> surface leg works. Goes out through the running session
+    because the ports are held exclusively while it runs.
+    """
+    if _runner is None or not (_thread is not None and _thread.is_alive()):
+        raise HTTPException(409, "start the bridge first")
+    if _runner.state != "running":
+        raise HTTPException(409, f"no surface connected ({_runner.state})")
+    return {"ok": True, "frames": _runner.wiggle()}
+
+
 @app.get("/api/ports")
 def api_ports() -> dict:
     """What MIDI this machine can see - the first thing to check when a
@@ -326,6 +341,7 @@ Companion at <code>/xbridge/...</code> on the listen port.</p>
   <button class="ghost" onclick="toggleMap()">Remap&hellip;</button>
   <button class="ghost" onclick="showPorts()">MIDI ports</button>
   <button class="ghost" onclick="testSend()">Test fader 1</button>
+  <button class="ghost" onclick="wiggle()">Test surface</button>
   <button class="ghost" onclick="probe()">Find MA3 format</button>
   <button class="ghost" onclick="setupGuide()">Console setup&hellip;</button>
  </div>
@@ -492,6 +508,15 @@ async function probeKeep(i) {
       'Restart the bridge to use it.';
     loadCfg();
   } catch (e) { $('probeout').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+async function wiggle() {
+  try {
+    const d = await (await post('/api/wiggle', new FormData())).json();
+    $('out').innerHTML = `sent ${d.frames} frames to the surface - the ` +
+      'faders should sweep and the LEDs blink. If they do, the PC&rarr;surface ' +
+      'direction works and anything still wrong is upstream of it.';
+  } catch (e) { $('out').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 async function showPorts() {

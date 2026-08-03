@@ -246,6 +246,11 @@ class Runner:
         # produces nothing here is not mapped wrong - it never arrived,
         # which is a different problem with a different fix.
         self.last_midi: list = []
+        # Motor/LED test frames queued from the UI. The session loop owns
+        # the ports exclusively - on Windows nothing else can open them
+        # while it runs - so a "wiggle the surface" test has to go out
+        # through the live connection rather than opening its own.
+        self._inject: list = []
         self._log = log
 
     def stop(self) -> None:
@@ -263,6 +268,41 @@ class Runner:
             line = str(datagram)
         self.last_sent.append(line)
         del self.last_sent[:-8]
+
+    def wiggle(self) -> int:
+        """Queue a sweep to the surface: proves the PC -> surface leg.
+
+        Useful with no console at all: if the motors move and the LEDs
+        blink, output works, and anything still wrong is upstream.
+        """
+        frames: list = []
+        for level in (0.0, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0):
+            for strip in range(9):
+                frames.append(mcu.fader_out(strip, level))
+        for note in (*mcu.SELECT, *mcu.MUTE):
+            frames.append(mcu.button_led(note, True))
+        for note in (*mcu.SELECT, *mcu.MUTE):
+            frames.append(mcu.button_led(note, False))
+        for e in range(8):
+            frames.append(mcu.encoder_ring(e, 1.0, mode=2))
+            frames.append(mcu.encoder_ring(e, 0.0, mode=2))
+        self._inject.extend(frames)
+        return len(frames)
+
+    def _drain_inject(self, mido, conns) -> None:
+        """Push any queued test frames to every connected surface."""
+        if not self._inject:
+            return
+        frames, self._inject = self._inject, []
+        for _surface, _mi, mout, _p in conns:
+            if mout is None:
+                continue
+            for raw in frames:
+                try:
+                    mout.send(mido.Message.from_bytes(raw))
+                except Exception as exc:      # noqa: BLE001
+                    self._log(f"surface test: {exc}")
+                    return
 
     def _note_midi(self, surface, raw: bytes) -> None:
         """Record one surface message, decoded, for the MIDI monitor.
@@ -464,6 +504,7 @@ class Runner:
                             continue
                         for raw in self.bridge.render_for(surface, intents):
                             mout.send(mido.Message.from_bytes(raw))
+                self._drain_inject(mido, conns)
                 for datagram in self.bridge.tick(time.monotonic()):
                     self._send(sock, datagram)
                 # A configured surface plugged in mid-session joins live.
