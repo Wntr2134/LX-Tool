@@ -547,3 +547,14 @@ def test_multiple_surfaces_are_both_named():
     msg = xrun._no_surface_detail(
         [], make_surfaces(Config(surface="xtouch,x32mc")))
     assert "xtouch + x32mc" in msg
+
+
+def test_the_x32_advice_names_the_right_usb_socket():
+    """The X32 has two USB-B sockets. REMOTE is for X32-Edit and carries
+    no MIDI, so plugged into that one the PC sees nothing at all - which
+    is indistinguishable from a driver problem unless it is said."""
+    from xbridge import run as xrun
+
+    advice = xrun._SURFACE_ADVICE["x32mc"]
+    assert "X-USB" in advice and "REMOTE" in advice
+    assert "driver" in advice

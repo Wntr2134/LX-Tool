@@ -161,8 +161,10 @@ _SURFACE_ADVICE = {
     "xtouch": "X-Touch: power on holding channel-1 SELECT, set MC + USB",
     "mpk": "MPK Mini: connect it by USB",
     "x32mc": ("X32/M32: Setup - Remote - protocol Mackie MCU, interface "
-              "Card MIDI, then press ENABLE. Card MIDI needs the X-USB "
-              "card connected to this PC and its driver installed"),
+              "Card MIDI, then press ENABLE. Card MIDI runs down the "
+              "X-USB CARD's USB-B socket - not the REMOTE USB-B one, "
+              "which is for X32-Edit and carries no MIDI - and the "
+              "X-USB driver must be installed on this PC"),
 }
 
 
