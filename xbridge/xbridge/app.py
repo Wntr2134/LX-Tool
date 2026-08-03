@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 app = FastAPI(title="XBridge")
 
+from .mcu import MUTE as _MUTE, SELECT as _SELECT   # noqa: E402
+
 _runner = None
 _thread = None
 
@@ -41,11 +43,25 @@ def api_status() -> dict:
         "learn_caught": getattr(r, "learn_caught", None) if r else None,
         "learn_map": (dict(getattr(r.bridge.config, "learn_map", {}) or {})
                       if r else {}),
+        # Default slots emptied because something else took the
+        # destination - shown so a silent control is never a mystery.
+        "released": _released(r.bridge.config) if r else [],
         "unmapped": ([{"addr": a, "func": f, "level": lv}
                       for a, (f, lv) in
                       getattr(r.bridge.target, "unmapped", {}).items()]
                      if r else []),
     }
+
+
+def _released(cfg) -> list:
+    """Default slots blanked by a reassignment, named for a human."""
+    out = []
+    for slot, label in (("fader_execs", "fader"), ("select_execs", "SELECT"),
+                        ("mute_execs", "MUTE"), ("encoder_execs", "encoder")):
+        for i, exec_no in enumerate(getattr(cfg, slot, ()) or ()):
+            if not exec_no:
+                out.append(f"{label} {i + 1}")
+    return out
 
 
 @app.post("/api/test-send")
@@ -239,6 +255,11 @@ def api_feedback_learn(addr: str = Form(...), strip: int = Form(...)) -> dict:
     body = api_config()["config"]
     table = dict(body.get("ma3_feedback") or {})
     if strip:
+        # One object per strip: the newest assignment wins, so a strip is
+        # never quietly driven by two things at once.
+        for other in [a for a, v in table.items()
+                      if v == strip and a != clean]:
+            table.pop(other, None)
         table[clean] = strip
     else:
         table.pop(clean, None)      # strip 0 = forget this one
@@ -287,11 +308,61 @@ def api_learn_assign(key: str = Form(...), do: str = Form(...),
     else:
         raise HTTPException(400, f"unknown action {do!r}")
     body["learn_map"] = table
+    if do != "clear":
+        _release_others(body, key, table[key])
     xrun.store_config(body)
     if _runner is not None:
         _runner.bridge.config.learn_map = table    # live, not at next start
         _runner.learn_caught = None
     return {"ok": True, "key": key, "map": table}
+
+
+# Which config list holds the default assignment for each kind of
+# destination, so giving a destination to a new control can take it off
+# whichever control had it before.
+_DEFAULT_SLOTS = {"key": ("select_execs", "mute_execs"),
+                  "fader": ("fader_execs",),
+                  "enc": ("encoder_execs",)}
+_SLOT_CONTROL = {"select_execs": lambda i: f"note:{_SELECT[i]}",
+                 "mute_execs": lambda i: f"note:{_MUTE[i]}",
+                 "fader_execs": lambda i: f"fader:{i}",
+                 "encoder_execs": lambda i: f"enc:{i}"}
+
+
+def _release_others(body: dict, key: str, spec: dict) -> None:
+    """Take this destination off whatever else was driving it.
+
+    Two controls sending to one executor is almost never wanted, and the
+    second assignment is the one the user just made - so the first gives
+    it up. Defaults are released the same way, by blanking their slot,
+    which is why 0 means "not assigned" rather than executor zero.
+    """
+    exec_no, do = spec.get("exec"), spec.get("do")
+    if do == "master":
+        # Only one thing can be the master; release any other master.
+        for other, val in list((body.get("learn_map") or {}).items()):
+            if other != key and isinstance(val, dict) and val.get("do") == "master":
+                body["learn_map"].pop(other, None)
+        return
+    if not exec_no or do not in _DEFAULT_SLOTS:
+        return
+
+    for other, val in list((body.get("learn_map") or {}).items()):
+        if (other != key and isinstance(val, dict)
+                and val.get("do") == do and val.get("exec") == exec_no):
+            body["learn_map"].pop(other, None)
+
+    for slot in _DEFAULT_SLOTS[do]:
+        row = list(body.get(slot) or [])
+        for i, have in enumerate(row):
+            if have != exec_no:
+                continue
+            # Leave the control's own default alone: forgetting the
+            # learned entry should put it back the way it was.
+            if _SLOT_CONTROL[slot](i) == key:
+                continue
+            row[i] = 0
+        body[slot] = row
 
 
 @app.get("/api/ma3-setup")
@@ -703,6 +774,11 @@ function renderLearn(d) {
          `placeholder="Go+ Executor 1.201" style="width:13rem"> ` +
          `<button onclick="learnSave('${k}')">Save</button></div>`;
   }
+  const freed = (d.released || []);
+  if (freed.length)
+    h += '<div class="idle">released by a reassignment (forget the entry ' +
+         'that took it, or set it again in Remap): ' +
+         freed.map(esc).join(', ') + '</div>';
   for (const k of keys) {
     const v = lm[k] || {};
     const what = v.do === 'master' ? 'drive the grand master'

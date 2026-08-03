@@ -65,6 +65,14 @@ heard of. It names what you pressed and asks what it should do:
 | turn executor encoder | `/Page<n>/Encoder<exec>`, accumulated from the ticks |
 | run a command line | `/cmd` with your text, e.g. `Off Executor 1.201` — once, on the press |
 
+**Reassigning releases the old owner.** Give executor 208 to fader 3 and
+fader 8 — which had it by default — stops sending, rather than both
+driving it. The same applies between learned controls, to the grand
+master (only one control can be it), and to motor feedback (one object
+per strip). Released defaults are listed in the panel so a control that
+has gone quiet is never a mystery, and **forget** on the entry that took
+it hands it straight back.
+
 Learned controls are keyed by the control's own identity (`note:24`,
 `fader:2`, `enc:0`), so **any** key can be assigned, not only the rows
 the default mapping happens to cover. An entry wins over the default for

@@ -2250,3 +2250,112 @@ def test_a_focused_button_does_not_freeze_its_own_panel():
     assert "INPUT|SELECT|TEXTAREA" in guard, (
         "the repaint guard holds off for any focused element, so a panel "
         "freezes as soon as a button in it is clicked")
+
+
+# ---- reassigning: the new owner takes it, the old one lets go ----------
+
+
+def _store(monkeypatch, tmp_path, **cfg):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", **cfg})
+
+    class FakeRunner:
+        state = "running"
+        learn_armed = False
+        learn_caught = None
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(**cfg))
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    return xapp, xrun
+
+
+def test_giving_an_executor_to_a_new_control_releases_the_default(tmp_path,
+                                                                  monkeypatch):
+    """Otherwise two controls drive one executor and the old one is a
+    trap: it still works, and nothing on screen says it should not."""
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:2", do="fader", exec_no=208)
+
+    kept = xrun.load_stored_config()
+    assert kept.fader_execs[7] == 0, "fader 8 still drives 208 as well"
+    assert kept.fader_execs[0] == 201, "the other defaults were disturbed"
+    # and a released slot really does go quiet
+    b = Bridge(config=_cfg(fader_execs=kept.fader_execs))
+    assert b.midi_in(mcu.fader_out(7, 0.5)) == []
+
+
+def test_a_controls_own_default_is_left_alone(tmp_path, monkeypatch):
+    """Forgetting a learned entry should put the control back the way it
+    was, so its own default must survive the assignment."""
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:7", do="fader", exec_no=208)
+    assert xrun.load_stored_config().fader_execs[7] == 208
+
+
+def test_two_controls_cannot_hold_the_same_destination(tmp_path, monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:2", do="fader", exec_no=250)
+    xapp.api_learn_assign(key="fader:5", do="fader", exec_no=250)
+
+    lm = xrun.load_stored_config().learn_map
+    assert "fader:2" not in lm, "the first control kept the executor too"
+    assert lm["fader:5"] == {"do": "fader", "exec": 250}
+
+
+def test_a_key_taken_from_the_select_row_is_released(tmp_path, monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="note:40", do="key", exec_no=103)
+
+    kept = xrun.load_stored_config()
+    assert kept.select_execs[2] == 0
+    assert kept.select_execs[0] == 101
+    b = Bridge(config=_cfg(select_execs=kept.select_execs))
+    assert b.midi_in(bytes((0x90, mcu.SELECT[2], 127))) == []
+    assert b.midi_in(bytes((0x90, mcu.SELECT[0], 127))) != []
+
+
+def test_only_one_control_can_be_the_grand_master(tmp_path, monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:7", do="master")
+    xapp.api_learn_assign(key="fader:3", do="master")
+
+    lm = xrun.load_stored_config().learn_map
+    assert list(lm) == ["fader:3"]
+
+
+def test_one_object_per_strip_on_the_feedback_side_too(tmp_path, monkeypatch):
+    """Two addresses driving one motor is two things fighting over it."""
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_feedback_learn(addr="14.1:FaderMaster", strip=3)
+    xapp.api_feedback_learn(addr="14.2:FaderMaster", strip=3)
+
+    fm = xrun.load_stored_config().ma3_feedback
+    assert fm == {"14.2:FaderMaster": 3}
+
+
+def test_forgetting_a_learned_control_disturbs_nothing_else(tmp_path,
+                                                            monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:2", do="fader", exec_no=250)
+    before = xrun.load_stored_config()
+    xapp.api_learn_assign(key="fader:2", do="clear")
+    after = xrun.load_stored_config()
+    assert after.learn_map == {}
+    assert after.fader_execs == before.fader_execs
+
+
+def test_a_released_default_is_named_in_the_panel():
+    """A control that has quietly stopped working is the worst outcome
+    of reassignment, so every blanked slot is listed."""
+    from xbridge.app import _released
+
+    out = _released(_cfg(fader_execs=(201, 0, 203, 204, 205, 206, 207, 0),
+                         select_execs=(101, 102, 0, 104, 105, 106, 107, 108)))
+    assert out == ["fader 2", "fader 8", "SELECT 3"]
+    assert _released(_cfg()) == []

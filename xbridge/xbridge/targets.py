@@ -97,6 +97,8 @@ class MA3Target:
         if strip >= len(cfg.fader_execs):
             return []
         exec_no = cfg.fader_execs[strip]
+        if not exec_no:          # 0 = released, e.g. reassigned elsewhere
+            return []
         self._note_sent(strip, unit * 100.0)
         if getattr(cfg, "ma3_fader", "osc") == "cmd":
             # The command line reaches the same fader without depending
@@ -123,14 +125,14 @@ class MA3Target:
     def button(self, row: str, idx: int, down: bool) -> list[osc.Message]:
         execs = (self.config.select_execs if row == "select"
                  else self.config.mute_execs)
-        if idx >= len(execs):
+        if idx >= len(execs) or not execs[idx]:
             return []
         return [osc.Message(self._addr(f"Key{execs[idx]}"),
                             (1 if down else 0,))]
 
     def encoder(self, idx: int, unit: float) -> list[osc.Message]:
         cfg = self.config
-        if idx >= len(cfg.encoder_execs):
+        if idx >= len(cfg.encoder_execs) or not cfg.encoder_execs[idx]:
             return []
         if getattr(cfg, "ma3_encoder", "encoder") == "fader":
             return [osc.Message(self._addr(f"Fader{cfg.encoder_execs[idx]}"),
