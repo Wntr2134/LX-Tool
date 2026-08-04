@@ -58,7 +58,16 @@ def find_xtouch_port(names: list[str]) -> str | None:
     return find_surface_port(names, "xtouch")
 
 
-_PORT_HINTS = {"xtouch": ("x-touch", "xtouch"), "mpk": ("mpk",)}
+_PORT_HINTS = {
+    "xtouch": ("x-touch", "xtouch"),
+    "mpk": ("mpk",),
+    # An X32 in DAW-remote mode arrives under whichever expansion card is
+    # fitted - X-USB or X-LIVE, and the card names the port, not the
+    # console ("X-LIVE MIDI In 0"). Over RTPMIDI it takes the session's
+    # name instead, which no list can predict, so the port can also be
+    # picked by hand.
+    "x32mc": ("x32", "m32", "x-usb", "xusb", "x-live", "xlive"),
+}
 
 
 def find_surface_port(names: list[str], surface: str) -> str | None:
@@ -99,6 +108,13 @@ def _matching_port(name: str, candidates: list) -> str:
     for c in candidates:
         if _base_name(c) == base:
             return c
+    # "X-LIVE MIDI In" and "X-LIVE MIDI Out" are one device under two
+    # names; pair them by the direction word rather than by luck.
+    swapped = re.sub(r"\bin\b", "out", base)
+    if swapped != base:
+        for c in candidates:
+            if _base_name(c) == swapped:
+                return c
     for c in candidates:                      # last resort: a prefix match
         if base and _base_name(c).startswith(base[:8]):
             return c
@@ -126,6 +142,81 @@ def _open_pair(mido, in_name: str, out_name: str):
         raise
 
 
+def _describe_event(ev) -> str:
+    """One decoded surface event as a line a human can act on."""
+    from . import mcu
+    from .surfaces import KnobSet
+
+    if isinstance(ev, mcu.FaderMoved):
+        who = "master" if ev.strip == 8 else f"fader {ev.strip + 1}"
+        return f"{who} -> {ev.unit * 100:.0f}%"
+    if isinstance(ev, mcu.FaderTouched):
+        who = "master" if ev.strip == 8 else f"fader {ev.strip + 1}"
+        return f"{who} {'touched' if ev.touching else 'released'}"
+    if isinstance(ev, mcu.EncoderTurned):
+        return f"encoder {ev.encoder + 1} {ev.ticks:+d}"
+    if isinstance(ev, KnobSet):
+        return f"knob {ev.knob + 1} -> {ev.unit * 100:.0f}%"
+    if isinstance(ev, mcu.ButtonPressed):
+        for label, notes in (("SELECT", mcu.SELECT), ("MUTE", mcu.MUTE)):
+            if ev.note in notes:
+                return (f"{label} {notes.index(ev.note) + 1} "
+                        f"{'down' if ev.down else 'up'}")
+        return f"button note {ev.note} {'down' if ev.down else 'up'}"
+    return type(ev).__name__
+
+
+_SURFACE_ADVICE = {
+    "xtouch": "X-Touch: power on holding channel-1 SELECT, set MC + USB",
+    "mpk": "MPK Mini: connect it by USB",
+    "x32mc": ("X32/M32: Setup - Remote - protocol Mackie MCU, interface "
+              "Card MIDI, REMOTE BUTTON enabled - THEN PRESS THE DAW "
+              "REMOTE BUTTON on the console's top panel, which is what "
+              "actually hands the bus/output faders to the DAW; the "
+              "setup page only arms it. Card MIDI runs down the "
+              "expansion CARD's USB-B socket (X-USB or X-LIVE) - not the "
+              "REMOTE USB-B one, which is for X32-Edit and carries no "
+              "MIDI - and that card's driver must be installed here. The "
+              "port is named after the card, e.g. \"X-LIVE MIDI In\""),
+}
+
+
+def _no_surface_detail(names: list, surfaces: list) -> str:
+    """Why no surface was found, in terms of the surface actually chosen.
+
+    Naming the X-Touch when someone selected an X32 sends them to check
+    the wrong device. And an empty port list is a different fault from a
+    list that simply has no match in it: nothing is reaching Windows at
+    all, so no console setting can help until the driver does.
+    """
+    picked = [getattr(s, "name", "?") for s in surfaces] or ["xtouch"]
+    want = " + ".join(picked)
+    advice = " / ".join(_SURFACE_ADVICE.get(n, n) for n in picked)
+    if not names:
+        return (f"waiting for {want} - this PC can see NO MIDI inputs at "
+                "all, so nothing is reaching it yet: check the USB cable "
+                "and that the device's driver is installed. " + advice)
+    return (f"waiting for {want} - none of the MIDI inputs look like it. "
+            f"Seen: {', '.join(names)}. {advice}. If it is in that list "
+            "under another name, pick it in the MIDI port box.")
+
+
+def _describe_intent(fb) -> str:
+    """One feedback intent as something a human can check against."""
+    from . import targets
+
+    if isinstance(fb, targets.FaderFB):
+        who = "master" if fb.strip == 8 else f"fader {fb.strip + 1}"
+        return f"move {who} to {fb.unit * 100:.0f}%"
+    if isinstance(fb, targets.ButtonFB):
+        return f"{fb.row.upper()} {fb.idx + 1} LED {'on' if fb.on else 'off'}"
+    if isinstance(fb, targets.RingFB):
+        return f"ring {fb.idx + 1} to {fb.unit * 100:.0f}%"
+    if isinstance(fb, targets.LabelFB):
+        return f"strip {fb.strip + 1} label {fb.text!r}"
+    return type(fb).__name__
+
+
 def midi_available() -> bool:
     try:
         import mido  # noqa: F401
@@ -144,6 +235,7 @@ class Runner:
 
     def __init__(self, *, ma3_host: str = "127.0.0.1", send_port: int = 0,
                  recv_port: int = 9000, midi_port: str = "",
+                 midi_out_port: str = "",
                  config_path: str = "", target: str = "", surface: str = "",
                  log=print):
         cfg = load_config(config_path or None)
@@ -158,6 +250,10 @@ class Runner:
         self.ma3 = (ma3_host, send_port)
         self.recv_port = recv_port
         self.midi_port = midi_port
+        # Named by hand when the output cannot be matched to the input by
+        # name - some cards present the two under unrelated names, and a
+        # surface with no output is one-way: no motors, LEDs or displays.
+        self.midi_out_port = midi_out_port
         self.stop_event = threading.Event()
         self.state = "starting"
         self.detail = ""
@@ -167,6 +263,29 @@ class Runner:
         # fader does nothing" is unanswerable: it cannot be told apart
         # from "the bridge sent nothing at all".
         self.last_sent: list = []
+        # The last few things the surface said, decoded. A control that
+        # produces nothing here is not mapped wrong - it never arrived,
+        # which is a different problem with a different fix.
+        self.last_midi: list = []
+        # The last few things the console said, decoded, with what the
+        # bridge made of them. "console in" climbing while nothing moves
+        # is a different fault from nothing arriving at all, and the
+        # counter alone cannot tell them apart.
+        self.last_osc: list = []
+        # Surfaces opened for input only. Nothing can be sent to them.
+        self.no_output: list = []
+        # MIDI-learn: armed by the panel, filled by the next control the
+        # user touches, then read back and assigned.
+        self.learn_armed: bool = False
+        self.learn_caught: dict | None = None
+        # Motor/LED test frames queued from the UI, each with the time it
+        # is due. The session loop owns the ports exclusively - on Windows
+        # nothing else can open them while it runs - so a "wiggle the
+        # surface" test goes out through the live connection. It has to be
+        # PACED: a motor fader needs time to travel, so a burst of levels
+        # sent at once is simply the last one, and the fader appears not
+        # to move at all.
+        self._inject: list = []
         self._log = log
 
     def stop(self) -> None:
@@ -184,6 +303,116 @@ class Runner:
             line = str(datagram)
         self.last_sent.append(line)
         del self.last_sent[:-8]
+
+    def wiggle(self, *, step: float = 0.35, now: float | None = None) -> int:
+        """Queue a paced sweep to the surface: proves the PC -> surface leg.
+
+        Useful with no console at all: if the motors move and the LEDs
+        blink, output works and anything still wrong is upstream.
+
+        The pacing is the point. A motorised fader takes a moment to
+        travel, so sending 0/25/50/75/100 in one burst leaves it at the
+        last value having appeared to do nothing - which reads exactly
+        like a dead output.
+        """
+        at = time.monotonic() if now is None else now
+        frames: list = []
+
+        def hold(delay: float, raws) -> None:
+            nonlocal at
+            at += delay
+            frames.extend((at, r) for r in raws)
+
+        for level in (0.0, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0):
+            hold(step, [mcu.fader_out(s, level) for s in range(9)])
+        hold(step, [mcu.button_led(n, True)
+                    for n in (*mcu.SELECT, *mcu.MUTE)])
+        hold(step, [mcu.button_led(n, False)
+                    for n in (*mcu.SELECT, *mcu.MUTE)])
+        hold(step, [mcu.encoder_ring(e, 1.0, mode=2) for e in range(8)])
+        hold(step, [mcu.encoder_ring(e, 0.0, mode=2) for e in range(8)])
+        self._inject.extend(frames)
+        return len(frames)
+
+    def _drain_inject(self, mido, conns, now: float | None = None) -> None:
+        """Send the queued test frames that are due, and no more."""
+        if not self._inject:
+            return
+        at = time.monotonic() if now is None else now
+        due = [raw for when, raw in self._inject if when <= at]
+        if not due:
+            return
+        self._inject = [(w, r) for w, r in self._inject if w > at]
+        for _surface, _mi, mout, _p in conns:
+            if mout is None:
+                continue
+            for raw in due:
+                try:
+                    mout.send(mido.Message.from_bytes(raw))
+                except Exception as exc:      # noqa: BLE001
+                    self._log(f"surface test: {exc}")
+                    self._inject = []
+                    return
+
+    def _persist_learned(self) -> None:
+        """Write auto-learned feedback mappings to the stored mapping.
+
+        Learning that only lasts until the app closes is not learning, and
+        the bridge cannot ask the user to press Save mid-show.
+        """
+        learned = getattr(self.bridge.target, "learned", None)
+        if not learned:
+            return
+        pairs, learned[:] = list(learned), []
+        try:
+            body = {f.name: (list(v) if isinstance(v := getattr(
+                self.bridge.config, f.name), tuple) else v)
+                for f in fields(Config)}
+            table = dict(body.get("ma3_feedback") or {})
+            table.update({a: s for a, s in pairs})
+            body["ma3_feedback"] = table
+            store_config(body)
+            for addr, strip in pairs:
+                self._log(f"learned: strip {strip} follows /{addr}")
+        except Exception as exc:      # noqa: BLE001 - never break the show
+            self._log(f"could not save learned mapping: {exc}")
+
+    def _note_osc(self, datagram: bytes, msg, intents) -> None:
+        """Record one message from the console and its effect."""
+        if msg is None:
+            line = f"?? undecodable, {len(datagram)} bytes"
+        else:
+            args = " ".join(str(a) for a in msg.args)
+            what = (", ".join(_describe_intent(i) for i in intents)
+                    or "(nothing on the surface)")
+            line = f"{msg.address} {args}  ->  {what}".rstrip()
+        self.last_osc.append(line)
+        del self.last_osc[:-12]
+
+    def _note_midi(self, surface, raw: bytes) -> None:
+        """Record one surface message, decoded, for the MIDI monitor.
+
+        Shows the raw bytes as well as the reading, because an unmapped
+        control shows its bytes and no reading - which is exactly what
+        someone needs in order to say what it should do.
+        """
+        try:
+            events = surface.decode(raw)
+        except Exception:              # noqa: BLE001 - never break the loop
+            events = []
+        if self.learn_armed:
+            for ev in events:
+                key = self.bridge.control_key(ev)
+                if key and not key.startswith("fadertouch"):
+                    self.learn_caught = {"key": key,
+                                         "what": _describe_event(ev)}
+                    self.learn_armed = False
+                    self._log(f"learn: caught {key} ({self.learn_caught['what']})")
+                    break
+        what = ", ".join(_describe_event(e) for e in events) or "(unmapped)"
+        name = getattr(surface, "name", "?")
+        self.last_midi.append(f"{name}  {raw.hex(' ')}  {what}")
+        del self.last_midi[:-12]
 
     def test_send(self, strip: int = 0, level: float = 0.5) -> str:
         """Pretend a fader moved, so the console can be tested without
@@ -222,8 +451,12 @@ class Runner:
             sock.bind(("0.0.0.0", self.recv_port))
         except OSError as exc:
             self.state, self.detail = "error", (
-                f"cannot listen on UDP {self.recv_port}: {exc} "
-                "(is another bridge already running?)")
+                f"cannot listen on UDP {self.recv_port}: {exc} - another "
+                "bridge may already be running, or the console is holding "
+                f"the port. On MA3, an OSC line with Receive = Yes binds "
+                f"its Port, so a line on {self.recv_port} takes it. Set "
+                "that line's Receive to No (it only needs Send), or give "
+                "the bridge a different listen port.")
             self._log(self.detail)
             return 1
         sock.setblocking(False)
@@ -244,9 +477,8 @@ class Runner:
                 if not port_name:
                     if self.state != "waiting-for-surface":
                         self.state = "waiting-for-surface"
-                        seen = ", ".join(names) or "none"
-                        self.detail = ("no surface on USB (X-Touch: MC mode, "
-                                       f"USB). MIDI inputs seen: {seen}")
+                        self.detail = _no_surface_detail(
+                            names, self.bridge.surfaces)
                         self._log(self.detail)
                     if self.stop_event.wait(_RETRY_SECS):
                         break
@@ -287,15 +519,29 @@ class Runner:
             in_name = want or find_surface_port(names, surface.name)
             if not in_name or any(in_name == c[3] for c in conns):
                 continue
-            out_name = (find_surface_port(outs, surface.name)
+            want_out = (self.midi_out_port
+                        if self.midi_out_port and len(self.bridge.surfaces) == 1
+                        else "")
+            out_name = (want_out
+                        or find_surface_port(outs, surface.name)
                         or _matching_port(in_name, outs))
             try:
                 pair = _open_pair(mido, in_name, out_name)
             except Exception as exc:  # noqa: BLE001 - half-plugged: try later
                 self._log(f"could not open {in_name!r}: {exc}")
                 continue
+            if pair[1] is None:
+                # Everything the bridge sends the surface - motors, LEDs,
+                # scribble strips - goes nowhere without an output port,
+                # and did so silently. Say it once, loudly.
+                self._log(f"{in_name!r} opened for INPUT ONLY: no matching "
+                          f"MIDI output. Outputs seen: "
+                          f"{', '.join(outs) or 'none'}")
             conns.append((surface, pair[0], pair[1], in_name))
         return conns
+
+    def surfaces_without_output(self, conns) -> list:
+        return [c[3] for c in conns if c[2] is None]
 
     def _session(self, mido, port_name: str, sock) -> None:
         """One connected stretch: from first port open until stop/error."""
@@ -307,6 +553,14 @@ class Runner:
             self.state = "running"
             self.detail = (f"{self.midi_name} <-> {self.ma3[0]}:{self.ma3[1]}"
                            f" (feedback on :{self.recv_port})")
+            deaf = self.surfaces_without_output(conns)
+            self.no_output = deaf
+            if deaf:
+                outs = ", ".join(_port_names(mido, "output")) or "none"
+                self.detail += (
+                    f"  --  WARNING: no MIDI OUTPUT for {', '.join(deaf)}, "
+                    "so motors, LEDs and displays cannot be driven at all. "
+                    f"Outputs this PC can see: {outs}")
             self._log(f"Surfaces: {self.midi_name}")
             self._log(f"Console:  sending to {self.ma3[0]}:{self.ma3[1]}, "
                       f"listening on :{self.recv_port}")
@@ -328,9 +582,19 @@ class Runner:
                     for msg in mi.iter_pending():
                         worked = True
                         self.counters["midi_in"] += 1
+                        raw = bytes(msg.bytes())
+                        self._note_midi(surface, raw)
                         for datagram in self.bridge.midi_in(
-                                bytes(msg.bytes()), surface=surface):
+                                raw, surface=surface):
                             self._send(sock, datagram)
+                        # Tell the surface where it just put the fader,
+                        # or its motor drags it back on release.
+                        mout = next((c[2] for c in conns if c[0] is surface),
+                                    None)
+                        if mout is not None:
+                            for echo in self.bridge.echo_for(raw,
+                                                             surface=surface):
+                                mout.send(mido.Message.from_bytes(echo))
                 if self.bridge.config.page != page:
                     page = self.bridge.config.page
                     for surface, _mi, mout, _p in conns:
@@ -359,11 +623,14 @@ class Runner:
                     msg = osc.decode(datagram)
                     intents = (self.bridge.target.feedback(msg)
                                if msg is not None else [])
+                    self._note_osc(datagram, msg, intents)
                     for surface, _mi, mout, _p in conns:
                         if mout is None:
                             continue
                         for raw in self.bridge.render_for(surface, intents):
                             mout.send(mido.Message.from_bytes(raw))
+                self._drain_inject(mido, conns)
+                self._persist_learned()
                 for datagram in self.bridge.tick(time.monotonic()):
                     self._send(sock, datagram)
                 # A configured surface plugged in mid-session joins live.

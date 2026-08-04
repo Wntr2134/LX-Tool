@@ -7,11 +7,29 @@ receives - and back from MA3's feedback to the motor-fader message.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from xbridge import mcu, osc
 from xbridge.bridge import Bridge, Config
 from xbridge.run import default_config_json, find_xtouch_port, load_config
+
+def _cfg(**kw) -> Config:
+    """Config with the address shape the mapping tests assert.
+
+    These tests are about the mapping, so they pin the address shape
+    explicitly rather than inheriting it, and let
+    test_shipped_defaults_match_a_stock_console own the defaults.
+    """
+    kw.setdefault("prefix", "")
+    kw.setdefault("ma3_value", "int100")
+    return Config(**kw)
+
+
+def _plain(**kw) -> Bridge:
+    return Bridge(config=_cfg(**kw))
+
 
 # ---- MCU codec ---------------------------------------------------------
 
@@ -89,7 +107,7 @@ def test_osc_garbage_never_raises():
 
 
 def test_fader_move_becomes_ma3_executor_level():
-    b = Bridge()
+    b = _plain()
     (datagram,) = b.midi_in(mcu.fader_out(0, 0.75))
     msg = osc.decode(datagram)
     assert msg.address == "/Page1/Fader201"
@@ -103,7 +121,7 @@ def test_prefix_and_page_shape_the_address():
 
 
 def test_master_fader_uses_the_command_line():
-    b = Bridge()
+    b = _plain()
     (datagram,) = b.midi_in(mcu.fader_out(8, 0.8))
     msg = osc.decode(datagram)
     assert msg.address == "/cmd"
@@ -111,7 +129,7 @@ def test_master_fader_uses_the_command_line():
 
 
 def test_select_button_press_and_release_hit_the_key():
-    b = Bridge()
+    b = _plain()
     (down,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
     (up,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 0)))
     assert osc.decode(down) == osc.Message("/Page1/Key101", (1,))
@@ -119,7 +137,7 @@ def test_select_button_press_and_release_hit_the_key():
 
 
 def test_encoder_ticks_accumulate_and_clamp():
-    b = Bridge()
+    b = _plain()
     for _ in range(3):
         (d,) = b.midi_in(bytes((0xB0, 16, 1)))
     assert osc.decode(d).args == (6,)          # 3 ticks * 2% = 6
@@ -129,7 +147,7 @@ def test_encoder_ticks_accumulate_and_clamp():
 
 
 def test_bank_buttons_flip_the_page():
-    b = Bridge()
+    b = _plain()
     b.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
     assert b.config.page == 2
     (datagram,) = b.midi_in(mcu.fader_out(0, 1.0))
@@ -143,7 +161,7 @@ def test_bank_buttons_flip_the_page():
 
 
 def test_ma3_fader_feedback_moves_the_motor():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Fader201", (50,))))
     ev = mcu.decode(raw)
     assert isinstance(ev, mcu.FaderMoved)
@@ -152,7 +170,7 @@ def test_ma3_fader_feedback_moves_the_motor():
 
 
 def test_feedback_never_fights_a_touched_fader():
-    b = Bridge()
+    b = _plain()
     b.midi_in(bytes((0x90, 104, 127)))         # finger down on strip 1
     assert b.osc_in(osc.encode(osc.Message("/Page1/Fader201", (99,)))) == []
     b.midi_in(bytes((0x90, 104, 0)))           # finger off
@@ -160,24 +178,24 @@ def test_feedback_never_fights_a_touched_fader():
 
 
 def test_feedback_for_another_page_is_ignored():
-    b = Bridge()
+    b = _plain()
     assert b.osc_in(osc.encode(osc.Message("/Page9/Fader201", (50,)))) == []
 
 
 def test_key_feedback_lights_the_button_led():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Key101", (1,))))
     assert raw == mcu.button_led(mcu.SELECT[0], True)
 
 
 def test_encoder_feedback_paints_the_ring():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Fader301", (100,))))
     assert raw[0] == 0xB0 and raw[1] == 48     # ring CC for encoder 1
 
 
 def test_float_and_junk_feedback_are_safe():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(osc.Message("/Page1/Fader201", (50.0,))))
     assert mcu.decode(raw).unit == pytest.approx(0.5, abs=0.01)
     assert b.osc_in(b"\x01\x02not osc") == []
@@ -185,7 +203,7 @@ def test_float_and_junk_feedback_are_safe():
 
 
 def test_hello_labels_the_strips():
-    payloads = b"".join(Bridge().hello())
+    payloads = b"".join(_plain().hello())
     assert b"Ex 201" in payloads
     assert b"Pg 1" in payloads
 
@@ -220,7 +238,7 @@ def test_port_finder_matches_xtouch_names():
 
 
 def test_transport_buttons_fire_commands_on_press_only():
-    b = Bridge()
+    b = _plain()
     (down,) = b.midi_in(bytes((0x90, mcu.PLAY, 127)))
     assert osc.decode(down) == osc.Message("/cmd", ("Go+",))
     assert b.midi_in(bytes((0x90, mcu.PLAY, 0))) == []       # release: nothing
@@ -231,7 +249,7 @@ def test_transport_buttons_fire_commands_on_press_only():
 
 
 def test_unmapped_transport_button_stays_silent():
-    b = Bridge()
+    b = _plain()
     assert b.midi_in(bytes((0x90, mcu.RECORD, 127))) == []
     b.config.cmd_record = "Off Sequence 1"
     (d,) = b.midi_in(bytes((0x90, mcu.RECORD, 127)))
@@ -306,7 +324,7 @@ def test_web_status_endpoint_reports_without_midi_installed():
 
 
 def _x32() -> Bridge:
-    return Bridge(config=Config(target="x32"))
+    return Bridge(config=_cfg(target="x32"))
 
 
 def test_x32_fader_is_a_channel_level():
@@ -399,7 +417,7 @@ def test_unknown_target_is_rejected():
 
 
 def _magicq() -> Bridge:
-    return Bridge(config=Config(target="magicq"))
+    return Bridge(config=_cfg(target="magicq"))
 
 
 def test_magicq_faders_ride_playbacks():
@@ -449,7 +467,7 @@ def test_magicq_has_no_paging():
 
 
 def _resolume() -> Bridge:
-    return Bridge(config=Config(target="resolume"))
+    return Bridge(config=_cfg(target="resolume"))
 
 
 def test_resolume_faders_are_layer_opacity_banked():
@@ -487,7 +505,7 @@ def test_resolume_feedback_drives_motors_and_leds():
 
 
 def _companion() -> Bridge:
-    return Bridge(config=Config(target="companion"))
+    return Bridge(config=_cfg(target="companion"))
 
 
 def test_companion_buttons_are_locations_with_true_down_up():
@@ -537,7 +555,7 @@ def test_companion_bank_changes_the_companion_page():
 
 
 def _eos() -> Bridge:
-    return Bridge(config=Config(target="eos"))
+    return Bridge(config=_cfg(target="eos"))
 
 
 def test_eos_hello_configures_the_fader_bank():
@@ -579,7 +597,7 @@ def test_eos_feedback_moves_the_motors():
 
 
 def test_generic_templates_fill_the_strip_number():
-    b = Bridge(config=Config(target="generic", gen_fader="/qlab/cue/{n}/level",
+    b = Bridge(config=_cfg(target="generic", gen_fader="/qlab/cue/{n}/level",
                              gen_scale="float01"))
     (d,) = b.midi_in(mcu.fader_out(0, 0.5))
     msg = osc.decode(d)
@@ -591,7 +609,7 @@ def test_generic_templates_fill_the_strip_number():
 
 
 def test_generic_int_scale_and_buttons_and_unmapped():
-    b = Bridge(config=Config(target="generic", gen_scale="int100",
+    b = Bridge(config=_cfg(target="generic", gen_scale="int100",
                              gen_mute=""))
     (d,) = b.midi_in(mcu.fader_out(1, 0.5))
     assert osc.decode(d).args == (50,)
@@ -601,7 +619,7 @@ def test_generic_int_scale_and_buttons_and_unmapped():
 
 
 def test_generic_feedback_on_the_fader_template_moves_motors():
-    b = Bridge(config=Config(target="generic", gen_fader="/fader/{n}"))
+    b = Bridge(config=_cfg(target="generic", gen_fader="/fader/{n}"))
     (motor,) = b.osc_in(osc.encode(osc.Message("/fader/3", (0.25,))))
     assert mcu.decode(motor).strip == 2
     assert b.osc_in(osc.encode(osc.Message("/other/3", (0.25,)))) == []
@@ -611,7 +629,7 @@ def test_generic_feedback_on_the_fader_template_moves_motors():
 
 
 def test_ma3_lua_plugin_labels_reach_the_strips():
-    b = Bridge()
+    b = _plain()
     (raw,) = b.osc_in(osc.encode(
         osc.Message("/xbridge/label/1", ("Front Wash",))))
     assert raw == mcu.lcd_text(0, 0, "Front Wash")
@@ -692,7 +710,7 @@ def test_web_config_endpoints_roundtrip(tmp_path, monkeypatch):
 
 
 def _ma2() -> Bridge:
-    return Bridge(config=Config(target="ma2"))
+    return Bridge(config=_cfg(target="ma2"))
 
 
 def test_ma2_faders_are_executor_commands():
@@ -719,10 +737,10 @@ def test_ma2_master_and_buttons_and_encoders():
 
 
 def test_ma2_master_command_is_a_template():
-    b = Bridge(config=Config(target="ma2", ma2_master_cmd="Master 2.2 At {pct}"))
+    b = Bridge(config=_cfg(target="ma2", ma2_master_cmd="Master 2.2 At {pct}"))
     (m,) = b.midi_in(mcu.fader_out(8, 0.5))
     assert m == "Master 2.2 At 50.0"
-    b2 = Bridge(config=Config(target="ma2", ma2_master_cmd=""))
+    b2 = Bridge(config=_cfg(target="ma2", ma2_master_cmd=""))
     assert b2.midi_in(mcu.fader_out(8, 0.5)) == []
 
 
@@ -777,7 +795,7 @@ def test_ma2_touch_suppression_applies_to_ws_feedback_too():
 
 
 def _mpk() -> Bridge:
-    return Bridge(config=Config(surface="mpk"))
+    return Bridge(config=_cfg(surface="mpk"))
 
 
 def test_mpk_knobs_ride_encoder_slots_absolutely():
@@ -806,7 +824,7 @@ def test_mpk_pads_press_the_select_row_with_led_feedback():
 def test_mpk_ignores_unmapped_midi_and_custom_numbers_work():
     b = _mpk()
     assert b.midi_in(bytes((0xB0, 1, 64))) == []     # mod wheel: not a knob
-    b2 = Bridge(config=Config(surface="mpk", mpk_knob_ccs=(20, 21),
+    b2 = Bridge(config=_cfg(surface="mpk", mpk_knob_ccs=(20, 21),
                               mpk_pad_notes=(40,)))
     (d,) = b2.midi_in(bytes((0xB0, 21, 127)))
     assert osc.decode(d).address == "/Page1/Fader302"
@@ -826,7 +844,7 @@ def test_unknown_surface_is_rejected():
 
 
 def test_control_port_reaches_every_path():
-    b = Bridge()
+    b = _plain()
     (d,) = b.control_in(osc.Message("/xbridge/fader/1", (0.5,)))
     assert osc.decode(d) == osc.Message("/Page1/Fader201", (50,))
     (d,) = b.control_in(osc.Message("/xbridge/fader/2", (75,)))   # int 0-100
@@ -844,7 +862,7 @@ def test_control_port_reaches_every_path():
 
 
 def test_control_port_rejects_junk_quietly():
-    b = Bridge()
+    b = _plain()
     for addr in ("/xbridge/fader/99", "/xbridge/fader/x", "/xbridge/nope",
                  "/xbridge/key/rec/1", "/other/fader/1"):
         assert b.control_in(osc.Message(addr, (1,))) == []
@@ -865,7 +883,7 @@ def test_surface_list_parses_and_rejects():
 
 
 def test_events_route_by_originating_surface():
-    b = Bridge(config=Config(surface="xtouch,mpk"))
+    b = Bridge(config=_cfg(surface="xtouch,mpk"))
     xt, mpk = b.surfaces
     # CC 70 is a knob on the MPK but nothing on the X-Touch
     assert b.midi_in(bytes((0xB0, 70, 127)), surface=xt) == []
@@ -878,7 +896,7 @@ def test_events_route_by_originating_surface():
 
 
 def test_feedback_renders_per_surface():
-    b = Bridge(config=Config(surface="xtouch,mpk"))
+    b = Bridge(config=_cfg(surface="xtouch,mpk"))
     xt, mpk = b.surfaces
     intents = b.target.feedback(osc.Message("/Page1/Key101", (1,)))
     assert b.render_for(xt, intents) == [mcu.button_led(mcu.SELECT[0], True)]
@@ -889,7 +907,7 @@ def test_feedback_renders_per_surface():
 
 
 def test_touch_suppression_holds_across_surfaces():
-    b = Bridge(config=Config(surface="xtouch,mpk"))
+    b = Bridge(config=_cfg(surface="xtouch,mpk"))
     xt, _mpk = b.surfaces
     b.midi_in(bytes((0x90, 104, 127)), surface=xt)   # finger on fader 1
     fader = b.target.feedback(osc.Message("/Page1/Fader201", (99,)))
@@ -1039,16 +1057,1418 @@ def test_test_send_reports_the_exact_message(monkeypatch):
     assert r.counters["sent"] == 1
 
 
-def test_ma3_fader_value_type_is_switchable():
-    """The MA3 manual documents int 0-100; a float is the fallback when a
-    version wants one, so it must not be hard-coded."""
-    as_int = Bridge(config=Config())
-    (d,) = as_int.midi_in(mcu.fader_out(0, 0.5))
-    assert osc.decode(d).args == (50,)
-
-    as_float = Bridge(config=Config(ma3_value="float"))
-    (d,) = as_float.midi_in(mcu.fader_out(0, 0.5))
+@pytest.mark.parametrize("form,check", [
+    ("int100", lambda v: v == 50),
+    ("float100", lambda v: isinstance(v, float) and abs(v - 50.0) < 0.01),
+    ("float01", lambda v: isinstance(v, float) and abs(v - 0.5) < 0.001),
+    ("int255", lambda v: v == 128),
+])
+def test_every_ma3_fader_value_form_is_available(form, check):
+    """MA's manual says int 0-100, MA's own worked example sends float
+    0-100, and FaderRange can move the top of the scale to 255. All four
+    ship so the probe can find which one a console actually wants."""
+    b = Bridge(config=_cfg(ma3_value=form))
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
     (value,) = osc.decode(d).args
-    assert isinstance(value, float)
-    # 14-bit faders quantise: 8192/16383 is 50.003%, not exactly 50.
-    assert value == pytest.approx(50.0, abs=0.01)
+    assert check(value), f"{form} produced {value!r}"
+
+
+def test_shipped_defaults_match_a_stock_console():
+    """A stock MA3 OSC line has an EMPTY prefix - the manual's receive
+    example says so outright ("no prefix is defined") - and its canonical
+    input example is "/Page1/Fader201,i,100". The shipped defaults have
+    to match that, because it is the only configuration a user gets
+    without editing the console first."""
+    (d,) = Bridge().midi_in(mcu.fader_out(0, 1.0))
+    msg = osc.decode(d)
+    assert msg.address == "/Page1/Fader201"
+    (value,) = msg.args
+    assert isinstance(value, int) and not isinstance(value, bool)
+    assert value == 100
+
+
+# ---- the MA3 format probe ---------------------------------------------
+
+
+def test_probe_covers_every_documented_dialect():
+    """Prefix on/off crossed with all four value forms. Miss one and the
+    probe can tell a user "none of these worked" when one would have."""
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    assert len(set(DIALECTS)) == len(DIALECTS), "a step is duplicated"
+    from xbridge.probe import CMD_TEMPLATES
+    assert {v for _, v, _ in DIALECTS} >= {"int100", "float100", "float01",
+                                           "int255"}
+    assert {v for _, v, _ in DIALECTS} & set(CMD_TEMPLATES) == set(CMD_TEMPLATES)
+    assert {p for p, _, _ in DIALECTS} == {"", "gma3"}
+    assert {a for _, _, a in DIALECTS} == {"page", "selected"}
+    # The first step must be the stock console, so the common case is
+    # answered before anyone stops watching.
+    assert DIALECTS[0] == ("", "int100", "page")
+    assert all(s.address for s in Ma3Probe().steps)
+
+
+def test_probe_addresses_the_executor_it_was_asked_about():
+    from xbridge.probe import Ma3Probe
+
+    p = Ma3Probe(page=3, exec_=205)
+    by_addr = {s.address for s in p.steps}
+    assert "/Page3/Fader205" in by_addr          # stock
+    assert "/gma3/Page3/Fader205" in by_addr     # prefixed
+    assert "/Fader205" in by_addr                # selected page
+    assert "/gma3/Fader205" in by_addr
+
+
+def test_probe_sends_each_step_once_and_pauses_between():
+    """A sweep with no gap is unwatchable: every step lands before a
+    human can look up."""
+    from xbridge.probe import Ma3Probe
+
+    sent, slept = [], []
+
+    class FakeSock:
+        def sendto(self, data, addr):
+            sent.append((osc.decode(data), addr))
+
+    p = Ma3Probe(host="10.0.0.5", port=8001)
+    p.run(dwell=1.5, sock=FakeSock(), sleep=slept.append)
+
+    # two datagrams per step: zero first, then up, so the fader visibly
+    # moves even if it was already sitting at the test level
+    assert len(sent) == 2 * len(p.steps)
+    assert all(addr == ("10.0.0.5", 8001) for _, addr in sent)
+    assert slept == [0.5, 1.5] * len(p.steps)
+    def level(m):
+        a = m.args[0]
+        return float(a.rsplit(" ", 1)[1]) if isinstance(a, str) else float(a)
+
+    lows = [m for m, _ in sent[0::2]]
+    assert all(level(m) == 0.0 for m in lows), "no step started at zero"
+    sent = [(m, a) for m, a in sent[1::2]]
+    forms = {(m.address, type(m.args[0]).__name__, str(m.args[0]))
+             for m, _ in sent}
+    assert len(forms) == len(p.steps), "two steps put the same bytes on the wire"
+
+
+def test_probe_answer_can_be_kept():
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    p = Ma3Probe()
+    from xbridge.probe import CMD_TEMPLATES
+
+    for i, (prefix, value, addr_form) in enumerate(DIALECTS):
+        cfg = p.apply(Config(), i)
+        assert (cfg.prefix, cfg.ma3_addr) == (prefix, addr_form)
+        if value in CMD_TEMPLATES:
+            assert cfg.ma3_fader == "cmd"
+            assert cfg.ma3_fader_cmd == CMD_TEMPLATES[value]
+        else:
+            assert (cfg.ma3_fader, cfg.ma3_value) == ("osc", value)
+
+
+def test_probe_apply_keeps_the_rest_of_the_mapping(tmp_path, monkeypatch):
+    """The winning dialect is two fields. Saving it must not throw away
+    the executor numbers someone spent a show setting up."""
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    store = tmp_path / "mapping.json"
+    monkeypatch.setattr(xrun, "config_store_path", lambda: store)
+    xrun.store_config({"target": "ma3", "prefix": "wrong",
+                       "ma3_value": "int255", "fader_execs": [401, 402]})
+
+    idx = 2                                     # gma3 + int100 + page
+    out = xapp.api_probe_apply(index=idx)
+
+    assert (out["prefix"], out["ma3_value"]) == ("gma3", "int100")
+    kept = xrun.load_stored_config()
+    assert kept.fader_execs == (401, 402)
+    assert (kept.prefix, kept.ma3_value) == ("gma3", "int100")
+
+
+# ---- MA3's real output format ------------------------------------------
+
+
+def test_ma3_playback_feedback_is_not_the_input_format():
+    """The bug this covers: MA3 does NOT echo /Page1/Fader201 back.
+
+    Per "Object Playback Feedback", moving a fader on the console emits
+    the object's enumerated address with an sif payload -
+    /13.13.1.6.1,sif,"FaderMaster",3,63.5 - so a bridge that only listens
+    for its own input format has a permanently dead return leg, and the
+    motor faders never track the desk.
+    """
+    b = _plain(ma3_feedback={"13.13.1.6.1:FaderMaster": 1})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.13.1.6.1", ("FaderMaster", 3, 63.5))))
+    assert raw, "MA3's documented feedback format was ignored"
+    ev = mcu.decode(raw[0])
+    assert isinstance(ev, mcu.FaderMoved)
+    assert ev.strip == 0
+    assert ev.unit == pytest.approx(0.635, abs=0.01)
+
+
+def test_master_playback_feedback_uses_the_same_shape():
+    """Masters report as /13.12.X.Y with the same sif payload."""
+    b = _plain(ma3_feedback={"13.12.3.1:FaderMaster": 4})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.12.3.1", ("FaderMaster", 3, 100.0))))
+    ev = mcu.decode(raw[0])
+    assert ev.strip == 3 and ev.unit == pytest.approx(1.0, abs=0.01)
+
+
+def test_key_playback_feedback_lights_the_button():
+    b = _plain(ma3_feedback={"13.13.1.6.1:Flash": 1})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.13.1.6.1", ("Flash", 1, "Strobe 1 Cue 1"))))
+    assert raw == [mcu.button_led(mcu.SELECT[0], True)]
+
+
+def test_unmapped_playback_feedback_is_quietly_dropped():
+    """Without a table entry there is nothing to move - but it must not
+    be mistaken for a fader address either."""
+    b = _plain()
+    assert b.osc_in(osc.encode(osc.Message(
+        "/13.13.1.6.9", ("FaderMaster", 3, 50.0)))) == []
+
+
+def test_playback_feedback_survives_a_prefix():
+    b = _plain(prefix="gma3", ma3_feedback={"13.13.1.6.1:FaderMaster": 1})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/gma3/13.13.1.6.1", ("FaderMaster", 3, 50.0))))
+    assert raw and isinstance(mcu.decode(raw[0]), mcu.FaderMoved)
+
+
+def test_documented_encoder_mode_sends_a_relative_step():
+    """MA3's /Encoder<x> takes a RELATIVE -100..100 percentage, not a
+    level. Sending an absolute value there would jump the executor."""
+    b = _plain(ma3_encoder="encoder")
+    (d,) = b.midi_in(bytes((0xB0, 16, 1)))        # one tick right
+    msg = osc.decode(d)
+    assert msg.address == "/Page1/Encoder301"
+    assert msg.args == (2,)                       # +2%, the step size
+    (d,) = b.midi_in(bytes((0xB0, 16, 65)))       # one tick left
+    assert osc.decode(d).args == (-2,)
+
+
+def test_selected_page_address_form_drops_the_page_segment():
+    """The escape hatch for an OSC line whose "Page" address cell has
+    been renamed: /Fader201 applies to the selected page."""
+    b = _plain(ma3_addr="selected", page=4)
+    (d,) = b.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).address == "/Fader201"
+    b2 = _plain(ma3_addr="selected", prefix="gma3")
+    (d,) = b2.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).address == "/gma3/Fader201"
+
+
+def test_command_line_address_is_documented_shape():
+    """MA3 takes command line syntax on /cmd with a string - and that
+    needs "Receive Command" enabled, separately from "Receive"."""
+    b = _plain()
+    (d,) = b.midi_in(mcu.fader_out(8, 1.0))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert isinstance(msg.args[0], str)
+    b2 = _plain(prefix="gma3")
+    (d,) = b2.midi_in(mcu.fader_out(8, 1.0))
+    assert osc.decode(d).address == "/gma3/cmd"
+
+
+def test_nothing_we_send_is_an_osc_bundle():
+    """MA3: "OSC Bundle messages are currently not supported." A bundle
+    would be dropped whole, silently."""
+    from xbridge.probe import Ma3Probe
+    from xbridge.targets import TARGETS, make_target
+
+    out = [Ma3Probe().datagram(i) for i in range(len(Ma3Probe().steps))]
+    b = _plain()
+    out += b.hello()
+    out += b.midi_in(mcu.fader_out(0, 0.5))
+    out += b.midi_in(mcu.fader_out(8, 0.5))
+    out += b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    for d in out:
+        if isinstance(d, bytes) and d.startswith(b"/") or isinstance(d, bytes):
+            assert not d.startswith(b"#bundle"), d[:24]
+
+
+# ---- console-side setup ------------------------------------------------
+
+
+def test_setup_needs_two_lines_because_one_port_serves_both_directions():
+    """MA3's OSC line has a single Port cell - "the port configuration is
+    used for sending and receiving OSC data". So when the bridge sends to
+    one port and listens on another, one line cannot do both, and looking
+    for a send port and a receive port in the menu finds neither."""
+    from xbridge import ma3setup
+
+    lines = ma3setup.lines(send_port=8000, recv_port=9000)
+    assert len(lines) == 2
+    ports = [c[1] for ln in lines for c in ln.cells if c[0] == "Port"]
+    assert ports == ["8000", "9000"]
+
+
+def test_setup_collapses_to_one_line_when_no_feedback_is_wanted():
+    from xbridge import ma3setup
+
+    assert len(ma3setup.lines(send_port=8000, recv_port=0)) == 1
+
+
+def test_setup_spells_out_the_switches_that_fail_silently():
+    """Receive, Receive Command and Enable Input are three separate
+    toggles, all off by default, each of which alone makes a correct
+    bridge look dead."""
+    from xbridge import ma3setup
+
+    first = ma3setup.lines()[0]
+    cells = {c[0]: c[1] for c in first.cells}
+    assert cells["Receive"] == "Yes"
+    assert cells["Receive Command"] == "Yes"
+    assert cells["Mode"] == "UDP"
+    assert cells["FaderRange"] == "100"
+    assert any("Enable Input" == n for n, _, _ in ma3setup.GLOBAL_TOGGLES)
+
+
+def test_the_sending_line_does_not_also_bind_the_bridges_port():
+    """On one PC, a console line with Receive = Yes on the bridge's
+    listen port fights the bridge for that port."""
+    from xbridge import ma3setup
+
+    out = ma3setup.lines(send_port=8000, recv_port=9000)[1]
+    cells = {c[0]: c[1] for c in out.cells}
+    assert cells["Send"] == "Yes"
+    assert cells["Receive"] == "No"
+    assert any("same PC" in w for w in ma3setup.warnings())
+
+
+def test_setup_warns_when_both_ports_are_the_same():
+    from xbridge import ma3setup
+
+    warn = ma3setup.warnings(send_port=8000, recv_port=8000)
+    assert any("8000" in w for w in warn)
+
+
+def test_setup_carries_the_prefix_through_to_both_lines():
+    """A prefix set in the mapping and not on the console is the silent
+    failure this whole guide exists to prevent."""
+    from xbridge import ma3setup
+
+    for ln in ma3setup.lines(prefix="gma3"):
+        assert any(c[0] == "Prefix" and c[1] == "gma3" for c in ln.cells)
+
+
+def test_setup_endpoint_reflects_the_ports_it_is_given():
+    from xbridge import app as xapp
+
+    d = xapp.api_ma3_setup(host="10.0.0.9", send_port=8010, recv_port=9010,
+                           bridge_ip="10.0.0.4")
+    body = str(d)
+    assert "8010" in body and "9010" in body and "10.0.0.4" in body
+    assert d["warnings"] == []          # different machines: no port fight
+    assert "13.13.1.6.1" in d["feedback"]
+
+
+def test_x32_surface_never_emits_scribble_strip_sysex():
+    """Not just at hello: a label arriving mid-show (the MA3 plugin
+    pushes executor names) must not be forwarded either. The X32 ignores
+    MCU LCD SysEx, and over DIN MIDI it is bandwidth that costs fader
+    resolution."""
+    from xbridge import surfaces, targets
+
+    s = surfaces.X32MCSurface(Config(surface="x32mc"))
+    assert s.render(targets.LabelFB(0, 0, "Exec 201"), targets) == []
+    assert all(not m.startswith(b"\xf0") for m in s.hello([]))
+    # everything else still works: it is a Mackie Control surface
+    assert s.render(targets.FaderFB(2, 0.5), targets) == [mcu.fader_out(2, 0.5)]
+    assert s.render(targets.ButtonFB("select", 0, True), targets) == \
+        [mcu.button_led(mcu.SELECT[0], True)]
+    assert s.decode(mcu.fader_out(1, 0.25)) == [mcu.decode(mcu.fader_out(1, 0.25))]
+
+
+def test_the_command_line_route_bypasses_executor_addressing():
+    """A second way to move the same fader. /cmd takes command-line
+    syntax and never touches the OSC line's Fader or Page address cells,
+    so it works when executor addressing does not - and it needs Receive
+    Command rather than Receive, which is a different switch again."""
+    b = _plain(ma3_fader="cmd")
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert msg.args == ("FaderMaster 201 At 50.0",)
+    # it follows the mapped executor like the OSC route does
+    b2 = _plain(ma3_fader="cmd", fader_execs=(207,))
+    (d,) = b2.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).args == ("FaderMaster 207 At 100.0",)
+    # and the template is config, so a version wanting other syntax is a
+    # setting rather than a code change
+    b3 = _plain(ma3_fader="cmd", page=3, fader_execs=(207,),
+                ma3_fader_cmd="FaderMaster Executor {page}.{exec} At {pct}")
+    (d,) = b3.midi_in(mcu.fader_out(0, 1.0))
+    assert osc.decode(d).args == ("FaderMaster Executor 3.207 At 100.0",)
+
+
+def test_the_command_line_route_honours_the_prefix():
+    b = _plain(ma3_fader="cmd", prefix="gma3")
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    assert osc.decode(d).address == "/gma3/cmd"
+
+
+def test_the_probe_offers_the_command_line_route_last():
+    """It is the fallback, not the first guess - executor addressing is
+    what a stock console uses."""
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    from xbridge.probe import CMD_TEMPLATES
+
+    cmd_steps = [i for i, (_, v, _) in enumerate(DIALECTS)
+                 if v in CMD_TEMPLATES]
+    # they come last: executor addressing is what a stock console uses
+    assert cmd_steps == list(range(len(DIALECTS) - len(cmd_steps),
+                                   len(DIALECTS)))
+    steps = Ma3Probe(exec_=205).steps
+    lines = {steps[i].line for i in cmd_steps}
+    assert "/cmd FaderMaster 205 At 75.0" in lines
+    assert "/cmd FaderMaster Executor 1.205 At 75.0" in lines
+    assert "/cmd FaderMaster Page 1.205 At 75.0" in lines
+    assert "/gma3/cmd FaderMaster 205 At 75.0" in lines
+    # the confirmed-working spelling is tried first of the command forms
+    assert steps[cmd_steps[0]].line == "/cmd FaderMaster 205 At 75.0"
+    assert all(s.address for s in steps)
+
+
+def test_keeping_a_command_line_step_switches_the_route():
+    from xbridge.probe import DIALECTS, Ma3Probe
+
+    idx = next(i for i, (p, v, _) in enumerate(DIALECTS)
+               if v == "cmd2" and p == "")
+    cfg = Ma3Probe().apply(Config(), idx)
+    assert cfg.ma3_fader == "cmd"
+    assert cfg.ma3_fader_cmd == "FaderMaster {exec} At {pct}"
+    assert cfg.prefix == ""
+
+
+def test_the_default_command_line_syntax_is_the_one_that_works():
+    """Confirmed on a 2.4.2 console: "FaderMaster 201 At 50". MA's OSC
+    page prints "FaderMaster Page 1.201 At 50" instead, and that form is
+    answered with IllegalProperty."""
+    b = _plain(ma3_fader="cmd")
+    (d,) = b.midi_in(mcu.fader_out(0, 0.5))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert msg.args == ("FaderMaster 201 At 50.0",)
+    assert "Page" not in msg.args[0]
+
+
+def test_the_command_line_route_follows_the_bank_only_when_told_how():
+    """The bare form addresses the console's CURRENT page, so the bank
+    buttons would silently drive the wrong executors. A page command
+    fixes that - but only a spelling the user has verified ships as
+    active behaviour, since guessing syntax is what broke the fader."""
+    quiet = _plain(ma3_fader="cmd")
+    quiet.midi_in(bytes((0x90, mcu.FADER_BANK_RIGHT, 127)))
+    assert quiet.target.set_page(2) == []
+
+    told = _plain(ma3_fader="cmd", ma3_page_cmd="Select Page {page}")
+    (d,) = _wire_one(told.target.set_page(4))
+    assert osc.decode(d) == osc.Message("/cmd", ("Select Page 4",))
+
+    # the OSC route names the page in every address, so it sends nothing
+    osc_route = _plain(ma3_page_cmd="Select Page {page}")
+    assert osc_route.target.set_page(4) == []
+
+
+def _wire_one(messages):
+    return [osc.encode(m) for m in messages]
+
+
+# ---- holding position, and learning the console's feedback --------------
+
+
+def test_a_fader_move_is_echoed_back_so_the_motor_holds():
+    """A motorised MCU surface holds the value the DAW last told it. A
+    bridge that says nothing leaves the surface believing the old value,
+    and the motor drags the fader back the moment the hand comes off."""
+    b = _plain(surface="x32mc")
+    raw = mcu.fader_out(2, 0.6)
+    (echo,) = b.echo_for(raw)
+    ev = mcu.decode(echo)
+    assert isinstance(ev, mcu.FaderMoved)
+    assert ev.strip == 2
+    assert ev.unit == pytest.approx(0.6, abs=0.01)
+
+
+def test_the_echo_is_not_suppressed_by_touch():
+    """Touch suppression stops the CONSOLE fighting a hand. The echo is
+    the surface's own value coming back, so it cannot fight anything -
+    and suppressing it is exactly when it is needed, because a hand is
+    on the fader."""
+    b = _plain()
+    b.midi_in(bytes((0x90, 104, 127)))          # finger down on strip 1
+    assert b.echo_for(mcu.fader_out(0, 0.8)), "echo suppressed while touched"
+
+
+def test_the_echo_can_be_turned_off():
+    b = _plain(local_echo=False)
+    assert b.echo_for(mcu.fader_out(0, 0.5)) == []
+
+
+def test_only_faders_are_echoed():
+    """Buttons and encoders have their own state on the surface; echoing
+    them would fight the LED feedback the console sends."""
+    b = _plain()
+    assert b.echo_for(bytes((0x90, mcu.SELECT[0], 127))) == []
+    assert b.echo_for(bytes((0xB0, 16, 1))) == []
+
+
+def test_unmapped_console_feedback_is_remembered_for_learning():
+    """MA3 reports playback by pool index, never by executor, so which
+    object drives which motor is knowledge only the user has. Dropping
+    those messages silently left nothing to map from."""
+    b = _plain()
+    b.osc_in(osc.encode(osc.Message("/13.13.1.6.1", ("FaderMaster", 3, 63.5))))
+    b.osc_in(osc.encode(osc.Message("/13.12.3.1", ("FaderMaster", 3, 10.0))))
+    assert b.target.unmapped == {
+        "13.13.1.6.1:FaderMaster": ("FaderMaster", 63.5),
+        "13.12.3.1:FaderMaster": ("FaderMaster", 10.0)}
+
+
+def test_learning_does_not_grow_without_bound():
+    b = _plain()
+    for i in range(60):
+        b.osc_in(osc.encode(osc.Message(f"/13.13.1.6.{i}",
+                                        ("FaderMaster", 3, 1.0))))
+    assert len(b.target.unmapped) <= 16
+
+
+def test_a_mapped_address_drives_the_motor_and_leaves_the_learn_list():
+    b = _plain(ma3_feedback={"13.13.1.6.1:FaderMaster": 3})
+    raw = b.osc_in(osc.encode(osc.Message("/13.13.1.6.1",
+                                          ("FaderMaster", 3, 50.0))))
+    assert mcu.decode(raw[0]).strip == 2          # strip 3 is index 2
+    assert "13.13.1.6.1" not in b.target.unmapped
+
+
+def test_learning_an_address_takes_effect_without_a_restart(tmp_path,
+                                                            monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402]})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    out = xapp.api_feedback_learn(addr="/13.13.1.6.1:FaderMaster", strip=2)
+
+    assert out["strip"] == 2 and out["addr"] == "13.13.1.6.1:FaderMaster"
+    # persisted, without losing the rest of the mapping
+    kept = xrun.load_stored_config()
+    assert kept.ma3_feedback == {"13.13.1.6.1:FaderMaster": 2}
+    assert kept.fader_execs == (401, 402)
+    # and live on the running bridge
+    b = xapp._runner.bridge
+    raw = b.osc_in(osc.encode(osc.Message("/13.13.1.6.1",
+                                          ("FaderMaster", 3, 100.0))))
+    assert raw and mcu.decode(raw[0]).strip == 1
+
+
+def test_learning_refuses_nonsense():
+    from xbridge import app as xapp
+
+    for bad in ("", "not.an.address", "/Page1/Fader201"):
+        try:
+            xapp.api_feedback_learn(addr=bad, strip=1)
+        except Exception as exc:
+            assert "pool address" in str(exc)
+        else:
+            raise AssertionError(f"accepted {bad!r}")
+
+
+def test_a_mapping_can_be_seen_and_undone(tmp_path, monkeypatch):
+    """Once an address was claimed it left the "not mapped yet" list and
+    never came back, so a wrong strip was a one-way door with nothing on
+    screen to show what any strip was following."""
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3"})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+            self.state, self.detail, self.midi_name = "running", "", ""
+            self.counters, self.last_sent = {}, []
+            self.last_midi, self.last_osc, self.no_output = [], [], []
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    monkeypatch.setattr(xapp, "_thread", None)
+
+    xapp.api_feedback_learn(addr="14.14.1.6.1:FaderMaster", strip=1)
+    assert xapp.api_status()["feedback_map"] == {"14.14.1.6.1:FaderMaster": 1}
+
+    # forget it: strip 0
+    out = xapp.api_feedback_learn(addr="14.14.1.6.1:FaderMaster", strip=0)
+    assert out["map"] == {}
+    assert xrun.load_stored_config().ma3_feedback == {}
+    assert xapp._runner.bridge.config.ma3_feedback == {}
+
+    # and it is offered for mapping again the next time it arrives
+    b = xapp._runner.bridge
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderMaster", 3, 5.0))))
+    assert "14.14.1.6.1:FaderMaster" in b.target.unmapped
+
+
+def test_remapping_to_another_strip_replaces_rather_than_duplicates():
+    from xbridge import app as xapp
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    import xbridge.run as xrun_mod
+    saved = []
+    xapp._runner = FakeRunner()
+    try:
+        real = xrun_mod.store_config
+        xrun_mod.store_config = lambda body: saved.append(body) or Config()
+        xapp.api_feedback_learn(addr="14.14.1.6.1", strip=1)
+        out = xapp.api_feedback_learn(addr="14.14.1.6.1:FaderMaster", strip=5)
+    finally:
+        xrun_mod.store_config = real
+        xapp._runner = None
+    assert out["map"] == {"14.14.1.6.1:FaderMaster": 5}
+
+
+# ---- learning the feedback map without being told ----------------------
+
+
+def test_moving_a_fader_teaches_which_address_is_that_strip():
+    """The console names its objects by pool index and never says which
+    executor they sit on. But it does answer a fader move with that
+    move's level, so driving a fader identifies its address."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.44))            # strip 1 -> 44%
+    raw = b.osc_in(osc.encode(osc.Message("/14.14.1.6.1",
+                                          ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.14.1.6.1:FaderMaster": 1}
+    assert raw and mcu.decode(raw[0]).strip == 0     # and it drives it
+    assert b.target.learned == [("14.14.1.6.1:FaderMaster", 1)]
+
+
+def test_each_strip_learns_its_own_address():
+    b = _plain()
+    for strip, (unit, addr) in enumerate([(0.10, "/14.1"), (0.35, "/14.2"),
+                                          (0.80, "/14.3")]):
+        b.midi_in(mcu.fader_out(strip, unit))
+        b.osc_in(osc.encode(osc.Message(addr,
+                                        ("FaderMaster", 3, unit * 100))))
+    assert b.config.ma3_feedback == {"14.1:FaderMaster": 1,
+                                     "14.2:FaderMaster": 2,
+                                     "14.3:FaderMaster": 3}
+
+
+def test_an_ambiguous_match_is_declined_not_guessed():
+    """Two strips sitting at the same level cannot be told apart, and a
+    wrong motor mapping is worse than none."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.50))
+    b.midi_in(mcu.fader_out(3, 0.50))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 50.0))))
+    assert b.config.ma3_feedback == {}
+    assert "14.9:FaderMaster" in b.target.unmapped   # still offered by hand
+
+
+def test_a_stale_report_does_not_claim_a_strip():
+    """Feedback arriving long after the move it might match is not
+    evidence - the console could be reporting anything by then."""
+    b = _plain()
+    b.target._note_sent(0, 44.0, now=1000.0)
+    assert b.target._autolearn("14.9:FaderMaster", 44.0, now=1000.0 + 30) is None
+    assert b.target._autolearn("14.9:FaderMaster", 44.0, now=1000.0 + 1) == 1
+
+
+def test_a_level_that_does_not_match_claims_nothing():
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 80.0))))
+    assert b.config.ma3_feedback == {}
+
+
+def test_a_strip_already_spoken_for_is_not_claimed_twice():
+    """Otherwise a second object at the same level would steal a strip
+    that is already working."""
+    b = _plain(ma3_feedback={"14.1:FaderMaster": 1})
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.2", ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.1:FaderMaster": 1}
+    assert "14.2:FaderMaster" in b.target.unmapped
+
+
+def test_autolearn_can_be_turned_off():
+    b = _plain(ma3_autolearn=False)
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {}
+    assert "14.9:FaderMaster" in b.target.unmapped
+
+
+def test_what_is_learned_is_saved(tmp_path, monkeypatch):
+    """Learning that lasts until the app closes is not learning, and the
+    bridge cannot ask for a Save press mid-show."""
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402]})
+
+    r = xrun.Runner(log=lambda *a: None)
+    r.bridge.config.fader_execs = (401, 402)
+    r.bridge.midi_in(mcu.fader_out(0, 0.44))
+    r.bridge.osc_in(osc.encode(osc.Message("/14.14.1.6.1",
+                                           ("FaderMaster", 3, 44.0))))
+    r._persist_learned()
+
+    kept = xrun.load_stored_config()
+    assert kept.ma3_feedback == {"14.14.1.6.1:FaderMaster": 1}
+    assert kept.fader_execs == (401, 402)     # nothing else disturbed
+    assert r.bridge.target.learned == []      # drained, not re-saved forever
+
+
+# ---- the panel itself ---------------------------------------------------
+
+
+def test_the_panel_script_has_no_broken_string_literals():
+    """PAGE is a plain Python string, so a lone \\n written for JavaScript
+    is eaten by Python and reaches the browser as a real newline. That
+    terminates the JS string, the whole script fails to parse, and every
+    button silently does nothing - with no error anywhere except the
+    browser console nobody opens."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):PAGE.index("</script>")]
+    for n, line in enumerate(script.split("\n"), 1):
+        if "`" in line or line.lstrip().startswith("//"):
+            continue      # template literals span lines; comments hold prose
+        for quote in ("'", '"'):
+            unescaped = len(re.findall(r"(?<!\\)" + quote, line))
+            assert unescaped % 2 == 0, (
+                f"line {n} of the panel script leaves a {quote} string "
+                f"open: {line.strip()!r}")
+
+
+def test_every_panel_element_the_script_touches_exists():
+    """A renamed id turns a working control into a silent no-op.
+
+    Some elements are built by the script itself (the mapping grid), so
+    the whole page is searched rather than only the static body.
+    """
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    for ident in sorted(set(re.findall(r"\$\('([A-Za-z_][\w]*)'\)", script))):
+        # Either written into the markup, or built by the script - some
+        # ids are passed to a helper that emits the element. Both leave a
+        # second mention; a typo leaves only the lookup itself.
+        assert f'id="{ident}"' in PAGE or PAGE.count(f"'{ident}'") > 1, (
+            f"the script uses #{ident}; nothing in the page creates it")
+
+
+def test_every_button_calls_something_that_exists():
+    from xbridge.app import PAGE
+
+    body, script = PAGE.split("<script>", 1)
+    for call in sorted(set(re.findall(r'onclick="(\w+)\(', body))):
+        assert (f"function {call}(" in script
+                or f"async function {call}(" in script), \
+            f"a button calls {call}() which the script does not define"
+
+
+def test_one_executor_reports_several_fader_functions_under_one_address():
+    """The field bug: an executor reports FaderMaster, FaderRate,
+    FaderSpeed and FaderXFade all under the same pool address. Keying on
+    the address alone meant rate, speed and crossfade each drove the
+    master's motor, so the fader jumped about whenever anything on that
+    executor changed."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderMaster": 1})
+    moved = b.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderMaster", 3, 44.0))))
+    assert moved and mcu.decode(moved[0]).strip == 0
+
+    for other in ("FaderRate", "FaderSpeed", "FaderXFade", "FaderTemp"):
+        assert b.osc_in(osc.encode(osc.Message(
+            "/14.14.1.6.1", (other, 3, 90.0)))) == [], other
+
+
+def test_the_other_functions_are_still_offered_for_mapping():
+    """Declining to drive them is not the same as hiding them - someone
+    may well want rate on a strip."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderMaster": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 90.0))))
+    assert "14.14.1.6.1:FaderRate" in b.target.unmapped
+
+    b2 = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 4})
+    raw = b2.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderRate", 3, 50.0))))
+    assert raw and mcu.decode(raw[0]).strip == 3
+
+
+def test_autolearn_claims_one_function_per_strip():
+    """Whichever fader function answers first owns the strip. The others
+    keep reporting under their own keys and drive nothing, so a rate
+    change can never move a strip that master is already on."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.44))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderMaster", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.9:FaderMaster": 1}
+
+    b.osc_in(osc.encode(osc.Message("/14.9", ("FaderRate", 3, 44.0))))
+    assert b.config.ma3_feedback == {"14.9:FaderMaster": 1}
+    assert "14.9:FaderRate" in b.target.unmapped
+
+
+def test_mappings_saved_before_the_function_key_still_work():
+    """Anyone who mapped a strip yesterday keeps it."""
+    b = _plain(ma3_feedback={"14.14.1.6.1": 2})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderMaster", 3, 100.0))))
+    assert raw and mcu.decode(raw[0]).strip == 1
+
+
+def test_a_fader_function_is_recognised_by_its_prefix_not_a_substring():
+    """MA3 names every fader function "Fader<something>" - FaderMaster,
+    FaderRate, FaderSpeed, FaderXFade. Matching "fader" anywhere in the
+    name instead would classify a key function that merely contains the
+    word as a motor move, and drive a fader from a button press."""
+    b = _plain(ma3_feedback={"14.9:FaderMaster": 1, "14.9:CrossFader": 2})
+    (motor,) = b.osc_in(osc.encode(osc.Message(
+        "/14.9", ("FaderMaster", 3, 50.0))))
+    assert isinstance(mcu.decode(motor), mcu.FaderMoved)
+
+    (led,) = b.osc_in(osc.encode(osc.Message("/14.9", ("CrossFader", 1, 1))))
+    assert led == mcu.button_led(mcu.SELECT[1], True)
+
+
+def test_a_fader_assigned_to_rate_still_learns():
+    """A sequence's fader can be assigned to Rate, Speed or XFade rather
+    than Master, and then Master is never reported at all. Insisting on
+    FaderMaster meant such a rig could never learn its own strips."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.47))
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.config.ma3_feedback == {"14.14.1.6.1:FaderRate": 1}
+    assert raw and mcu.decode(raw[0]).strip == 0
+
+
+def test_a_non_fader_function_still_never_claims_a_strip():
+    b = _plain()
+    b.midi_in(mcu.fader_out(0, 0.47))
+    b.osc_in(osc.encode(osc.Message("/14.9", ("Flash", 3, 47.0))))
+    assert b.config.ma3_feedback == {}
+
+
+def test_the_surface_reporting_its_own_motor_move_is_not_sent_on():
+    """The loop: console feedback drives the motor, the surface reports
+    that movement as if a hand had done it, the bridge sends it to the
+    console, the console reports it again. It saturates the link and the
+    fader creeps on its own."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.47)) == [], "the loop is still open"
+
+
+def test_a_real_move_is_never_swallowed_by_the_loop_guard():
+    """Only a near-identical value inside the window is dropped."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.80)) != []      # moved elsewhere
+    b2 = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1},
+                motor_echo_guard=0)                     # opt out entirely
+    b2.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b2.midi_in(mcu.fader_out(0, 0.47)) != []
+
+
+def test_the_loop_guard_expires():
+    """Coming back to the same value a minute later is a real move."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    b._motor[0] = (b._motor[0][0] - 60.0, b._motor[0][1])
+    assert b.midi_in(mcu.fader_out(0, 0.47)) != []
+
+
+def test_a_touched_fader_is_never_treated_as_a_motor_echo():
+    """A hand on the fader means no motor move was made, so nothing the
+    surface says can be an echo of one."""
+    b = _plain(ma3_feedback={"14.14.1.6.1:FaderRate": 1})
+    b.midi_in(bytes((0x90, 104, 127)))            # finger down on strip 1
+    b.osc_in(osc.encode(osc.Message("/14.14.1.6.1", ("FaderRate", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.47)) != []
+
+
+def test_the_master_fader_can_learn_its_own_object():
+    """Strip 8 is the master, and it drives the console through /cmd
+    rather than an executor. Nothing recorded that it had been moved, so
+    the console's master object could never be matched to it - the
+    master was the one strip that had to be mapped by hand."""
+    b = _plain()
+    b.midi_in(mcu.fader_out(8, 1.0))
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.13.2.1", ("FaderMaster", 3, 100.0))))
+    assert b.config.ma3_feedback == {"14.13.2.1:FaderMaster": 9}
+    assert raw and mcu.decode(raw[0]).strip == 8       # the master motor
+
+
+def test_the_master_is_offered_in_the_panel():
+    """Buttons 1-8 alone left no way to say "this one is the master"."""
+    from xbridge.app import PAGE
+
+    assert "learnFb('${esc(u.addr)}',9)" in PAGE
+    assert "MST" in PAGE
+
+
+def test_a_mapped_master_moves_the_master_motor():
+    b = _plain(ma3_feedback={"13.12.2.1:FaderMaster": 9})
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/13.12.2.1", ("FaderMaster", 3, 50.0))))
+    ev = mcu.decode(raw[0])
+    assert ev.strip == 8
+    assert ev.unit == pytest.approx(0.5, abs=0.01)
+
+
+def test_the_master_does_not_steal_a_numbered_strip():
+    b = _plain(ma3_feedback={"14.13.2.1:FaderMaster": 9})
+    b.midi_in(mcu.fader_out(0, 1.0))       # strip 1 also at full
+    b.osc_in(osc.encode(osc.Message("/14.99", ("FaderMaster", 3, 100.0))))
+    assert b.config.ma3_feedback["14.99:FaderMaster"] == 1
+
+
+# ---- MIDI-learn: press a control, say what it does ----------------------
+
+
+def test_a_learned_control_wins_over_the_default_mapping():
+    b = _plain(learn_map={f"note:{mcu.SELECT[0]}": {"do": "key", "exec": 205}})
+    (down,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 127)))
+    assert osc.decode(down) == osc.Message("/Page1/Key205", (1,))
+    (up,) = b.midi_in(bytes((0x90, mcu.SELECT[0], 0)))
+    assert osc.decode(up) == osc.Message("/Page1/Key205", (0,))
+    # every other control is untouched
+    (other,) = b.midi_in(bytes((0x90, mcu.SELECT[1], 127)))
+    assert osc.decode(other) == osc.Message("/Page1/Key102", (1,))
+
+
+def test_any_button_can_be_assigned_not_just_the_mapped_rows():
+    """The point of learn: a key the default mapping ignores entirely is
+    still a key, and should be usable."""
+    # note 40 is one of the many keys the default mapping ignores; PLAY
+    # and the SELECT/MUTE rows already have jobs.
+    plain = _plain()
+    assert plain.midi_in(bytes((0x90, 40, 127))) == []      # nothing by default
+
+    b = _plain(learn_map={"note:40": {"do": "cmd",
+                                      "cmd": "Off Executor 1.201"}})
+    (d,) = b.midi_in(bytes((0x90, 40, 127)))
+    assert osc.decode(d) == osc.Message("/cmd", ("Off Executor 1.201",))
+
+
+def test_a_command_fires_once_not_on_the_release_too():
+    b = _plain(learn_map={"note:40": {"do": "cmd", "cmd": "Go+"}})
+    assert b.midi_in(bytes((0x90, 40, 127))) != []
+    assert b.midi_in(bytes((0x90, 40, 0))) == []
+
+
+def test_a_fader_can_be_learned_to_any_executor():
+    b = _plain(learn_map={"fader:2": {"do": "fader", "exec": 407}})
+    (d,) = b.midi_in(mcu.fader_out(2, 0.5))
+    assert osc.decode(d) == osc.Message("/Page1/Fader407", (50,))
+
+
+def test_the_master_can_be_learned_too():
+    b = _plain(learn_map={"fader:8": {"do": "fader", "exec": 299}})
+    (d,) = b.midi_in(mcu.fader_out(8, 1.0))
+    assert osc.decode(d) == osc.Message("/Page1/Fader299", (100,))
+
+
+def test_an_encoder_learned_to_an_executor_accumulates():
+    b = _plain(learn_map={"enc:0": {"do": "enc", "exec": 305}})
+    for _ in range(3):
+        (d,) = b.midi_in(bytes((0xB0, 16, 1)))
+    msg = osc.decode(d)
+    assert msg.address == "/Page1/Encoder305"
+    assert msg.args == (6,)              # 3 ticks x 2%
+
+
+def test_a_learned_fader_still_respects_the_loop_guard():
+    b = _plain(learn_map={"fader:0": {"do": "fader", "exec": 401}},
+               ma3_feedback={"14.1:FaderMaster": 1})
+    b.osc_in(osc.encode(osc.Message("/14.1", ("FaderMaster", 3, 47.0))))
+    assert b.midi_in(mcu.fader_out(0, 0.47)) == []
+
+
+def test_a_nonsense_assignment_does_nothing_rather_than_crashing():
+    for bad in ({"do": "nope"}, {"do": "key"}, {"do": "cmd", "cmd": "  "}):
+        b = _plain(learn_map={"note:40": bad})
+        assert b.midi_in(bytes((0x90, 40, 127))) == [], bad
+    # a malformed entry falls through to the default mapping rather than
+    # swallowing the control
+    for junk in ("not a dict", None, 7):
+        b = _plain(learn_map={f"note:{mcu.SELECT[0]}": junk})
+        assert b.midi_in(bytes((0x90, mcu.SELECT[0], 127))) != [], junk
+
+
+def test_the_control_key_names_a_control_the_same_way_every_time():
+    from xbridge.bridge import Bridge
+
+    assert Bridge.control_key(mcu.decode(mcu.fader_out(3, 0.5))) == "fader:3"
+    assert Bridge.control_key(mcu.decode(mcu.fader_out(8, 0.5))) == "fader:8"
+    assert Bridge.control_key(mcu.decode(bytes((0xB0, 18, 1)))) == "enc:2"
+    assert Bridge.control_key(mcu.decode(bytes((0x90, 94, 127)))) == "note:94"
+
+
+def test_assigning_and_forgetting_a_control_round_trips(tmp_path, monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402]})
+
+    class FakeRunner:
+        state = "running"
+        learn_armed = False
+        learn_caught = {"key": "note:94", "what": "button note 94 down"}
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    out = xapp.api_learn_assign(key="note:40", do="cmd", cmd="Go+ Executor 1.201")
+    assert out["map"] == {"note:40": {"do": "cmd", "cmd": "Go+ Executor 1.201"}}
+    assert xrun.load_stored_config().fader_execs == (401, 402)   # untouched
+    # live on the running bridge, and the catch is cleared
+    b = xapp._runner.bridge
+    (d,) = b.midi_in(bytes((0x90, 40, 127)))
+    assert osc.decode(d).args == ("Go+ Executor 1.201",)
+    assert xapp._runner.learn_caught is None
+
+    xapp.api_learn_assign(key="note:40", do="clear")
+    assert xrun.load_stored_config().learn_map == {}
+
+
+def test_an_assignment_that_cannot_work_is_refused():
+    from xbridge import app as xapp
+
+    class FakeRunner:
+        state = "running"
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg())
+
+    xapp._runner = FakeRunner()
+    try:
+        for kw in ({"do": "cmd", "cmd": ""}, {"do": "key", "exec_no": 0},
+                   {"do": "wat"}):
+            try:
+                xapp.api_learn_assign(key="note:40", **kw)
+            except Exception:
+                pass
+            else:
+                raise AssertionError(f"accepted {kw}")
+    finally:
+        xapp._runner = None
+
+
+# ---- starting again -----------------------------------------------------
+
+
+def test_learned_controls_can_be_cleared_without_losing_the_rest(tmp_path,
+                                                                 monkeypatch):
+    """Learning writes as it goes, so a session spent testing leaves
+    entries behind that are wrong for the next show."""
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", "fader_execs": [401, 402],
+                       "learn_map": {"note:40": {"do": "cmd", "cmd": "Go+"}},
+                       "ma3_feedback": {"14.1:FaderMaster": 1}})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(
+                learn_map={"note:40": {"do": "cmd", "cmd": "Go+"}},
+                ma3_feedback={"14.1:FaderMaster": 1}))
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    out = xapp.api_config_reset(what="learn")
+
+    kept = xrun.load_stored_config()
+    assert kept.learn_map == {}
+    assert kept.ma3_feedback == {"14.1:FaderMaster": 1}   # untouched
+    assert kept.fader_execs == (401, 402)                 # untouched
+    assert out["restart"] is False
+    # and live: the learned control goes back to doing nothing
+    assert xapp._runner.bridge.config.learn_map == {}
+
+
+def test_motor_mappings_can_be_cleared_on_their_own(tmp_path, monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3",
+                       "learn_map": {"note:40": {"do": "cmd", "cmd": "Go+"}},
+                       "ma3_feedback": {"14.1:FaderMaster": 1}})
+
+    class FakeRunner:
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(
+                ma3_feedback={"14.1:FaderMaster": 1}))
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    xapp.api_config_reset(what="feedback")
+
+    kept = xrun.load_stored_config()
+    assert kept.ma3_feedback == {}
+    assert kept.learn_map == {"note:40": {"do": "cmd", "cmd": "Go+"}}
+    assert xapp._runner.bridge.target.unmapped == {}
+
+
+def test_resetting_everything_restores_the_defaults(tmp_path, monkeypatch):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "eos", "prefix": "gma3", "page": 7,
+                       "fader_execs": [401], "ma3_value": "int255",
+                       "learn_map": {"note:40": {"do": "cmd", "cmd": "Go+"}}})
+
+    monkeypatch.setattr(xapp, "_runner", None)
+    out = xapp.api_config_reset(what="all")
+
+    kept = xrun.load_stored_config()
+    assert kept == xrun.Config(), "reset did not return to defaults"
+    assert out["restart"] is True, "the user was not told a restart is needed"
+
+
+def test_resetting_something_that_does_not_exist_is_refused():
+    from xbridge import app as xapp
+
+    try:
+        xapp.api_config_reset(what="everything-ever")
+    except Exception as exc:
+        assert "nothing called" in str(exc)
+    else:
+        raise AssertionError("accepted a reset target that does not exist")
+
+
+def test_polled_panels_are_written_through_the_guarded_setter():
+    """The status poll repaints every two seconds. Writing innerHTML
+    directly destroys whatever the user is using at that moment: an open
+    dropdown closes, half-typed text disappears. setHTML skips the write
+    when nothing changed and when the focus is inside."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    assert "function setHTML(" in script
+    for panel in ("feed_learn", "feed_maps", "feed_surface", "feed_console"):
+        assert f"$('{panel}').innerHTML =" not in script, (
+            f"{panel} is repainted directly, so the poll will clobber "
+            "anything the user is in the middle of")
+        assert f"setHTML('{panel}'" in script
+
+
+def test_a_live_value_does_not_rebuild_the_row_it_sits_in():
+    """The mapping buttons were unclickable: the level in each row moves
+    with every message the console sends, so baking it into the markup
+    made the row differ on every poll and the button was destroyed
+    between the press and the release. The structure is keyed on the
+    addresses; the number is written into a span afterwards."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    row = script[script.index("for (const u of un)"):]
+    row = row[:row.index("setHTML('feed_maps'")]
+    assert "Number(u.level)" not in row, (
+        "the changing level is back in the row markup, so the buttons "
+        "will be rebuilt under the pointer again")
+    assert 'id="lv_${slug(u.addr)}"' in row
+    assert "cell.textContent = Number(u.level)" in script
+
+
+def test_the_repaint_guard_compares_against_what_it_last_wrote():
+    """Comparing against the element's current innerHTML defeats itself
+    as soon as anything is written into that markup afterwards - the
+    live level made every comparison differ, so nothing was ever
+    skipped."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    guard = script[script.index("function setHTML("):]
+    guard = guard[:guard.index("\n}")]
+    assert "el.innerHTML === html" not in guard
+    assert "_painted[id] === html" in guard
+
+
+def test_a_fader_can_be_learned_to_drive_the_grand_master():
+    """Mapping the console's master to a strip only makes the MOTOR
+    follow - the outbound direction still went to that strip's executor,
+    so the fader moved when the console did but could not move it back.
+    A learn action for the master closes the loop from any fader."""
+    b = _plain(learn_map={"fader:7": {"do": "master"}})
+    (d,) = b.midi_in(mcu.fader_out(7, 0.62))
+    msg = osc.decode(d)
+    assert msg.address == "/cmd"
+    assert msg.args == ("Master 2.1 At 62.0",)
+
+    # paired with the feedback mapping, that same fader is two-way
+    b2 = _plain(learn_map={"fader:7": {"do": "master"}},
+                ma3_feedback={"14.13.2.1:FaderMaster": 8})
+    raw = b2.osc_in(osc.encode(osc.Message(
+        "/14.13.2.1", ("FaderMaster", 3, 62.0))))
+    assert raw and mcu.decode(raw[0]).strip == 7
+
+
+def test_a_focused_button_does_not_freeze_its_own_panel():
+    """Clicking a button leaves the focus on it. Holding off the repaint
+    for anything focused meant the panel could never show the result of
+    the click - a mapping saved, and the list still saying "nothing
+    mapped yet"."""
+    from xbridge.app import PAGE
+
+    script = PAGE[PAGE.index("<script>"):]
+    guard = script[script.index("function setHTML("):]
+    guard = guard[:guard.index("\n}")]
+    assert "INPUT|SELECT|TEXTAREA" in guard, (
+        "the repaint guard holds off for any focused element, so a panel "
+        "freezes as soon as a button in it is clicked")
+
+
+# ---- reassigning: the new owner takes it, the old one lets go ----------
+
+
+def _store(monkeypatch, tmp_path, **cfg):
+    from xbridge import app as xapp
+    from xbridge import run as xrun
+
+    monkeypatch.setattr(xrun, "config_store_path",
+                        lambda: tmp_path / "map.json")
+    xrun.store_config({"target": "ma3", **cfg})
+
+    class FakeRunner:
+        state = "running"
+        learn_armed = False
+        learn_caught = None
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(**cfg))
+
+    monkeypatch.setattr(xapp, "_runner", FakeRunner())
+    return xapp, xrun
+
+
+def test_giving_an_executor_to_a_new_control_releases_the_default(tmp_path,
+                                                                  monkeypatch):
+    """Otherwise two controls drive one executor and the old one is a
+    trap: it still works, and nothing on screen says it should not."""
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:2", do="fader", exec_no=208)
+
+    kept = xrun.load_stored_config()
+    assert kept.fader_execs[7] == 0, "fader 8 still drives 208 as well"
+    assert kept.fader_execs[0] == 201, "the other defaults were disturbed"
+    # and a released slot really does go quiet
+    b = Bridge(config=_cfg(fader_execs=kept.fader_execs))
+    assert b.midi_in(mcu.fader_out(7, 0.5)) == []
+
+
+def test_a_controls_own_default_is_left_alone(tmp_path, monkeypatch):
+    """Forgetting a learned entry should put the control back the way it
+    was, so its own default must survive the assignment."""
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:7", do="fader", exec_no=208)
+    assert xrun.load_stored_config().fader_execs[7] == 208
+
+
+def test_two_controls_cannot_hold_the_same_destination(tmp_path, monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:2", do="fader", exec_no=250)
+    xapp.api_learn_assign(key="fader:5", do="fader", exec_no=250)
+
+    lm = xrun.load_stored_config().learn_map
+    assert "fader:2" not in lm, "the first control kept the executor too"
+    assert lm["fader:5"] == {"do": "fader", "exec": 250}
+
+
+def test_a_key_taken_from_the_select_row_is_released(tmp_path, monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="note:40", do="key", exec_no=103)
+
+    kept = xrun.load_stored_config()
+    assert kept.select_execs[2] == 0
+    assert kept.select_execs[0] == 101
+    b = Bridge(config=_cfg(select_execs=kept.select_execs))
+    assert b.midi_in(bytes((0x90, mcu.SELECT[2], 127))) == []
+    assert b.midi_in(bytes((0x90, mcu.SELECT[0], 127))) != []
+
+
+def test_only_one_control_can_be_the_grand_master(tmp_path, monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:7", do="master")
+    xapp.api_learn_assign(key="fader:3", do="master")
+
+    lm = xrun.load_stored_config().learn_map
+    assert list(lm) == ["fader:3"]
+
+
+def test_one_object_per_strip_on_the_feedback_side_too(tmp_path, monkeypatch):
+    """Two addresses driving one motor is two things fighting over it."""
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_feedback_learn(addr="14.1:FaderMaster", strip=3)
+    xapp.api_feedback_learn(addr="14.2:FaderMaster", strip=3)
+
+    fm = xrun.load_stored_config().ma3_feedback
+    assert fm == {"14.2:FaderMaster": 3}
+
+
+def test_forgetting_a_learned_control_disturbs_nothing_else(tmp_path,
+                                                            monkeypatch):
+    xapp, xrun = _store(monkeypatch, tmp_path)
+    xapp.api_learn_assign(key="fader:2", do="fader", exec_no=250)
+    before = xrun.load_stored_config()
+    xapp.api_learn_assign(key="fader:2", do="clear")
+    after = xrun.load_stored_config()
+    assert after.learn_map == {}
+    assert after.fader_execs == before.fader_execs
+
+
+def test_a_released_default_is_named_in_the_panel():
+    """A control that has quietly stopped working is the worst outcome
+    of reassignment, so every blanked slot is listed."""
+    from xbridge.app import _released
+
+    out = _released(_cfg(fader_execs=(201, 0, 203, 204, 205, 206, 207, 0),
+                         select_execs=(101, 102, 0, 104, 105, 106, 107, 108)))
+    assert out == ["fader 2", "fader 8", "SELECT 3"]
+    assert _released(_cfg()) == []
+
+
+def test_the_fader_that_drove_the_master_is_the_one_that_learns_it():
+    """A learned fader drives the console's master, so the console's
+    master belongs to THAT fader. Crediting the master fader regardless
+    bound the feedback to a fader the user was not touching: the move
+    went out, and a different motor came back."""
+    b = _plain(learn_map={"fader:7": {"do": "master"}})
+    b.midi_in(mcu.fader_out(7, 0.62))
+    b.osc_in(osc.encode(osc.Message("/14.13.2.1", ("FaderMaster", 3, 62.0))))
+    assert b.config.ma3_feedback == {"14.13.2.1:FaderMaster": 8}   # fader 8
+
+    raw = b.osc_in(osc.encode(osc.Message(
+        "/14.13.2.1", ("FaderMaster", 3, 30.0))))
+    assert mcu.decode(raw[0]).strip == 7, "the wrong motor moved"
+
+
+def test_the_master_fader_itself_still_credits_the_master():
+    b = _plain()
+    b.midi_in(mcu.fader_out(8, 1.0))
+    b.osc_in(osc.encode(osc.Message("/14.13.2.1", ("FaderMaster", 3, 100.0))))
+    assert b.config.ma3_feedback == {"14.13.2.1:FaderMaster": 9}
+
+
+def test_a_target_whose_master_takes_only_a_level_still_works():
+    """Not every target's master accepts which fader moved it."""
+    from xbridge.bridge import Bridge
+
+    class OldTarget:
+        name = "old"
+
+        def master(self, unit):
+            return [osc.Message("/master", (unit,))]
+
+    b = Bridge(config=_cfg(learn_map={"fader:7": {"do": "master"}}),
+               target=OldTarget())
+    (d,) = b.midi_in(mcu.fader_out(7, 0.5))
+    assert osc.decode(d).address == "/master"
+
+
+def test_half_a_two_way_pairing_is_pointed_out():
+    """Each direction can be right on its own while together they are
+    two half-connections, and neither list looks wrong."""
+    from xbridge.app import _pairing_warnings
+
+    mismatched = _pairing_warnings(_cfg(
+        learn_map={"fader:7": {"do": "master"}},
+        ma3_feedback={"14.13.2.1:FaderMaster": 9}))
+    assert len(mismatched) == 1
+    assert "fader 8 drives the grand master" in mismatched[0]
+    assert "the master fader" in mismatched[0]
+
+    assert _pairing_warnings(_cfg(
+        learn_map={"fader:7": {"do": "master"}},
+        ma3_feedback={"14.13.2.1:FaderMaster": 8})) == []
+    assert _pairing_warnings(_cfg()) == []
+
+
+def test_the_pairing_warning_reaches_the_panel():
+    """Computing it and not surfacing it would be no better than not
+    computing it."""
+    from xbridge import app as xapp
+
+    class FakeRunner:
+        state, detail, midi_name = "running", "", ""
+        counters, last_sent, last_midi, last_osc, no_output = {}, [], [], [], []
+        learn_armed, learn_caught = False, None
+
+        def __init__(self):
+            self.bridge = Bridge(config=_cfg(
+                learn_map={"fader:7": {"do": "master"}},
+                ma3_feedback={"14.13.2.1:FaderMaster": 9}))
+
+    xapp._runner = FakeRunner()
+    try:
+        body = xapp.api_status()
+    finally:
+        xapp._runner = None
+    assert body["pairing"] and "grand master" in body["pairing"][0]
+    assert "pairing" in xapp.PAGE or "d.pairing" in xapp.PAGE
+
+
+def test_learning_a_fader_says_how_to_get_the_motor_back():
+    """Learn sets the outbound direction only; the motor follows once the
+    console has answered a move. Leaving that to be discovered is what
+    made a two-way master take four steps instead of two."""
+    from xbridge.app import PAGE
+
+    assert "the motor " in PAGE and "learns to follow it" in PAGE
+    assert "act === 'fader' || act === 'master'" in PAGE
+
+
+def test_the_first_run_guide_covers_the_whole_path():
+    """Someone opening this for the first time should not have to find
+    the README to know what to do."""
+    from xbridge.app import PAGE
+
+    guide = PAGE[PAGE.index('id="s_first"'):PAGE.index('id="state"')]
+    for step in ("MC mode", "DAW REMOTE", "Start bridge", "Console setup",
+                 "Move each fader once", "Learn a control",
+                 "Find MA3 format"):
+        assert step in guide, f"the first-run guide never mentions {step!r}"
+    # prose must not inherit the monospace feeds' newline handling
+    assert "white-space:normal" in guide
+
+
+def test_the_first_run_guide_gets_out_of_the_way():
+    from xbridge.app import PAGE
+
+    assert "function hideFirst()" in PAGE
+    assert "xbridge_first_done" in PAGE
+    # anyone with a mapping has plainly been here before
+    assert "Object.keys(cfg.ma3_feedback" in PAGE

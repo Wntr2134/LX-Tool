@@ -31,7 +31,14 @@ class Config:
     """What the surface drives. Everything is overridable from JSON."""
 
     target: str = "ma3"     # ma3 | x32 | magicq | resolume | companion
-    prefix: str = ""                   # MA3 OSC prefix, e.g. "gMA3"
+    # MA3 drops any message that does not start with the OSC line's
+    # prefix, and does it silently - a mismatch here looks exactly like
+    # "the bridge is not sending". The console's own default is an EMPTY
+    # prefix (the manual's receive example notes "no prefix is defined");
+    # "gma3" appears only in MA's Open Stage Control walkthrough, which
+    # says it "assumes the OSCData line has a prefix of gma3 configured".
+    # So empty matches a stock console, and the probe finds the rest.
+    prefix: str = ""
     page: int = 1
     fader_execs: tuple = tuple(range(201, 209))   # strips 1-8 (MA3)
     master_exec: int = 0               # 0 = grand master via /cmd (MA3)
@@ -58,10 +65,85 @@ class Config:
     ma2_user: str = "remote"
     ma2_password: str = "remote"
     ma2_master_cmd: str = "SpecialMaster 2.1 At {pct}"
-    # MA3 fader argument type. The manual documents int 0-100
-    # ("/Page1/Fader201,i,100"); some versions/configs want a float, so
-    # this is switchable rather than a guess baked into the code.
-    ma3_value: str = "int"             # "int" | "float"
+    # MA3 fader argument type. The Advanced Examples table gives faders
+    # type tags "i f, 0 ... 100", so int and float are equally valid and
+    # the canonical example is "/Page1/Fader201,i,100". int255 is for an
+    # OSC line whose FaderRange cell has been moved off 100.
+    ma3_value: str = "int100"     # int100 | float100 | float01 | int255
+    # Address shape. "page" = /Page<n>/Fader<x>, which names the page
+    # explicitly. "selected" = /Fader<x>, which MA3 applies to whichever
+    # page is currently selected - the fallback when the OSC line's
+    # "Page" address cell has been renamed or cleared.
+    ma3_addr: str = "page"        # page | selected
+    # Encoders. "fader" drives an executor fader absolutely, which suits
+    # an absolute control like the MPK's knobs and is the default. MA3
+    # also documents /Encoder<x> taking a RELATIVE -100..100 step, which
+    # is its native mini-encoder path - better for the X-Touch's endless
+    # encoders, and what to pick if 301-308 have no fader function.
+    ma3_encoder: str = "fader"    # fader | encoder
+    # How a fader move reaches MA3. "osc" uses /Page<n>/Fader<x>, which
+    # depends on the OSC line's Fader/Page address cells routing. "cmd"
+    # sends command-line syntax to /cmd instead - a completely separate
+    # path that needs only Receive Command, and works when the executor
+    # addressing does not.
+    ma3_fader: str = "osc"        # osc | cmd
+    # MA's OSC page shows "FaderMaster Page 1.201 At 50"; a 2.4 console
+    # answers that with IllegalProperty, because the FaderMaster keyword
+    # page documents "FaderMaster [Object] [Number] At [Value]" and Page
+    # is not an object type in that slot. The default below is the
+    # keyword page's own example shape, confirmed working on 2.4.2.
+    #
+    # It addresses the executor on MA3's CURRENT page, so the surface's
+    # bank buttons do not change which executors are hit. Set
+    # ma3_page_cmd as well if the console should follow the bank.
+    ma3_fader_cmd: str = "FaderMaster {exec} At {pct}"
+    # Sent to /cmd when the surface changes bank, if set. Left empty
+    # because the right spelling varies by version and shipping an
+    # unverified one is what made the fader syntax wrong in the first
+    # place - try "Select Page {page}" in the mapping editor and see.
+    ma3_page_cmd: str = ""
+    # Re-assert a fader to the surface right after it moves it.
+    #
+    # A motorised MCU surface holds the position the DAW last told it,
+    # not the one your hand left it at. A DAW echoes every fader move
+    # straight back, so the two agree; a bridge that stays silent leaves
+    # the surface still believing the old value, and the motor drags the
+    # fader back there the moment you let go. Echoing what the fader
+    # itself just reported cannot fight the hand - it is already there.
+    local_echo: bool = True
+    # Ignore a surface fader move that only repeats the position the
+    # bridge just drove the motor to.
+    #
+    # Console feedback moves the motor; a surface that reports its own
+    # motor movement back sends that straight to the console, which
+    # reports it again - a loop that saturates the link and makes a fader
+    # crawl on its own. Only near-identical values inside this window are
+    # dropped, so a real move is never swallowed.
+    motor_echo_guard: float = 0.35     # seconds; 0 disables
+    # MA3's playback feedback arrives addressed by pool index, not by
+    # executor: /13.13.1.6.1 ,sif, "FaderMaster",3,63.5. Only the user
+    # knows which object sits on which strip, so map them here:
+    # {"13.13.1.6.1": 1} drives strip 1's motor from that object.
+    ma3_feedback: dict = field(default_factory=dict)
+    # Work the feedback map out instead of being told it. When the bridge
+    # drives an executor and, moments later, an unclaimed pool address
+    # reports back that same level, that address is that strip's object.
+    # Moving each fader once teaches the lot. Ambiguous matches - two
+    # strips sitting at the same level - are declined rather than guessed.
+    ma3_autolearn: bool = True
+    # MIDI-learn: press a control, say what it should do. Keyed by the
+    # control's own identity, so ANY button can be assigned - not only
+    # the rows the default mapping happens to know about.
+    #
+    #   "note:24"   -> {"do": "key",  "exec": 205}
+    #   "fader:2"   -> {"do": "fader","exec": 207}
+    #   "enc:4"     -> {"do": "enc",  "exec": 303}
+    #   "fader:7"   -> {"do": "master"}          the console's own master
+    #   "note:94"   -> {"do": "cmd",  "cmd": "Off Executor 1.201"}
+    #
+    # An entry here wins over the default mapping for that control; every
+    # other control carries on as before.
+    learn_map: dict = field(default_factory=dict)
     # Which hardware is in your hands, and the MPK's factory MIDI numbers.
     surface: str = "xtouch"            # "xtouch" | "mpk"
     mpk_knob_ccs: tuple = tuple(range(70, 78))
@@ -79,6 +161,7 @@ class Bridge:
     target: object = None
     _enc_levels: dict = field(default_factory=dict)
     _touched: set = field(default_factory=set)
+    _motor: dict = field(default_factory=dict)   # strip -> (when, unit)
 
     surface: object = None
     surfaces: list = None
@@ -108,14 +191,90 @@ class Bridge:
             out += self._event(ev)
         return _wire(out)
 
+    @staticmethod
+    def control_key(ev) -> str:
+        """One surface control's identity, stable across sessions.
+
+        Buttons are keyed by their raw note rather than by the row the
+        default mapping puts them in, so a key nothing currently uses can
+        still be assigned.
+        """
+        if isinstance(ev, surfaces.KnobSet):
+            return f"knob:{ev.knob}"
+        if isinstance(ev, mcu.FaderMoved):
+            return f"fader:{ev.strip}"
+        if isinstance(ev, mcu.EncoderTurned):
+            return f"enc:{ev.encoder}"
+        if isinstance(ev, mcu.ButtonPressed):
+            return f"note:{ev.note}"
+        return ""
+
+    def _learned(self, ev) -> list | None:
+        """Whatever the user assigned to this control, or None."""
+        table = getattr(self.config, "learn_map", None) or {}
+        spec = table.get(self.control_key(ev))
+        if not isinstance(spec, dict):
+            return None
+        target, do = self.target, spec.get("do")
+        exec_no = spec.get("exec")
+
+        if do == "master":
+            # The console's own master, from any fader on the surface.
+            unit = getattr(ev, "unit", None)
+            if unit is None:
+                return []
+            strip = getattr(ev, "strip", None)
+            if strip is not None:
+                try:
+                    return target.master(float(unit), strip=strip)
+                except TypeError:
+                    pass          # a target whose master takes only a level
+            return target.master(float(unit))
+
+        if do == "cmd":
+            cmd = str(spec.get("cmd", "")).strip()
+            send = getattr(target, "command", None)
+            if not cmd or send is None:
+                return []
+            # Commands fire once, on the way down.
+            if isinstance(ev, mcu.ButtonPressed) and not ev.down:
+                return []
+            return send(cmd)
+
+        fn = {"key": "key_exec", "fader": "fader_exec",
+              "enc": "encoder_exec"}.get(do)
+        call = getattr(target, fn, None) if fn else None
+        if call is None or exec_no is None:
+            return []
+        if do == "key":
+            down = getattr(ev, "down", True)
+            return call(int(exec_no), bool(down))
+        unit = getattr(ev, "unit", None)
+        if unit is None and isinstance(ev, mcu.EncoderTurned):
+            level = self._enc_levels.get(ev.encoder, 0.0)
+            unit = max(0.0, min(1.0, level + ev.ticks * self.config.encoder_step))
+            self._enc_levels[ev.encoder] = unit
+        if unit is None:
+            return []
+        return call(int(exec_no), float(unit))
+
     def _event(self, ev) -> list:
         out: list = []
+
+        learned = self._learned(ev)
+        if learned is not None:
+            if isinstance(ev, mcu.FaderMoved):
+                if self._is_motor_echo(ev.strip, ev.unit):
+                    return []
+            return learned
 
         if isinstance(ev, surfaces.KnobSet):
             self._enc_levels[ev.knob] = ev.unit
             out += self.target.encoder(ev.knob, ev.unit)
 
         elif isinstance(ev, mcu.FaderMoved):
+            if self._is_motor_echo(ev.strip, ev.unit):
+                return []
             if ev.strip == 8:
                 out += self.target.master(ev.unit)
             else:
@@ -164,6 +323,41 @@ class Bridge:
 
     # ---- console -> surface ---------------------------------------------
 
+    def _is_motor_echo(self, strip: int, unit: float) -> bool:
+        """Is this the surface reporting a motor move we just made?"""
+        import time as _time
+
+        window = getattr(self.config, "motor_echo_guard", 0.0) or 0.0
+        if window <= 0:
+            return False
+        seen = self._motor.get(strip)
+        if not seen:
+            return False
+        when, was = seen
+        return (_time.monotonic() - when) <= window and abs(was - unit) <= 0.02
+
+    def _note_motor(self, strip: int, unit: float) -> None:
+        import time as _time
+
+        self._motor[strip] = (_time.monotonic(), unit)
+
+    def echo_for(self, data: bytes, surface=None) -> list[bytes]:
+        """Bytes to send back to the surface that just moved a fader.
+
+        Deliberately bypasses touch suppression: this is not the console
+        arguing with a hand, it is the surface being told the value it
+        just sent, which is where the fader already is.
+        """
+        if not getattr(self.config, "local_echo", True):
+            return []
+        surface = surface or self.surface
+        out: list[bytes] = []
+        for ev in surface.decode(data):
+            if isinstance(ev, mcu.FaderMoved):
+                out += surface.render(targets.FaderFB(ev.strip, ev.unit),
+                                      targets)
+        return out
+
     def osc_in(self, datagram: bytes) -> list[bytes]:
         """One OSC datagram from the console -> MIDI for the X-Touch."""
         msg = osc.decode(datagram)
@@ -189,6 +383,7 @@ class Bridge:
                 # Never fight the human hand on the fader.
                 if fb.strip in self._touched:
                     continue
+                self._note_motor(fb.strip, fb.unit)
             elif isinstance(fb, targets.RingFB):
                 self._enc_levels[fb.idx] = fb.unit
             out += surface.render(fb, targets)

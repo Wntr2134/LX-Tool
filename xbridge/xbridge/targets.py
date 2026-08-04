@@ -18,6 +18,7 @@ Two targets ship today:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from . import osc
@@ -59,12 +60,35 @@ class MA3Target:
 
     def __init__(self, config):
         self.config = config
+        self._enc_pos: dict = {}
+        # Playback feedback the console sent that no strip claims yet:
+        # {"13.13.1.6.1": ("FaderMaster", 63.5)}. The console names its
+        # own objects, so this is the only way to learn them.
+        self.unmapped: dict = {}
+        # (sent_at, strip, percent) for the last couple of seconds, so an
+        # arriving feedback level can be matched to the fader that caused
+        # it. Cleared as it ages; never grows.
+        self._recent: list = []
+        # Addresses claimed automatically, for the Runner to persist.
+        self.learned: list = []
 
     def _level(self, unit: float):
-        """MA3's fader argument: int 0-100 per the manual, or float."""
-        if getattr(self.config, "ma3_value", "int") == "float":
-            return float(unit * 100.0)
-        return round(unit * 100)
+        """MA3's fader argument.
+
+        The Advanced Examples table gives faders the type tags "i f" over
+        0...100, so int and float are both accepted; the OSC line's
+        FaderRange cell can move the top of the scale to 255. Which one a
+        given console wants is not knowable from here, so all four are
+        selectable and the probe ("Find MA3 format") tries them in turn.
+        """
+        form = getattr(self.config, "ma3_value", "float100")
+        if form == "int100":
+            return round(unit * 100)
+        if form == "float01":
+            return float(unit)
+        if form == "int255":
+            return round(unit * 255)
+        return float(unit * 100.0)          # float100 - MA's own example
 
     # -- surface -> console ------------------------------------------------
 
@@ -72,11 +96,29 @@ class MA3Target:
         cfg = self.config
         if strip >= len(cfg.fader_execs):
             return []
-        return [osc.Message(self._addr(f"Fader{cfg.fader_execs[strip]}"),
+        exec_no = cfg.fader_execs[strip]
+        if not exec_no:          # 0 = released, e.g. reassigned elsewhere
+            return []
+        self._note_sent(strip, unit * 100.0)
+        if getattr(cfg, "ma3_fader", "osc") == "cmd":
+            # The command line reaches the same fader without depending
+            # on the OSC line's Fader/Page address cells at all. Needs
+            # Receive Command = Yes rather than Receive.
+            body = cfg.ma3_fader_cmd.format(page=cfg.page, exec=exec_no,
+                                            pct=f"{unit * 100:.1f}")
+            return [osc.Message(self._cmd_addr(), (body,))]
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
                             (self._level(unit),))]
 
-    def master(self, unit: float) -> list[osc.Message]:
+    def master(self, unit: float, strip: int = 8) -> list[osc.Message]:
         cfg = self.config
+        # Recording the move is what lets the console's own master object
+        # be learned like any other strip. `strip` is which fader caused
+        # it - 8 (the master) by default, but any fader can be learned to
+        # drive the master, and then the feedback belongs to THAT fader.
+        # Crediting 8 regardless bound the console's master to the master
+        # fader while the user was moving a different one.
+        self._note_sent(strip, unit * 100.0)
         if cfg.master_exec:
             return [osc.Message(self._addr(f"Fader{cfg.master_exec}"),
                                 (self._level(unit),))]
@@ -86,17 +128,44 @@ class MA3Target:
     def button(self, row: str, idx: int, down: bool) -> list[osc.Message]:
         execs = (self.config.select_execs if row == "select"
                  else self.config.mute_execs)
-        if idx >= len(execs):
+        if idx >= len(execs) or not execs[idx]:
             return []
         return [osc.Message(self._addr(f"Key{execs[idx]}"),
                             (1 if down else 0,))]
 
     def encoder(self, idx: int, unit: float) -> list[osc.Message]:
         cfg = self.config
-        if idx >= len(cfg.encoder_execs):
+        if idx >= len(cfg.encoder_execs) or not cfg.encoder_execs[idx]:
             return []
-        return [osc.Message(self._addr(f"Fader{cfg.encoder_execs[idx]}"),
+        if getattr(cfg, "ma3_encoder", "encoder") == "fader":
+            return [osc.Message(self._addr(f"Fader{cfg.encoder_execs[idx]}"),
+                                (self._level(unit),))]
+        # The documented path: /Encoder<x> takes a relative step in
+        # percent, so send the delta since the last position rather than
+        # the absolute level.
+        prev = self._enc_pos.get(idx, 0.0)
+        self._enc_pos[idx] = unit
+        step = round((unit - prev) * 100)
+        if not step:
+            return []
+        return [osc.Message(self._addr(f"Encoder{cfg.encoder_execs[idx]}"),
+                            (step,))]
+
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
                             (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         cmd = {"play": self.config.cmd_play, "stop": self.config.cmd_stop,
@@ -110,6 +179,14 @@ class MA3Target:
     # -- paging / lifecycle ------------------------------------------------
 
     def set_page(self, page: int) -> list[osc.Message]:
+        # The OSC route names the page in every address, so nothing needs
+        # sending. The command-line route addresses whatever page the
+        # console is showing, so the console has to be moved with it -
+        # but only if the user has supplied a spelling that works.
+        cmd = getattr(self.config, "ma3_page_cmd", "")
+        if cmd and getattr(self.config, "ma3_fader", "osc") == "cmd":
+            return [osc.Message(self._cmd_addr(),
+                                (cmd.format(page=page),))]
         return []      # MA3 re-broadcasts levels itself when sending is on
 
     def hello(self) -> list[osc.Message]:
@@ -143,6 +220,9 @@ class MA3Target:
             if 1 <= strip <= 8:
                 return [LabelFB(strip - 1, 0, msg.args[0])]
             return []
+        enumerated = self._playback_feedback(msg)
+        if enumerated is not None:
+            return enumerated
         leaf = self._leaf_of(msg.address)
         if leaf is None:
             return []
@@ -174,11 +254,117 @@ class MA3Target:
                                  unit > 0)]
         return []
 
+    _RECENT_SECS = 2.5
+    _MATCH_PCT = 1.5
+
+    def _note_sent(self, strip: int, pct: float, now: float | None = None) -> None:
+        at = time.monotonic() if now is None else now
+        self._recent = [r for r in self._recent
+                        if at - r[0] <= self._RECENT_SECS]
+        self._recent.append((at, strip, pct))
+
+    def _autolearn(self, key: str, level: float, now: float | None = None,
+                   func: str = "FaderMaster") -> int | None:
+        """Which strip just asked for this level, if exactly one did.
+
+        The console names its objects by pool index and never says which
+        executor they sit on, so the only honest way to connect the two
+        is to watch: drive a fader, see which address answers with that
+        value. Two strips at the same level is genuinely ambiguous, so it
+        is declined rather than guessed - a wrong motor mapping is worse
+        than none.
+        """
+        cfg = self.config
+        if not getattr(cfg, "ma3_autolearn", True):
+            return None
+        # Any fader function may be the one on this executor - a sequence
+        # can have its fader assigned to Rate, Speed or XFade rather than
+        # Master, and then Master is never reported at all. What makes a
+        # claim safe is not the name but the correlation plus the guards
+        # below; the key carries the function, so the others stay separate.
+        if not func.lower().startswith("fader"):
+            return None
+        at = time.monotonic() if now is None else now
+        table = getattr(cfg, "ma3_feedback", None)
+        if table is None:
+            table = cfg.ma3_feedback = {}
+        taken = set(table.values())
+        hits = {strip for sent_at, strip, pct in self._recent
+                if at - sent_at <= self._RECENT_SECS
+                and abs(pct - level) <= self._MATCH_PCT
+                and (strip + 1) not in taken}
+        if len(hits) != 1:
+            return None
+        strip = hits.pop()
+        table[key] = strip + 1
+        self.learned.append((key, strip + 1))
+        self.unmapped.pop(key, None)
+        return strip + 1
+
+    def _playback_feedback(self, msg: osc.Message):
+        """MA3's *output* format, which is nothing like its input format.
+
+        Moving a fader on the console does not echo /Page1/Fader201 back.
+        Per "Object Playback Feedback", MA3 sends the object's enumerated
+        address with an ``sif`` payload::
+
+            /13.13.1.6.1 ,sif, "FaderMaster", 3, 63.5    (a sequence)
+            /13.12.3.1   ,sif, "FaderMaster", 3, 63.5    (a master)
+
+        The leading number is a pool index, not an executor number, so it
+        can only be tied to a strip by a table the user supplies
+        (``ma3_feedback``: {"13.13.1.6.1": 1} = that object drives strip
+        1). Without one there is nothing to map it to - but the message
+        is still recognised, so the sniffer can show what to put in the
+        table. Returns None when this is not a playback feedback message.
+        """
+        addr = msg.address.lstrip("/")
+        prefix = self.config.prefix
+        if prefix and addr.startswith(prefix + "/"):
+            addr = addr[len(prefix) + 1:]
+        if not addr or not all(p.isdigit() for p in addr.split(".")):
+            return None
+        if len(msg.args) < 2 or not isinstance(msg.args[0], str):
+            return None
+        level = next((a for a in reversed(msg.args)
+                      if isinstance(a, (int, float))
+                      and not isinstance(a, bool)), None)
+        if level is None:
+            return None
+        # One executor reports several fader functions under ONE address -
+        # FaderMaster, FaderRate, FaderSpeed, FaderXFade - so the address
+        # alone does not say what moved. Keying on the address only meant
+        # rate, speed and crossfade all drove the master's strip.
+        func = msg.args[0]
+        key = f"{addr}:{func}"
+        table = getattr(self.config, "ma3_feedback", {}) or {}
+        strip = (table.get(key)
+                 or table.get(addr)          # mappings saved before this
+                 or self._autolearn(key, level, func=func))
+        if strip is None:
+            # Nothing to drive yet, but this is what a user needs in order
+            # to map it, so remember it rather than dropping it silently.
+            # The panel offers these for one-click assignment.
+            self.unmapped[key] = (func, level)
+            del_extra = len(self.unmapped) - 16
+            for k in list(self.unmapped)[:max(0, del_extra)]:
+                self.unmapped.pop(k, None)
+            return []
+        idx = int(strip) - 1
+        if func.lower().startswith("fader"):
+            unit = _unit_percent(level)
+            return [] if unit is None else [FaderFB(idx, unit)]
+        return [ButtonFB("select", idx, float(level) > 0)]
+
     # -- helpers -----------------------------------------------------------
 
     def _addr(self, leaf: str) -> str:
         cfg = self.config
         p = f"/{cfg.prefix}" if cfg.prefix else ""
+        if getattr(cfg, "ma3_addr", "page") == "selected":
+            # /Fader201 - MA3 applies it to the selected page. The escape
+            # hatch when the OSC line's "Page" address cell is renamed.
+            return f"{p}/{leaf}"
         return f"{p}/Page{cfg.page}/{leaf}"
 
     def _cmd_addr(self) -> str:
@@ -243,6 +429,22 @@ class X32Target:
     def encoder(self, idx: int, unit: float) -> list[osc.Message]:
         return [osc.Message(f"/ch/{self._ch(idx):02d}/mix/pan",
                             (float(unit),))]
+
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         return []      # tape transport is possible; unmapped until asked for
@@ -359,6 +561,22 @@ class MagicQTarget:
         # Execute grid 1, items 1-8.
         return [osc.Message(f"/exec/1/{idx + 1}", (float(unit),))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         if key == "stop" and down:      # the one universally safe transport
             return [osc.Message("/dbo", (1,))]
@@ -456,6 +674,22 @@ class ResolumeTarget:
         return [osc.Message(f"/composition/layers/{self._layer(idx)}/master",
                             (float(unit),))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         return []
 
@@ -546,6 +780,22 @@ class CompanionTarget:
         return [osc.Message(self._loc(3, idx, verb))
                 for _ in range(min(8, abs(ticks)))]
 
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
+
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         col = {"rewind": 0, "fastfwd": 1, "stop": 2, "play": 3,
                "record": 4}.get(key)
@@ -608,6 +858,22 @@ class EosTarget:
 
     def encoder(self, idx: int, unit: float) -> list[osc.Message]:
         return []          # Eos encoders are a later, careful project
+
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         if key == "play":
@@ -700,6 +966,22 @@ class GenericOSCTarget:
             return []
         return [osc.Message(self._fill(t, self._n(idx)),
                             (self._level(unit),))]
+
+    # -- MIDI-learn: one control, one explicit destination ----------------
+
+    def key_exec(self, exec_no: int, down: bool) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Key{exec_no}"), (1 if down else 0,))]
+
+    def fader_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Fader{exec_no}"),
+                            (self._level(unit),))]
+
+    def encoder_exec(self, exec_no: int, unit: float) -> list[osc.Message]:
+        return [osc.Message(self._addr(f"Encoder{exec_no}"),
+                            (round(unit * 100),))]
+
+    def command(self, cmd: str) -> list[osc.Message]:
+        return [osc.Message(self._cmd_addr(), (cmd,))]
 
     def transport(self, key: str, down: bool) -> list[osc.Message]:
         return []
